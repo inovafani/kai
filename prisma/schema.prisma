@@ -1,0 +1,114 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum TenantStatus {
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum PmsProvider {
+  MOCK
+  REZDY
+  INSEANQ
+  FAREHARBOR
+  BOKUN
+  NATIVE
+}
+
+enum ConversationControlMode {
+  AI
+  HUMAN
+  PAUSED
+}
+
+model Tenant {
+  id        String       @id @default(cuid())
+  slug      String       @unique
+  name      String
+  status    TenantStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  branding      TenantBranding?
+  config        TenantConfig?
+  integrations  TenantIntegration[]
+  conversations Conversation[]
+}
+
+model TenantBranding {
+  id             String   @id @default(cuid())
+  tenantId       String   @unique
+  logoUrl        String?
+  primaryColor   String
+  widgetTitle    String
+  welcomeMessage String
+  brandVoice     String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model TenantConfig {
+  id                 String   @id @default(cuid())
+  tenantId           String   @unique
+  supportedChannels  String[]
+  enabledFeatures    String[]
+  requiredSlots      Json
+  bookingMode        String
+  escalationRules    String[]
+  responseGuardrails String[]
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+}
+
+model TenantIntegration {
+  id                   String      @id @default(cuid())
+  tenantId             String
+  provider             PmsProvider
+  encryptedCredentials String
+  status               String
+  createdAt            DateTime    @default(now())
+  updatedAt            DateTime    @updatedAt
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, provider])
+}
+
+model Conversation {
+  id          String                  @id @default(cuid())
+  tenantId    String
+  controlMode ConversationControlMode @default(AI)
+  channel     String
+  travellerId String?
+  leadId      String?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+
+  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  messages Message[]
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  tenantId       String
+  conversationId String
+  role           String
+  content        String
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, conversationId, createdAt])
+}
