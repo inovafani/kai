@@ -1,0 +1,159 @@
+import { expect, test } from "@playwright/test";
+
+test("widget session creates a tenant-scoped AI conversation", async ({ request }) => {
+  const response = await request.post("/api/widget/session", {
+    headers: {
+      origin: "http://localhost:3107"
+    },
+    data: {
+      key: "pk_test_kai_demo"
+    }
+  });
+
+  expect(response.ok()).toBe(true);
+  await expect(response.json()).resolves.toMatchObject({
+    conversation: {
+      tenantSlug: "kai-demo",
+      channel: "WEB_WIDGET",
+      controlMode: "AI"
+    }
+  });
+});
+
+test("widget session rejects disallowed origins", async ({ request }) => {
+  const response = await request.post("/api/widget/session", {
+    headers: {
+      origin: "https://evil.example.com"
+    },
+    data: {
+      key: "pk_test_kai_demo"
+    }
+  });
+
+  expect(response.status()).toBe(403);
+  await expect(response.json()).resolves.toEqual({
+    error: {
+      code: "ORIGIN_NOT_ALLOWED",
+      message: "This origin is not allowed for the resolved tenant."
+    }
+  });
+});
+
+test("widget message persists traveller and mock assistant messages for the resolved tenant conversation", async ({ request }) => {
+  const sessionResponse = await request.post("/api/widget/session", {
+    headers: {
+      origin: "http://localhost:3107"
+    },
+    data: {
+      key: "pk_test_kai_demo"
+    }
+  });
+  const session = await sessionResponse.json();
+
+  const messageResponse = await request.post("/api/widget/messages", {
+    headers: {
+      origin: "http://localhost:3107"
+    },
+    data: {
+      key: "pk_test_kai_demo",
+      conversationId: session.conversation.id,
+      content: "Can you check Komodo Day Trip for 3 guests tomorrow?"
+    }
+  });
+
+  expect(messageResponse.ok()).toBe(true);
+  await expect(messageResponse.json()).resolves.toMatchObject({
+    message: {
+      tenantSlug: "kai-demo",
+      conversationId: session.conversation.id,
+      role: "TRAVELLER",
+      content: "Can you check Komodo Day Trip for 3 guests tomorrow?"
+    },
+    assistantMessage: {
+      tenantSlug: "kai-demo",
+      conversationId: session.conversation.id,
+      role: "ASSISTANT",
+      content: "Komodo Day Trip is available for 3 guests on tomorrow. PMS shows 7 spots remaining at USD 185.00 per guest. I have not confirmed a booking yet."
+    }
+  });
+});
+
+test("widget message matches PMS product aliases before replying", async ({ request }) => {
+  const sessionResponse = await request.post("/api/widget/session", {
+    headers: {
+      origin: "http://localhost:3107"
+    },
+    data: {
+      key: "pk_test_kai_demo"
+    }
+  });
+  const session = await sessionResponse.json();
+
+  const messageResponse = await request.post("/api/widget/messages", {
+    headers: {
+      origin: "http://localhost:3107"
+    },
+    data: {
+      key: "pk_test_kai_demo",
+      conversationId: session.conversation.id,
+      content: "private boat for 2 guests tomorrow"
+    }
+  });
+
+  expect(messageResponse.ok()).toBe(true);
+  await expect(messageResponse.json()).resolves.toMatchObject({
+    assistantMessage: {
+      tenantSlug: "kai-demo",
+      conversationId: session.conversation.id,
+      role: "ASSISTANT",
+      content:
+        "Private Charter requires operator confirmation. I can collect the details, but I will not confirm availability automatically."
+    },
+    manualInquiry: {
+      tenantSlug: "kai-demo",
+      conversationId: session.conversation.id,
+      status: "OPEN",
+      productExternalId: "mock-private-charter",
+      productTitle: "Private Charter",
+      dateText: "tomorrow",
+      guests: 2
+    }
+  });
+});
+
+test("widget message uses prior traveller messages as slot memory", async ({ request }) => {
+  const sessionResponse = await request.post("/api/widget/session", {
+    headers: { origin: "http://localhost:3107" },
+    data: { key: "pk_test_kai_demo" }
+  });
+  const session = await sessionResponse.json();
+
+  await request.post("/api/widget/messages", {
+    headers: { origin: "http://localhost:3107" },
+    data: {
+      key: "pk_test_kai_demo",
+      conversationId: session.conversation.id,
+      content: "private boat"
+    }
+  });
+
+  const messageResponse = await request.post("/api/widget/messages", {
+    headers: { origin: "http://localhost:3107" },
+    data: {
+      key: "pk_test_kai_demo",
+      conversationId: session.conversation.id,
+      content: "tomorrow for 2 people"
+    }
+  });
+
+  expect(messageResponse.ok()).toBe(true);
+  await expect(messageResponse.json()).resolves.toMatchObject({
+    assistantMessage: {
+      tenantSlug: "kai-demo",
+      conversationId: session.conversation.id,
+      role: "ASSISTANT",
+      content:
+        "Private Charter requires operator confirmation. I can collect the details, but I will not confirm availability automatically."
+    }
+  });
+});

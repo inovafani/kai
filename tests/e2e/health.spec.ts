@@ -6,9 +6,13 @@ test("home page and health route are reachable", async ({ page, request }) => {
 
   const response = await request.get("/api/health");
   expect(response.ok()).toBe(true);
-  await expect(response.json()).resolves.toEqual({
+
+  const body = await response.json();
+  expect(body).toMatchObject({
     ok: true,
     service: "kai",
     version: "0.1.0"
   });
+  expect(body.environment.missing).toEqual([]);
+  expect(Array.isArray(body.environment.placeholders)).toBe(true);
 });

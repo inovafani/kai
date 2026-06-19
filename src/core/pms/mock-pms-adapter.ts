@@ -19,6 +19,12 @@ const PRODUCTS: PmsProduct[] = [
     title: "Private Charter",
     description: "A custom charter that requires operator confirmation.",
     bookingMode: "MANUAL_INQUIRY"
+  },
+  {
+    externalProductId: "mock-reef-day-snorkel",
+    title: "Reef Day Snorkel",
+    description: "A guided snorkeling tour over bright reef sites.",
+    bookingMode: "INSTANT_BOOKING"
   }
 ];
 
@@ -51,7 +57,12 @@ export class MockPmsAdapter implements PmsAdapter {
       available: remaining >= 0 && product.bookingMode === "INSTANT_BOOKING",
       remaining: Math.max(remaining, 0),
       currency: "USD",
-      unitPriceCents: product.externalProductId === "mock-komodo-day-trip" ? 18500 : 0
+      unitPriceCents:
+        product.externalProductId === "mock-komodo-day-trip"
+          ? 18500
+          : product.externalProductId === "mock-reef-day-snorkel"
+            ? 8500
+            : 0
     };
   }
 

@@ -29,20 +29,27 @@ enum ConversationControlMode {
   PAUSED
 }
 
+enum ManualInquiryStatus {
+  OPEN
+  OPERATOR_NOTIFIED
+  CLOSED
+}
+
 model Tenant {
-  id              String       @id @default(cuid())
-  slug            String       @unique
+  id              String              @id @default(cuid())
+  slug            String              @unique
   name            String
-  status          TenantStatus @default(ACTIVE)
-  widgetPublicKey String       @unique
+  status          TenantStatus        @default(ACTIVE)
+  widgetPublicKey String              @unique
   allowedOrigins  String[]
-  defaultLocale   String       @default("en")
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @updatedAt
-  branding      TenantBranding?
-  config        TenantConfig?
-  integrations  TenantIntegration[]
-  conversations Conversation[]
+  defaultLocale   String              @default("en")
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+  branding        TenantBranding?
+  config          TenantConfig?
+  integrations    TenantIntegration[]
+  conversations   Conversation[]
+  manualInquiries ManualInquiry[]
 }
 
 model TenantBranding {
@@ -71,7 +78,7 @@ model TenantConfig {
   responseGuardrails String[]
   createdAt          DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant             Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 }
 
 model TenantIntegration {
@@ -98,8 +105,10 @@ model Conversation {
   createdAt   DateTime                @default(now())
   updatedAt   DateTime                @updatedAt
 
-  tenant   Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  messages Message[]
+  tenant          Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  messages        Message[]
+  bookingState    ConversationBookingState?
+  manualInquiries ManualInquiry[]
 }
 
 model Message {
@@ -112,5 +121,41 @@ model Message {
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
+  @@index([tenantId, conversationId, createdAt])
+}
+
+model ConversationBookingState {
+  id                String   @id @default(cuid())
+  tenantId          String
+  conversationId    String   @unique
+  productExternalId String?
+  productTitle      String?
+  dateText          String?
+  guests            Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, conversationId])
+}
+
+model ManualInquiry {
+  id                String              @id @default(cuid())
+  tenantId          String
+  conversationId    String
+  status            ManualInquiryStatus @default(OPEN)
+  productExternalId String?
+  productTitle      String?
+  dateText          String?
+  guests            Int?
+  travellerMessage  String
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+
+  tenant       Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status, createdAt])
   @@index([tenantId, conversationId, createdAt])
 }

@@ -19,6 +19,12 @@ describe("MockPmsAdapter", () => {
         title: "Private Charter",
         description: "A custom charter that requires operator confirmation.",
         bookingMode: "MANUAL_INQUIRY"
+      },
+      {
+        externalProductId: "mock-reef-day-snorkel",
+        title: "Reef Day Snorkel",
+        description: "A guided snorkeling tour over bright reef sites.",
+        bookingMode: "INSTANT_BOOKING"
       }
     ]);
   });

@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { resolveWidgetTenant } from "@/core/tenant/resolver";
 import { findTenantForWidgetKey } from "@/server/tenant/tenant-repository";
+import { getWidgetRequestOrigin } from "@/server/widget/request-origin";
 import { toPublicWidgetConfig } from "@/server/widget/widget-config";
 
 export const runtime = "nodejs";
 
 export async function GET(request: NextRequest) {
   const widgetKey = request.nextUrl.searchParams.get("key");
-  const origin = request.headers.get("origin");
-
   if (!widgetKey) {
     return NextResponse.json(
       {
@@ -24,7 +23,7 @@ export async function GET(request: NextRequest) {
   const tenant = await findTenantForWidgetKey(widgetKey);
   const resolution = resolveWidgetTenant({
     widgetKey,
-    origin,
+    origin: getWidgetRequestOrigin(request),
     tenants: tenant
       ? [
           {
