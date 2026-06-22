@@ -87,11 +87,32 @@ export default async function AdminConversationPage({ params }: AdminConversatio
       <section style={{ width: "min(100%, 1120px)", margin: "0 auto", padding: "22px 24px 56px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginBottom: 12 }}>
           <section style={{ border: "1px solid #dbe5e1", borderRadius: 8, background: "#ffffff", padding: 16 }}>
-            <p style={{ margin: 0, color: "#62746e", fontSize: 13 }}>Inquiry</p>
+            <p style={{ margin: 0, color: "#62746e", fontSize: 13 }}>Booking state</p>
             <h2 style={{ margin: "6px 0 10px", fontSize: 20 }}>{inquiry?.productTitle ?? conversation.bookingState?.productTitle ?? "Unknown product"}</h2>
             <p style={{ margin: 0, color: "#53655f", lineHeight: 1.5 }}>
               {(inquiry?.dateText ?? conversation.bookingState?.dateText ?? "Date unknown") + " · " + formatGuestCount(inquiry?.guests ?? conversation.bookingState?.guests)}
             </p>
+            {conversation.bookingState?.bookingStatus ? (
+              <p style={{ margin: "8px 0 0", color: "#0f766e", fontWeight: 800, lineHeight: 1.5 }}>
+                {conversation.bookingState.bookingStatus}
+              </p>
+            ) : null}
+            {inquiry?.travellerName || inquiry?.travellerEmail || inquiry?.travellerPhone || conversation.bookingState?.travellerName || conversation.bookingState?.travellerEmail || conversation.bookingState?.travellerPhone ? (
+              <p style={{ margin: "8px 0 0", color: "#53655f", lineHeight: 1.5 }}>
+                {[
+                  inquiry?.travellerName ?? conversation.bookingState?.travellerName,
+                  inquiry?.travellerEmail ?? conversation.bookingState?.travellerEmail,
+                  inquiry?.travellerPhone ?? conversation.bookingState?.travellerPhone
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+            ) : null}
+            {conversation.bookingState?.confirmationSummary ? (
+              <p style={{ margin: "8px 0 0", color: "#53655f", lineHeight: 1.5 }}>
+                {conversation.bookingState.confirmationSummary}
+              </p>
+            ) : null}
           </section>
 
           <section style={{ border: "1px solid #dbe5e1", borderRadius: 8, background: "#ffffff", padding: 16 }}>

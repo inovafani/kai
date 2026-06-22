@@ -35,11 +35,9 @@ test("loader script opens and closes Kai from a launcher button", async ({ page 
   await kaiFrame.getByRole("button", { name: "Send" }).click();
 
   await expect(kaiFrame.getByText("Show me tomorrow tours")).toBeVisible();
-  await expect(
-    kaiFrame.getByText(
-      "I can help with that. Please share the product, guests so I can check safely."
-    )
-  ).toBeVisible();
+  await expect(kaiFrame.getByText("Kai is typing")).toBeVisible();
+  await expect(kaiFrame.getByText("Kai is typing")).toBeHidden({ timeout: 20_000 });
+  await expect(kaiFrame.getByLabel("Message")).toBeEnabled();
 
   await page.getByRole("button", { name: "Close Kai" }).click();
 

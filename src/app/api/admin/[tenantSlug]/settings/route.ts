@@ -1,5 +1,6 @@
 import type { PmsProvider } from "@prisma/client";
 import { NextRequest, NextResponse } from "next/server";
+import { parsePublicProductCatalogRows } from "@/core/pms/public-product-catalog";
 import { updateTenantOperationalSettings } from "@/server/tenant/tenant-repository";
 
 export const runtime = "nodejs";
@@ -35,21 +36,24 @@ type TenantSettingsRouteProps = {
 
 export async function POST(request: NextRequest, { params }: TenantSettingsRouteProps) {
   const expectedToken = process.env.KAI_ADMIN_TOKEN;
-  const adminToken = request.cookies.get("kai_admin_token")?.value;
+  const cookieAdminToken = request.cookies.get("kai_admin_token")?.value;
   const { tenantSlug } = await params;
+  const formData = await request.formData();
+  const formAdminToken = String(formData.get("adminToken") ?? "");
 
-  if (!expectedToken || adminToken !== expectedToken) {
+  if (!expectedToken || (cookieAdminToken !== expectedToken && formAdminToken !== expectedToken)) {
     return NextResponse.json(
       { error: { code: "ADMIN_TOKEN_REQUIRED", message: "Admin access is required." } },
       { status: 401 }
     );
   }
-
-  const formData = await request.formData();
   const pmsProvider = String(formData.get("pmsProvider") ?? "") as PmsProvider;
   const allowedOrigins = parseList(formData.get("allowedOrigins"));
   const enabledFeatures = parseList(formData.get("enabledFeatures"));
   const responseGuardrails = parseList(formData.get("responseGuardrails"));
+  const brandVoice = String(formData.get("brandVoice") ?? "").trim();
+  const bookingWriteEnabled = formData.get("bookingWriteEnabled") === "on";
+  let publicProductCatalog: ReturnType<typeof parsePublicProductCatalogRows>;
 
   if (!allowedProviders.has(pmsProvider)) {
     return NextResponse.json(
@@ -60,12 +64,19 @@ export async function POST(request: NextRequest, { params }: TenantSettingsRoute
 
   try {
     assertAllowedOrigins(allowedOrigins);
+    publicProductCatalog = parsePublicProductCatalogRows({
+      publicTitles: formData.getAll("productPublicTitle").map(String),
+      publicDescriptions: formData.getAll("productPublicDescription").map(String),
+      productUrls: formData.getAll("productUrl").map(String),
+      pmsProductIds: formData.getAll("productPmsProductId").map(String),
+      bookingModes: formData.getAll("productBookingMode").map(String)
+    });
   } catch (error) {
     return NextResponse.json(
       {
         error: {
-          code: "INVALID_ALLOWED_ORIGINS",
-          message: error instanceof Error ? error.message : "Invalid allowed origins."
+          code: "INVALID_SETTINGS",
+          message: error instanceof Error ? error.message : "Invalid settings."
         }
       },
       { status: 400 }
@@ -76,8 +87,11 @@ export async function POST(request: NextRequest, { params }: TenantSettingsRoute
     tenantSlug,
     allowedOrigins,
     pmsProvider,
+    publicProductCatalog,
+    bookingWriteEnabled,
     enabledFeatures,
-    responseGuardrails
+    responseGuardrails,
+    brandVoice
   });
 
   return NextResponse.redirect(new URL("/admin/" + tenantSlug + "/settings?saved=1", request.url), 303);

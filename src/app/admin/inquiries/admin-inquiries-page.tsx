@@ -1,11 +1,8 @@
 import Link from "next/link";
 import { cookies } from "next/headers";
 import { submitAdminTokenAction, updateManualInquiryStatusAction } from "./actions";
+import { toManualInquiryViewModel } from "./manual-inquiry-view-model";
 import { listManualInquiriesForTenantSlug } from "@/server/conversation/conversation-repository";
-
-function formatGuestCount(guests: number | null) {
-  return guests === 1 ? "1 guest" : String(guests ?? "Unknown") + " guests";
-}
 
 function formatCreatedAt(date: Date) {
   return new Intl.DateTimeFormat("en", {
@@ -52,6 +49,7 @@ export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: strin
   }
 
   const inquiries = await listManualInquiriesForTenantSlug({ tenantSlug });
+  const inquiryCards = inquiries.map(toManualInquiryViewModel);
   const openCount = inquiries.filter((inquiry) => inquiry.status === "OPEN").length;
   const tenantName = inquiries[0]?.tenant.name ?? tenantSlug;
 
@@ -89,7 +87,7 @@ export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: strin
               No manual inquiries yet.
             </div>
           ) : (
-            inquiries.map((inquiry) => (
+            inquiryCards.map((inquiry) => (
               <article
                 key={inquiry.id}
                 style={{
@@ -104,7 +102,7 @@ export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: strin
               >
                 <div style={{ minWidth: 0 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <h2 style={{ margin: 0, fontSize: 18 }}>{inquiry.productTitle ?? "Unknown product"}</h2>
+                    <h2 style={{ margin: 0, fontSize: 18 }}>{inquiry.productTitle}</h2>
                     <span
                       style={{
                         border: "1px solid #9acbc4",
@@ -117,10 +115,47 @@ export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: strin
                     >
                       {inquiry.status}
                     </span>
+                    {inquiry.bookingStatus ? (
+                      <span
+                        style={{
+                          border: "1px solid " + (inquiry.bookingStatus === "FAILED" ? "#fecaca" : "#c7d2fe"),
+                          borderRadius: 999,
+                          color: inquiry.bookingStatus === "FAILED" ? "#b91c1c" : "#3730a3",
+                          fontSize: 12,
+                          fontWeight: 800,
+                          padding: "3px 8px"
+                        }}
+                      >
+                        {inquiry.bookingStatus}
+                      </span>
+                    ) : null}
                   </div>
-                  <p style={{ margin: "8px 0 0", color: "#53655f" }}>
-                    {inquiry.dateText ?? "Date unknown"} · {formatGuestCount(inquiry.guests)} · {inquiry.tenant.name}
-                  </p>
+                  <p style={{ margin: "8px 0 0", color: "#53655f" }}>{inquiry.requestLine}</p>
+                  {inquiry.customerLine ? (
+                    <p style={{ margin: "8px 0 0", color: "#53655f" }}>{inquiry.customerLine}</p>
+                  ) : null}
+                  <div
+                    style={{
+                      border: "1px solid " + (inquiry.bookingStatus === "FAILED" ? "#fecaca" : "#dbe5e1"),
+                      borderRadius: 8,
+                      background: inquiry.bookingStatus === "FAILED" ? "#fff7f7" : "#f7faf9",
+                      marginTop: 12,
+                      padding: 12
+                    }}
+                  >
+                    <p style={{ margin: 0, color: inquiry.bookingStatus === "FAILED" ? "#b91c1c" : "#0f766e", fontSize: 13, fontWeight: 800 }}>
+                      {inquiry.operatorReason}
+                    </p>
+                    {inquiry.confirmationSummary ? (
+                      <p style={{ margin: "8px 0 0", color: "#10201c", lineHeight: 1.45 }}>{inquiry.confirmationSummary}</p>
+                    ) : null}
+                    {inquiry.bookingError ? (
+                      <p style={{ margin: "8px 0 0", color: "#7f1d1d", lineHeight: 1.45 }}>
+                        PMS error: {inquiry.bookingError}
+                      </p>
+                    ) : null}
+                    <p style={{ margin: "8px 0 0", color: "#53655f", lineHeight: 1.45 }}>{inquiry.operatorNextStep}</p>
+                  </div>
                   <p style={{ margin: "12px 0 0", color: "#10201c" }}>{inquiry.travellerMessage}</p>
                 </div>
                 <div

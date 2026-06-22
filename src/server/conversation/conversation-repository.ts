@@ -1,6 +1,58 @@
 import type { BookingMemoryState } from "@/core/booking/booking-memory";
-import type { ManualInquiryStatus } from "@prisma/client";
+import type { BookingFlowStatus } from "@/core/booking/booking-state-machine";
+import type { PmsTicketOption, PmsTicketQuantity } from "@/core/pms/types";
+import { Prisma, type ManualInquiryStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+
+const bookingFlowStatuses = new Set<BookingFlowStatus>([
+  "DRAFT",
+  "AVAILABILITY_CHECKED",
+  "CAPTURED",
+  "READY_TO_CONFIRM",
+  "EXTERNAL_BOOKING_PENDING",
+  "CONFIRMED",
+  "FAILED"
+]);
+
+function normalizeBookingFlowStatus(value: string | null): BookingFlowStatus {
+  return value && bookingFlowStatuses.has(value as BookingFlowStatus) ? (value as BookingFlowStatus) : "DRAFT";
+}
+
+function normalizeTicketOptions(value: Prisma.JsonValue): PmsTicketOption[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const options = value
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+      const record = item as Record<string, unknown>;
+      return typeof record.label === "string" && typeof record.unitPriceCents === "number"
+        ? { label: record.label, unitPriceCents: record.unitPriceCents }
+        : null;
+    })
+    .filter((item): item is PmsTicketOption => Boolean(item));
+
+  return options.length > 0 ? options : null;
+}
+
+function normalizeTicketQuantities(value: Prisma.JsonValue): PmsTicketQuantity[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const quantities = value
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+      const record = item as Record<string, unknown>;
+      return typeof record.optionLabel === "string" && typeof record.quantity === "number"
+        ? { optionLabel: record.optionLabel, quantity: record.quantity }
+        : null;
+    })
+    .filter((item): item is PmsTicketQuantity => Boolean(item));
+
+  return quantities.length > 0 ? quantities : null;
+}
+
+function toJsonArray<T extends object>(value: T[] | null | undefined) {
+  return value ? (value as unknown as Prisma.InputJsonArray) : undefined;
+}
 
 export async function createWidgetConversation(input: { tenantId: string }) {
   return prisma.conversation.create({
@@ -88,11 +140,28 @@ export async function findConversationBookingState(input: {
       productExternalId: true,
       productTitle: true,
       dateText: true,
-      guests: true
+      guests: true,
+      travellerName: true,
+      travellerEmail: true,
+      travellerPhone: true,
+      bookingStatus: true,
+      confirmationSummary: true,
+      externalBookingId: true,
+      externalProvider: true,
+      bookingError: true,
+      ticketOptions: true,
+      ticketQuantities: true
     }
   });
 
-  return state;
+  return state
+    ? {
+        ...state,
+        bookingStatus: normalizeBookingFlowStatus(state.bookingStatus),
+        ticketOptions: normalizeTicketOptions(state.ticketOptions),
+        ticketQuantities: normalizeTicketQuantities(state.ticketQuantities)
+      }
+    : null;
 }
 
 export async function upsertConversationBookingState(input: {
@@ -110,13 +179,33 @@ export async function upsertConversationBookingState(input: {
       productExternalId: input.state.productExternalId,
       productTitle: input.state.productTitle,
       dateText: input.state.dateText,
-      guests: input.state.guests
+      guests: input.state.guests,
+      travellerName: input.state.travellerName ?? null,
+      travellerEmail: input.state.travellerEmail ?? null,
+      travellerPhone: input.state.travellerPhone ?? null,
+      bookingStatus: input.state.bookingStatus ?? "DRAFT",
+      confirmationSummary: input.state.confirmationSummary ?? null,
+      externalBookingId: input.state.externalBookingId ?? null,
+      externalProvider: input.state.externalProvider ?? null,
+      bookingError: input.state.bookingError ?? null,
+      ticketOptions: toJsonArray(input.state.ticketOptions),
+      ticketQuantities: toJsonArray(input.state.ticketQuantities)
     },
     update: {
       productExternalId: input.state.productExternalId,
       productTitle: input.state.productTitle,
       dateText: input.state.dateText,
-      guests: input.state.guests
+      guests: input.state.guests,
+      travellerName: input.state.travellerName ?? null,
+      travellerEmail: input.state.travellerEmail ?? null,
+      travellerPhone: input.state.travellerPhone ?? null,
+      bookingStatus: input.state.bookingStatus ?? "DRAFT",
+      confirmationSummary: input.state.confirmationSummary ?? null,
+      externalBookingId: input.state.externalBookingId ?? null,
+      externalProvider: input.state.externalProvider ?? null,
+      bookingError: input.state.bookingError ?? null,
+      ticketOptions: toJsonArray(input.state.ticketOptions),
+      ticketQuantities: toJsonArray(input.state.ticketQuantities)
     }
   });
 }
@@ -126,6 +215,9 @@ export async function createManualInquiry(input: {
   conversationId: string;
   state: BookingMemoryState;
   travellerMessage: string;
+  travellerName?: string | null;
+  travellerEmail?: string | null;
+  travellerPhone?: string | null;
 }) {
   return prisma.manualInquiry.create({
     data: {
@@ -135,6 +227,9 @@ export async function createManualInquiry(input: {
       productTitle: input.state.productTitle,
       dateText: input.state.dateText,
       guests: input.state.guests,
+      travellerName: input.travellerName ?? null,
+      travellerEmail: input.travellerEmail ?? null,
+      travellerPhone: input.travellerPhone ?? null,
       travellerMessage: input.travellerMessage
     }
   });
@@ -164,7 +259,14 @@ export async function listManualInquiriesForTenantSlug(input: {
       conversation: {
         select: {
           controlMode: true,
-          channel: true
+          channel: true,
+          bookingState: {
+            select: {
+              bookingStatus: true,
+              confirmationSummary: true,
+              bookingError: true
+            }
+          }
         }
       }
     }

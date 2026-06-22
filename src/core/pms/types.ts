@@ -4,7 +4,8 @@ export interface PmsProduct {
   externalProductId: string;
   title: string;
   description: string;
-  bookingMode: "MANUAL_INQUIRY" | "INSTANT_BOOKING";
+  bookingMode: "MANUAL_INQUIRY" | "AUTO_BOOKING";
+  productUrl?: string | null;
 }
 
 export interface PmsAvailabilityRequest {
@@ -20,6 +21,17 @@ export interface PmsAvailabilityResult {
   remaining: number;
   currency: string;
   unitPriceCents: number;
+  ticketOptions?: PmsTicketOption[];
+}
+
+export interface PmsTicketOption {
+  label: string;
+  unitPriceCents: number;
+}
+
+export interface PmsTicketQuantity {
+  optionLabel: string;
+  quantity: number;
 }
 
 export interface PmsCreateBookingRequest {
@@ -28,6 +40,8 @@ export interface PmsCreateBookingRequest {
   guests: number;
   travellerName: string;
   travellerEmail: string;
+  travellerPhone?: string | null;
+  ticketQuantities?: PmsTicketQuantity[] | null;
 }
 
 export interface PmsCreateBookingResult {

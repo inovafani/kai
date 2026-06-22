@@ -48,6 +48,10 @@ async function readJson<T>(response: Response): Promise<T> {
   return payload;
 }
 
+function createLocalMessageId() {
+  return `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
   const [config, setConfig] = useState<WidgetConfig | null>(null);
   const [conversationId, setConversationId] = useState("");
@@ -117,7 +121,8 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
   }, [widgetKey]);
 
   const accentColor = config?.branding.primaryColor ?? "#0f766e";
-  const canSend = status !== "loading" && status !== "sending" && message.trim().length > 0;
+  const canSend = status !== "loading" && status !== "sending" && status !== "error" && message.trim().length > 0;
+  const isSending = status === "sending";
   const subtitle = useMemo(() => {
     if (!config) {
       return "Connecting to Kai";
@@ -134,10 +139,17 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
       return;
     }
 
+    const localTravellerMessage: ChatMessage = {
+      id: createLocalMessageId(),
+      role: "TRAVELLER",
+      content
+    };
+
     try {
       setStatus("sending");
       setError("");
       setMessage("");
+      setMessages((currentMessages) => [...currentMessages, localTravellerMessage]);
 
       const response = await readJson<{
         message: ChatMessage;
@@ -155,14 +167,18 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
       );
 
       setMessages((currentMessages) => [
-        ...currentMessages,
-        response.message,
+        ...currentMessages.map((chatMessage) =>
+          chatMessage.id === localTravellerMessage.id ? response.message : chatMessage
+        ),
         response.assistantMessage
       ]);
       setStatus("ready");
     } catch (sendError) {
       setStatus("ready");
       setMessage(content);
+      setMessages((currentMessages) =>
+        currentMessages.filter((chatMessage) => chatMessage.id !== localTravellerMessage.id)
+      );
       setError(sendError instanceof Error ? sendError.message : "Message failed to send.");
     }
   }
@@ -266,6 +282,33 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
             );
           })}
 
+          {isSending ? (
+            <div
+              aria-label="Kai is typing"
+              style={{
+                alignSelf: "flex-start",
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                maxWidth: "82%",
+                margin: 0,
+                padding: "10px 12px",
+                border: "1px solid #dfe9e5",
+                borderRadius: 8,
+                background: "#ffffff",
+                color: "#5c6f68",
+                fontSize: 14
+              }}
+            >
+              <span>Kai is typing</span>
+              <span aria-hidden="true" style={{ display: "inline-flex", gap: 3 }}>
+                <span style={{ width: 5, height: 5, borderRadius: 999, background: accentColor, animation: "kaiTyping 1s infinite ease-in-out" }} />
+                <span style={{ width: 5, height: 5, borderRadius: 999, background: accentColor, animation: "kaiTyping 1s infinite ease-in-out 0.15s" }} />
+                <span style={{ width: 5, height: 5, borderRadius: 999, background: accentColor, animation: "kaiTyping 1s infinite ease-in-out 0.3s" }} />
+              </span>
+            </div>
+          ) : null}
+
           {error ? (
             <p
               role="alert"
@@ -303,7 +346,7 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
             value={message}
             onChange={(event) => setMessage(event.target.value)}
             placeholder="Ask about availability"
-            disabled={status === "loading" || status === "sending" || status === "error"}
+            disabled={status === "loading" || status === "error"}
             style={{
               minWidth: 0,
               border: "1px solid #cfded9",
@@ -327,10 +370,24 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
               cursor: canSend ? "pointer" : "not-allowed"
             }}
           >
-            {status === "sending" ? "Sending" : "Send"}
+            Send
           </button>
         </form>
       </section>
+      <style jsx global>{`
+        @keyframes kaiTyping {
+          0%,
+          80%,
+          100% {
+            opacity: 0.35;
+            transform: translateY(0);
+          }
+          40% {
+            opacity: 1;
+            transform: translateY(-2px);
+          }
+        }
+      `}</style>
     </main>
   );
 }

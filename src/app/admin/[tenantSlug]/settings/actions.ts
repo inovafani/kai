@@ -3,6 +3,7 @@
 import type { PmsProvider } from "@prisma/client";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { parsePublicProductCatalogRows } from "@/core/pms/public-product-catalog";
 import { updateTenantOperationalSettings } from "@/server/tenant/tenant-repository";
 
 const allowedProviders = new Set<PmsProvider>(["MOCK", "REZDY", "INSEANQ", "FAREHARBOR", "BOKUN", "NATIVE"]);
@@ -36,6 +37,15 @@ export async function updateTenantOperationalSettingsAction(formData: FormData) 
   const allowedOrigins = parseList(formData.get("allowedOrigins"));
   const enabledFeatures = parseList(formData.get("enabledFeatures"));
   const responseGuardrails = parseList(formData.get("responseGuardrails"));
+  const brandVoice = String(formData.get("brandVoice") ?? "").trim();
+  const bookingWriteEnabled = formData.get("bookingWriteEnabled") === "on";
+  const publicProductCatalog = parsePublicProductCatalogRows({
+    publicTitles: formData.getAll("productPublicTitle").map(String),
+    publicDescriptions: formData.getAll("productPublicDescription").map(String),
+    productUrls: formData.getAll("productUrl").map(String),
+    pmsProductIds: formData.getAll("productPmsProductId").map(String),
+    bookingModes: formData.getAll("productBookingMode").map(String)
+  });
 
   if (!tenantSlug || !allowedProviders.has(pmsProvider)) {
     throw new Error("Invalid tenant settings update.");
@@ -47,8 +57,11 @@ export async function updateTenantOperationalSettingsAction(formData: FormData) 
     tenantSlug,
     allowedOrigins,
     pmsProvider,
+    publicProductCatalog,
+    bookingWriteEnabled,
     enabledFeatures,
-    responseGuardrails
+    responseGuardrails,
+    brandVoice
   });
 
   revalidatePath("/admin/" + tenantSlug + "/settings");

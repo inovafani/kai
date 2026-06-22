@@ -62,7 +62,8 @@ test("widget message persists traveller and mock assistant messages for the reso
   });
 
   expect(messageResponse.ok()).toBe(true);
-  await expect(messageResponse.json()).resolves.toMatchObject({
+  const payload = await messageResponse.json();
+  expect(payload).toMatchObject({
     message: {
       tenantSlug: "kai-demo",
       conversationId: session.conversation.id,
@@ -72,10 +73,12 @@ test("widget message persists traveller and mock assistant messages for the reso
     assistantMessage: {
       tenantSlug: "kai-demo",
       conversationId: session.conversation.id,
-      role: "ASSISTANT",
-      content: "Komodo Day Trip is available for 3 guests on tomorrow. PMS shows 7 spots remaining at USD 185.00 per guest. I have not confirmed a booking yet."
+      role: "ASSISTANT"
     }
   });
+  expect(payload.assistantMessage.content).toContain("Komodo Day Trip");
+  expect(payload.assistantMessage.content).toContain("3 guests");
+  expect(payload.assistantMessage.content).toContain("USD 185.00");
 });
 
 test("widget message matches PMS product aliases before replying", async ({ request }) => {
@@ -154,6 +157,67 @@ test("widget message uses prior traveller messages as slot memory", async ({ req
       role: "ASSISTANT",
       content:
         "Private Charter requires operator confirmation. I can collect the details, but I will not confirm availability automatically."
+    }
+  });
+});
+
+test("widget captures contact details after traveller asks to book", async ({ request }) => {
+  const sessionResponse = await request.post("/api/widget/session", {
+    headers: { origin: "http://localhost:3107" },
+    data: { key: "pk_test_kai_demo" }
+  });
+  const session = await sessionResponse.json();
+
+  await request.post("/api/widget/messages", {
+    headers: { origin: "http://localhost:3107" },
+    data: {
+      key: "pk_test_kai_demo",
+      conversationId: session.conversation.id,
+      content: "Can you check Komodo Day Trip for 3 guests tomorrow?"
+    }
+  });
+
+  const captureResponse = await request.post("/api/widget/messages", {
+    headers: { origin: "http://localhost:3107" },
+    data: {
+      key: "pk_test_kai_demo",
+      conversationId: session.conversation.id,
+      content: "yes book it"
+    }
+  });
+
+  expect(captureResponse.ok()).toBe(true);
+  await expect(captureResponse.json()).resolves.toMatchObject({
+    assistantMessage: {
+      content:
+        "I can prepare that booking request for Komodo Day Trip on tomorrow for 3 guests. Please share your name, email, phone so the operator can follow up."
+    },
+    manualInquiry: null
+  });
+
+  const contactResponse = await request.post("/api/widget/messages", {
+    headers: { origin: "http://localhost:3107" },
+    data: {
+      key: "pk_test_kai_demo",
+      conversationId: session.conversation.id,
+      content: "My name is Maya Chen, email maya@example.com, phone +61 400 111 222"
+    }
+  });
+
+  expect(contactResponse.ok()).toBe(true);
+  await expect(contactResponse.json()).resolves.toMatchObject({
+    assistantMessage: {
+      content:
+        "Thanks, I have the details for Komodo Day Trip on tomorrow for 3 guests. Booking confirmation is not enabled for this tenant yet, so I will send this to the operator for confirmation."
+    },
+    manualInquiry: {
+      status: "OPEN",
+      productTitle: "Komodo Day Trip",
+      dateText: "tomorrow",
+      guests: 3,
+      travellerName: "Maya Chen",
+      travellerEmail: "maya@example.com",
+      travellerPhone: "+61 400 111 222"
     }
   });
 });

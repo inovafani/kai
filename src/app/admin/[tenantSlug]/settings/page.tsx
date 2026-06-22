@@ -2,6 +2,8 @@ import { cookies } from "next/headers";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { submitAdminTokenAction } from "../../inquiries/actions";
+import { parsePublicProductCatalog } from "@/core/pms/public-product-catalog";
+import { getKaiLlmRuntimeSettings } from "@/server/config/kai-environment";
 import { findTenantSettingsBySlug } from "@/server/tenant/tenant-repository";
 
 export const dynamic = "force-dynamic";
@@ -79,6 +81,89 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
+function ProductMappingRows({ value }: { value: unknown }) {
+  const mappings = parsePublicProductCatalog(value);
+  const rows = [
+    ...mappings,
+    ...Array.from({ length: Math.max(2, 6 - mappings.length) }, () => ({
+      publicTitle: "",
+      publicDescription: "",
+      productUrl: "",
+      pmsProductId: "",
+      bookingMode: "AUTO_BOOKING" as const
+    }))
+  ];
+
+  return (
+    <div style={{ display: "grid", gap: 10 }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "1fr 1.15fr 1.15fr 0.72fr 0.68fr",
+          gap: 8,
+          color: "#53655f",
+          fontSize: 12,
+          fontWeight: 800
+        }}
+      >
+        <span>Website product</span>
+        <span>Product URL</span>
+        <span>Description</span>
+        <span>PMS code</span>
+        <span>Mode</span>
+      </div>
+      {rows.map((mapping, index) => (
+        <div
+          key={index}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "1fr 1.15fr 1.15fr 0.72fr 0.68fr",
+            gap: 8
+          }}
+        >
+          <input
+            aria-label={`Website product ${index + 1}`}
+            name="productPublicTitle"
+            defaultValue={mapping.publicTitle}
+            placeholder="Gold Coast Whale Escape"
+            style={{ border: "1px solid #b8cbc5", borderRadius: 8, fontSize: 13, padding: "9px 10px" }}
+          />
+          <input
+            aria-label={`Product URL ${index + 1}`}
+            name="productUrl"
+            defaultValue={mapping.productUrl ?? ""}
+            placeholder="https://example.com/product"
+            style={{ border: "1px solid #b8cbc5", borderRadius: 8, fontSize: 13, padding: "9px 10px" }}
+          />
+          <input
+            aria-label={`Product description ${index + 1}`}
+            name="productPublicDescription"
+            defaultValue={mapping.publicDescription}
+            placeholder="Luxury whale watching"
+            style={{ border: "1px solid #b8cbc5", borderRadius: 8, fontSize: 13, padding: "9px 10px" }}
+          />
+          <input
+            aria-label={`PMS product code ${index + 1}`}
+            name="productPmsProductId"
+            defaultValue={mapping.pmsProductId}
+            placeholder="PGG8QT"
+            style={{ border: "1px solid #b8cbc5", borderRadius: 8, fontSize: 13, padding: "9px 10px" }}
+          />
+          <select
+            aria-label={`Booking mode ${index + 1}`}
+            name="productBookingMode"
+            defaultValue={mapping.bookingMode}
+            style={{ border: "1px solid #b8cbc5", borderRadius: 8, fontSize: 13, padding: "9px 10px" }}
+          >
+            <option value="AUTO_BOOKING">Auto-book</option>
+            <option value="MANUAL_INQUIRY">Manual</option>
+          </select>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default async function TenantSettingsPage({ params, searchParams }: TenantSettingsPageProps) {
   const { tenantSlug } = await params;
   const { saved } = await searchParams;
@@ -117,6 +202,7 @@ export default async function TenantSettingsPage({ params, searchParams }: Tenan
   }
 
   const tenant = await findTenantSettingsBySlug(tenantSlug);
+  const llm = getKaiLlmRuntimeSettings(process.env);
   if (!tenant) {
     notFound();
   }
@@ -164,6 +250,7 @@ export default async function TenantSettingsPage({ params, searchParams }: Tenan
 
         <form action={"/api/admin/" + tenant.slug + "/settings"} method="post" style={{ border: "1px solid #dbe5e1", borderRadius: 8, background: "#ffffff", display: "grid", gap: 14, marginBottom: 12, padding: 18 }}>
           <input type="hidden" name="tenantSlug" value={tenant.slug} />
+          <input type="hidden" name="adminToken" value={adminToken ?? ""} />
           <h2 style={{ margin: 0, fontSize: 18 }}>Edit operational settings</h2>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
             <label style={{ display: "grid", gap: 6, color: "#53655f", fontSize: 13, fontWeight: 700 }}>
@@ -186,10 +273,27 @@ export default async function TenantSettingsPage({ params, searchParams }: Tenan
               <textarea name="enabledFeatures" defaultValue={listToTextarea(tenant.config?.enabledFeatures ?? [])} rows={5} style={{ border: "1px solid #b8cbc5", borderRadius: 8, fontSize: 14, lineHeight: 1.5, padding: "10px 11px", resize: "vertical" }} />
             </label>
             <label style={{ display: "grid", gap: 6, color: "#53655f", fontSize: 13, fontWeight: 700 }}>
+              Brand voice
+              <textarea name="brandVoice" defaultValue={tenant.branding?.brandVoice ?? ""} rows={5} style={{ border: "1px solid #b8cbc5", borderRadius: 8, fontSize: 14, lineHeight: 1.5, padding: "10px 11px", resize: "vertical" }} />
+            </label>
+            <label style={{ display: "grid", gap: 6, color: "#53655f", fontSize: 13, fontWeight: 700 }}>
               Response guardrails
               <textarea name="responseGuardrails" defaultValue={listToTextarea(tenant.config?.responseGuardrails ?? [])} rows={5} style={{ border: "1px solid #b8cbc5", borderRadius: 8, fontSize: 14, lineHeight: 1.5, padding: "10px 11px", resize: "vertical" }} />
             </label>
+            <label style={{ alignSelf: "start", border: "1px solid #dbe5e1", borderRadius: 8, color: "#53655f", display: "flex", gap: 10, fontSize: 13, fontWeight: 700, padding: 12 }}>
+              <input name="bookingWriteEnabled" type="checkbox" defaultChecked={tenant.config?.bookingWriteEnabled ?? false} />
+              <span>
+                Enable PMS booking-write
+                <span style={{ display: "block", color: "#62746e", fontSize: 12, fontWeight: 500, lineHeight: 1.45, marginTop: 3 }}>
+                  Keep off until the provider booking-write adapter has been tested.
+                </span>
+              </span>
+            </label>
           </div>
+          <section style={{ borderTop: "1px solid #e7efec", display: "grid", gap: 10, marginTop: 6, paddingTop: 14 }}>
+            <h3 style={{ margin: 0, color: "#10201c", fontSize: 16 }}>Website product mapping</h3>
+            <ProductMappingRows value={tenant.config?.publicProductCatalog} />
+          </section>
           <div style={{ display: "flex", justifyContent: "end" }}>
             <button type="submit" style={{ border: "1px solid #0f766e", borderRadius: 8, background: "#0f766e", color: "#ffffff", cursor: "pointer", fontSize: 15, fontWeight: 800, padding: "10px 14px" }}>
               Save settings
@@ -202,6 +306,7 @@ export default async function TenantSettingsPage({ params, searchParams }: Tenan
             <div style={{ display: "grid", gap: 14 }}>
               <Field label="PMS provider" value={tenant.config?.pmsProvider ?? "Not configured"} />
               <Field label="Booking mode" value={tenant.config?.bookingMode ?? "Not configured"} />
+              <Field label="PMS booking-write" value={tenant.config?.bookingWriteEnabled ? "Enabled" : "Disabled"} />
               <Field label="Supported channels" value={<ChipList items={tenant.config?.supportedChannels ?? []} />} />
               <Field label="Enabled features" value={<ChipList items={tenant.config?.enabledFeatures ?? []} />} />
             </div>
@@ -209,6 +314,18 @@ export default async function TenantSettingsPage({ params, searchParams }: Tenan
 
           <SettingSection title="Allowed origins">
             <ChipList items={tenant.allowedOrigins} />
+          </SettingSection>
+
+          <SettingSection title="LLM runtime">
+            <div style={{ display: "grid", gap: 14 }}>
+              <Field label="Enabled" value={llm.enabled ? "Yes" : "No"} />
+              <Field label="Provider" value={llm.provider} />
+              <Field label="Configured" value={llm.configured ? "Yes" : "No"} />
+              <Field label="Model" value={llm.model ?? "Not configured"} />
+              <Field label="Timeout" value={llm.timeoutMs + " ms"} />
+              <Field label="Max output tokens" value={llm.maxOutputTokens} />
+              <Field label="Warnings" value={<ChipList items={llm.warnings} />} />
+            </div>
           </SettingSection>
 
           <SettingSection title="Escalation rules">
@@ -227,6 +344,10 @@ export default async function TenantSettingsPage({ params, searchParams }: Tenan
 
           <SettingSection title="Required slots">
             <JsonBlock value={tenant.config?.requiredSlots ?? {}} />
+          </SettingSection>
+
+          <SettingSection title="Website product mapping">
+            <JsonBlock value={tenant.config?.publicProductCatalog ?? []} />
           </SettingSection>
 
           <SettingSection title="Integrations">

@@ -1,6 +1,7 @@
 export type BookingBrainIntent =
   | "CHECK_AVAILABILITY"
   | "BOOKING_INQUIRY"
+  | "PRODUCT_RECOMMENDATION"
   | "HUMAN_HANDOFF"
   | "GENERAL_QUESTION";
 
@@ -20,7 +21,30 @@ export interface BookingBrainResult {
   missingSlots: BookingBrainMissingSlot[];
 }
 
-const PRODUCT_HINTS = ["Komodo Day Trip", "Private Charter", "Reef Day Snorkel"];
+const PRODUCT_HINTS = [
+  "Komodo Day Trip",
+  "Private Charter",
+  "Reef Day Snorkel",
+  "Gold Coast Whale Escape",
+  "Twilight Drift",
+  "Broadwater Twilight Dining",
+  "Coastal Lunch Escape",
+  "Private Yacht Charter"
+];
+const MONTHS: Record<string, string> = {
+  january: "01",
+  february: "02",
+  march: "03",
+  april: "04",
+  may: "05",
+  june: "06",
+  july: "07",
+  august: "08",
+  september: "09",
+  october: "10",
+  november: "11",
+  december: "12"
+};
 
 function findProductHint(message: string) {
   const lowerMessage = message.toLowerCase();
@@ -43,6 +67,13 @@ function findDateText(message: string) {
     return isoDate[0];
   }
 
+  const ordinalMonthDate = lowerMessage.match(
+    /\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december)\b/
+  );
+  if (ordinalMonthDate) {
+    return `2026-${MONTHS[ordinalMonthDate[2]]}-${ordinalMonthDate[1].padStart(2, "0")}`;
+  }
+
   return null;
 }
 
@@ -57,6 +88,9 @@ function findGuests(message: string) {
 
 function classifyIntent(message: string): BookingBrainIntent {
   const lowerMessage = message.toLowerCase();
+  const dateText = findDateText(message);
+  const guests = findGuests(message);
+  const productHint = findProductHint(message);
 
   if (/\b(human|agent|operator|staff|person|refund|complaint)\b/.test(lowerMessage)) {
     return "HUMAN_HANDOFF";
@@ -66,15 +100,44 @@ function classifyIntent(message: string): BookingBrainIntent {
     return "CHECK_AVAILABILITY";
   }
 
+  if (dateText && /\b(what about|how about|instead)\b/.test(lowerMessage)) {
+    return "CHECK_AVAILABILITY";
+  }
+
+  if (
+    /\b(yes please|sounds good|looks good|i want it|i want this|i want that|want it|want this|want that|take it|let'?s do it|continue|go ahead|proceed)\b/.test(
+      lowerMessage
+    )
+  ) {
+    return "BOOKING_INQUIRY";
+  }
+
+  if (
+    /\b(recommend|recommendation|suggest|suggestion|options?|what should i do)\b/.test(lowerMessage) ||
+    /\b(what do you have|what have you got|show me options|show me experiences|what can i do|what are my options)\b/.test(
+      lowerMessage
+    ) ||
+    /\b(know about|learn about|tell me about|more about|info about|details about|curious about|interested in|looking at)\b/.test(
+      lowerMessage
+    ) ||
+    (Boolean(productHint) && /\b(see|view|look at|show me|let me see|open|page)\b/.test(lowerMessage))
+  ) {
+    return "PRODUCT_RECOMMENDATION";
+  }
+
   if (/\b(book|booking|reserve|reservation|trips?|tours?|charters?|boats?)\b/.test(lowerMessage)) {
     return "BOOKING_INQUIRY";
+  }
+
+  if (dateText && guests) {
+    return "CHECK_AVAILABILITY";
   }
 
   return "GENERAL_QUESTION";
 }
 
 function getMissingSlots(intent: BookingBrainIntent, slots: BookingBrainSlots) {
-  if (intent === "HUMAN_HANDOFF" || intent === "GENERAL_QUESTION") {
+  if (intent === "HUMAN_HANDOFF" || intent === "GENERAL_QUESTION" || intent === "PRODUCT_RECOMMENDATION") {
     return [];
   }
 
@@ -127,7 +190,7 @@ export function composeBookingBrainReply(analysis: BookingBrainResult) {
   }
 
   if (analysis.intent === "GENERAL_QUESTION") {
-    return "I can help with Komodo tours, availability checks, booking inquiries, or handoff to the team.";
+    return "I can help with this tenant's experiences, availability checks, booking inquiries, or handoff to the team.";
   }
 
   if (analysis.missingSlots.length > 0) {

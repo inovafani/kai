@@ -45,12 +45,66 @@ describe("booking brain", () => {
     expect(result.missingSlots).toEqual(["product", "guests"]);
   });
 
+  it("detects product recommendation requests", () => {
+    const result = analyzeTravellerBookingMessage("do you have recommendation for me tomorrow?");
+
+    expect(result.intent).toBe("PRODUCT_RECOMMENDATION");
+    expect(result.slots.dateText).toBe("tomorrow");
+    expect(result.missingSlots).toEqual([]);
+  });
+
+  it("detects broad option browsing requests as product recommendations", () => {
+    const result = analyzeTravellerBookingMessage("what do you have for me?");
+
+    expect(result.intent).toBe("PRODUCT_RECOMMENDATION");
+    expect(result.missingSlots).toEqual([]);
+  });
+
+  it("detects product detail requests as product recommendations with a product hint", () => {
+    const result = analyzeTravellerBookingMessage("I would like to know about Gold Coast Whale Escape");
+
+    expect(result.intent).toBe("PRODUCT_RECOMMENDATION");
+    expect(result.slots.productHint).toBe("Gold Coast Whale Escape");
+    expect(result.missingSlots).toEqual([]);
+  });
+
+  it("detects natural curiosity about a specific product", () => {
+    const result = analyzeTravellerBookingMessage("im curious about Gold Coast Whale Escape");
+
+    expect(result.intent).toBe("PRODUCT_RECOMMENDATION");
+    expect(result.slots.productHint).toBe("Gold Coast Whale Escape");
+    expect(result.missingSlots).toEqual([]);
+  });
+
+  it("detects product page requests with a product hint", () => {
+    const result = analyzeTravellerBookingMessage("let me see gold coast whale escape");
+
+    expect(result.intent).toBe("PRODUCT_RECOMMENDATION");
+    expect(result.slots.productHint).toBe("Gold Coast Whale Escape");
+    expect(result.missingSlots).toEqual([]);
+  });
+
+  it("treats ordinal month dates as availability follow-ups", () => {
+    const result = analyzeTravellerBookingMessage("what about for 23rd of June?");
+
+    expect(result.intent).toBe("CHECK_AVAILABILITY");
+    expect(result.slots.dateText).toBe("2026-06-23");
+    expect(result.missingSlots).toEqual(["product", "guests"]);
+  });
+
   it("treats boat wording as booking intent", () => {
     const result = analyzeTravellerBookingMessage("private boat for 2 guests tomorrow");
 
     expect(result.intent).toBe("BOOKING_INQUIRY");
     expect(result.slots.dateText).toBe("tomorrow");
     expect(result.slots.guests).toBe(2);
+  });
+
+  it("treats natural confirmation language as booking intent", () => {
+    const result = analyzeTravellerBookingMessage("yes please i want it");
+
+    expect(result.intent).toBe("BOOKING_INQUIRY");
+    expect(result.missingSlots).toEqual(["product", "date", "guests"]);
   });
 
 });

@@ -6,8 +6,8 @@ const products: PmsProduct[] = [
   {
     externalProductId: "mock-komodo-day-trip",
     title: "Komodo Day Trip",
-    description: "A shared day trip with instant booking.",
-    bookingMode: "INSTANT_BOOKING"
+    description: "A shared day trip with auto-booking.",
+    bookingMode: "AUTO_BOOKING"
   },
   {
     externalProductId: "mock-private-charter",
@@ -19,7 +19,7 @@ const products: PmsProduct[] = [
     externalProductId: "mock-reef-day-snorkel",
     title: "Reef Day Snorkel",
     description: "A guided snorkeling tour over bright reef sites.",
-    bookingMode: "INSTANT_BOOKING"
+    bookingMode: "AUTO_BOOKING"
   }
 ];
 

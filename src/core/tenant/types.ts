@@ -1,6 +1,6 @@
 export type TenantStatus = "ACTIVE" | "SUSPENDED" | "DISABLED";
 
-export type BookingMode = "MANUAL_INQUIRY" | "INSTANT_BOOKING";
+export type BookingMode = "MANUAL_INQUIRY" | "AUTO_BOOKING";
 
 export type PmsProvider = "MOCK" | "REZDY" | "INSEANQ" | "FAREHARBOR" | "BOKUN" | "NATIVE";
 

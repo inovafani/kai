@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { updateBookingMemoryState } from "@/core/booking/booking-memory";
 import { handleTravellerBookingMessage } from "@/core/booking/booking-orchestrator";
+import { MappedPmsAdapter } from "@/core/pms/mapped-pms-adapter";
+import { parsePublicProductCatalog } from "@/core/pms/public-product-catalog";
 import type { PmsProvider } from "@/core/tenant/types";
 import {
   createAssistantMessage,
@@ -8,9 +10,11 @@ import {
   createTravellerMessage,
   findConversationBookingState,
   findTenantConversation,
+  listRecentTravellerMessageContents,
   upsertConversationBookingState
 } from "@/server/conversation/conversation-repository";
-import { createOpenAiAssistantClient } from "@/server/llm/openai-assistant-client";
+import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
+import { buildBookingFailureManualInquiry } from "@/server/conversation/manual-inquiry-fallback";
 import { getPmsAdapter } from "@/server/pms/pms-adapter-registry";
 import { getWidgetRequestOrigin } from "@/server/widget/request-origin";
 import { resolveWidgetRequest } from "@/server/widget/resolve-widget-request";
@@ -91,6 +95,10 @@ export async function POST(request: NextRequest) {
     tenantId: resolved.tenant.id,
     conversationId: conversation.id
   });
+  const priorTravellerMessages = await listRecentTravellerMessageContents({
+    tenantId: resolved.tenant.id,
+    conversationId: conversation.id
+  });
 
   const message = await createTravellerMessage({
     tenantId: resolved.tenant.id,
@@ -99,12 +107,15 @@ export async function POST(request: NextRequest) {
   });
 
   const provider = (resolved.tenant.config?.pmsProvider ?? "MOCK") as PmsProvider;
-  const llmClient = createOpenAiAssistantClient(process.env);
+  const llmClient = createAssistantLlmClient(process.env);
   let assistantContent: string;
   let manualInquiry: Awaited<ReturnType<typeof createManualInquiry>> | null = null;
 
   try {
-    const pmsAdapter = getPmsAdapter(provider);
+    const sourcePmsAdapter = getPmsAdapter(provider, process.env, fetch, resolved.tenant.slug);
+    const publicProductCatalog = parsePublicProductCatalog(resolved.tenant.config?.publicProductCatalog);
+    const pmsAdapter =
+      publicProductCatalog.length > 0 ? new MappedPmsAdapter(sourcePmsAdapter, publicProductCatalog) : sourcePmsAdapter;
     const products = await pmsAdapter.listProducts();
     const bookingState = updateBookingMemoryState({
       previousState: previousBookingState,
@@ -120,9 +131,18 @@ export async function POST(request: NextRequest) {
 
     const bookingResult = await handleTravellerBookingMessage({
       message: content,
+      priorTravellerMessages,
       bookingMemory: bookingState,
       pmsAdapter,
-      llmClient
+      bookingWriteEnabled: resolved.tenant.config?.bookingWriteEnabled ?? false,
+      llmClient,
+      tenantContext: {
+        tenantName: resolved.tenant.name,
+        brandVoice: resolved.tenant.branding?.brandVoice ?? null,
+        pmsProvider: provider,
+        responseGuardrails: resolved.tenant.config?.responseGuardrails ?? [],
+        productTitles: products.map((product) => product.title)
+      }
     });
 
     if (bookingResult.action === "MANUAL_INQUIRY_REQUIRED") {
@@ -131,6 +151,47 @@ export async function POST(request: NextRequest) {
         conversationId: conversation.id,
         state: bookingState,
         travellerMessage: content
+      });
+    }
+
+    if (bookingResult.bookingStatePatch) {
+      await upsertConversationBookingState({
+        tenantId: resolved.tenant.id,
+        conversationId: conversation.id,
+        state: bookingResult.bookingStatePatch
+      });
+    }
+
+    const bookingFailureInquiry = buildBookingFailureManualInquiry(bookingResult);
+    if (bookingFailureInquiry) {
+      manualInquiry = await createManualInquiry({
+        tenantId: resolved.tenant.id,
+        conversationId: conversation.id,
+        state: bookingFailureInquiry.state,
+        travellerMessage: content,
+        travellerName: bookingFailureInquiry.travellerName,
+        travellerEmail: bookingFailureInquiry.travellerEmail,
+        travellerPhone: bookingFailureInquiry.travellerPhone
+      });
+    }
+
+    if (
+      (bookingResult.action === "BOOKING_INQUIRY_READY" || bookingResult.action === "BOOKING_WRITE_DISABLED") &&
+      bookingResult.inquiryDraft
+    ) {
+      manualInquiry = await createManualInquiry({
+        tenantId: resolved.tenant.id,
+        conversationId: conversation.id,
+        state: {
+          productExternalId: bookingResult.inquiryDraft.productExternalId,
+          productTitle: bookingResult.inquiryDraft.productTitle,
+          dateText: bookingResult.inquiryDraft.dateText,
+          guests: bookingResult.inquiryDraft.guests
+        },
+        travellerMessage: content,
+        travellerName: bookingResult.inquiryDraft.travellerName,
+        travellerEmail: bookingResult.inquiryDraft.travellerEmail,
+        travellerPhone: bookingResult.inquiryDraft.travellerPhone
       });
     }
 
@@ -172,7 +233,10 @@ export async function POST(request: NextRequest) {
           productExternalId: manualInquiry.productExternalId,
           productTitle: manualInquiry.productTitle,
           dateText: manualInquiry.dateText,
-          guests: manualInquiry.guests
+          guests: manualInquiry.guests,
+          travellerName: manualInquiry.travellerName,
+          travellerEmail: manualInquiry.travellerEmail,
+          travellerPhone: manualInquiry.travellerPhone
         }
       : null
   });

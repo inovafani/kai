@@ -73,7 +73,9 @@ model TenantConfig {
   enabledFeatures    String[]
   requiredSlots      Json
   bookingMode        String
+  bookingWriteEnabled Boolean    @default(false)
   pmsProvider        PmsProvider @default(MOCK)
+  publicProductCatalog Json       @default("[]")
   escalationRules    String[]
   responseGuardrails String[]
   createdAt          DateTime    @default(now())
@@ -132,6 +134,16 @@ model ConversationBookingState {
   productTitle      String?
   dateText          String?
   guests            Int?
+  travellerName     String?
+  travellerEmail    String?
+  travellerPhone    String?
+  bookingStatus     String   @default("DRAFT")
+  confirmationSummary String?
+  externalBookingId String?
+  externalProvider  String?
+  bookingError      String?
+  ticketOptions     Json?
+  ticketQuantities  Json?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
@@ -149,6 +161,9 @@ model ManualInquiry {
   productTitle      String?
   dateText          String?
   guests            Int?
+  travellerName     String?
+  travellerEmail    String?
+  travellerPhone    String?
   travellerMessage  String
   createdAt         DateTime            @default(now())
   updatedAt         DateTime            @updatedAt

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { validateKaiEnvironment } from "./kai-environment";
+import { getKaiLlmRuntimeSettings, validateKaiEnvironment } from "./kai-environment";
 
 describe("validateKaiEnvironment", () => {
   const validEnvironment = {
@@ -52,4 +52,43 @@ describe("validateKaiEnvironment", () => {
       ]
     });
   });
+  it("summarizes enabled Groq LLM runtime settings without exposing secrets", () => {
+    expect(
+      getKaiLlmRuntimeSettings({
+        ENABLE_LLM: "true",
+        LLM_PROVIDER: "groq",
+        GROQ_API_KEY: "gsk-secret-value",
+        GROQ_MODEL: "llama-test",
+        GROQ_TIMEOUT_MS: "2500",
+        LLM_MAX_OUTPUT_TOKENS: "180"
+      })
+    ).toEqual({
+      enabled: true,
+      provider: "groq",
+      configured: true,
+      model: "llama-test",
+      timeoutMs: 2500,
+      maxOutputTokens: 180,
+      warnings: []
+    });
+  });
+
+  it("fails closed for unsupported LLM providers and clamps output token limits", () => {
+    expect(
+      getKaiLlmRuntimeSettings({
+        ENABLE_LLM: "true",
+        LLM_PROVIDER: "claude",
+        LLM_MAX_OUTPUT_TOKENS: "9000"
+      })
+    ).toEqual({
+      enabled: true,
+      provider: "unsupported",
+      configured: false,
+      model: null,
+      timeoutMs: 3000,
+      maxOutputTokens: 500,
+      warnings: ["Unsupported LLM provider: claude"]
+    });
+  });
+
 });

@@ -11,8 +11,8 @@ describe("MockPmsAdapter", () => {
       {
         externalProductId: "mock-komodo-day-trip",
         title: "Komodo Day Trip",
-        description: "A shared day trip with instant booking.",
-        bookingMode: "INSTANT_BOOKING"
+        description: "A shared day trip with auto-booking.",
+        bookingMode: "AUTO_BOOKING"
       },
       {
         externalProductId: "mock-private-charter",
@@ -24,7 +24,7 @@ describe("MockPmsAdapter", () => {
         externalProductId: "mock-reef-day-snorkel",
         title: "Reef Day Snorkel",
         description: "A guided snorkeling tour over bright reef sites.",
-        bookingMode: "INSTANT_BOOKING"
+        bookingMode: "AUTO_BOOKING"
       }
     ]);
   });
@@ -63,6 +63,41 @@ describe("MockPmsAdapter", () => {
       externalBookingId: "mock-booking-mock-komodo-day-trip-2026-10-12-2",
       provider: "MOCK",
       status: "CONFIRMED"
+    });
+  });
+
+  it("lists Boattime yacht charter products for the Boattime demo catalog", async () => {
+    const adapter = new MockPmsAdapter("boattime");
+
+    const products = await adapter.listProducts();
+
+    expect(products.map((product) => product.title)).toEqual([
+      "Gold Coast Whale Escape",
+      "Private Yacht Charter",
+      "Corporate Charter",
+      "Wedding Yacht Charter",
+      "Twilight Drift",
+      "Coastal Lunch Escape",
+      "Broadwater Twilight Dining"
+    ]);
+  });
+
+  it("returns Boattime availability for instant ticketed products", async () => {
+    const adapter = new MockPmsAdapter("boattime");
+
+    const availability = await adapter.getAvailability({
+      productId: "boattime-whale-escape",
+      date: "tomorrow",
+      guests: 4
+    });
+
+    expect(availability).toEqual({
+      productId: "boattime-whale-escape",
+      date: "tomorrow",
+      available: true,
+      remaining: 20,
+      currency: "AUD",
+      unitPriceCents: 9900
     });
   });
 });

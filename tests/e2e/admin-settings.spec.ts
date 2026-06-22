@@ -84,3 +84,61 @@ test("admin can update tenant operational settings", async ({ context, page, req
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(page.getByText("MOCK", { exact: true }).last()).toBeVisible();
 });
+
+
+test("admin can update Boattime PMS provider without landing on the API route", async ({ context, page }) => {
+  await context.addCookies([
+    {
+      name: "kai_admin_token",
+      value: ADMIN_TOKEN,
+      domain: "127.0.0.1",
+      path: "/",
+      httpOnly: true,
+      sameSite: "Lax"
+    },
+    {
+      name: "kai_admin_token",
+      value: ADMIN_TOKEN,
+      domain: "localhost",
+      path: "/",
+      httpOnly: true,
+      sameSite: "Lax"
+    }
+  ]);
+
+  await page.goto("/admin/boattime/settings");
+  await page.getByLabel("PMS provider").selectOption("REZDY");
+  await page.getByRole("button", { name: "Save settings" }).click();
+
+  await expect(page).toHaveURL(/\/admin\/boattime\/settings\?saved=1/);
+  await expect(page.getByText("Settings saved")).toBeVisible();
+  await expect(page.getByText("REZDY", { exact: true }).last()).toBeVisible();
+});
+
+test("admin tenant settings shows row-based website product mapping", async ({ context, page }) => {
+  await context.addCookies([
+    {
+      name: "kai_admin_token",
+      value: ADMIN_TOKEN,
+      domain: "127.0.0.1",
+      path: "/",
+      httpOnly: true,
+      sameSite: "Lax"
+    },
+    {
+      name: "kai_admin_token",
+      value: ADMIN_TOKEN,
+      domain: "localhost",
+      path: "/",
+      httpOnly: true,
+      sameSite: "Lax"
+    }
+  ]);
+
+  await page.goto("/admin/boattime/settings");
+
+  await expect(page.getByRole("heading", { name: "Website product mapping", level: 3 })).toBeVisible();
+  await expect(page.getByLabel("Website product 1")).toHaveValue("Gold Coast Whale Escape");
+  await expect(page.getByLabel("PMS product code 1")).toHaveValue("PGG8QT");
+  await expect(page.getByLabel("Booking mode 1")).toHaveValue("AUTO_BOOKING");
+});

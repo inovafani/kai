@@ -23,7 +23,15 @@ describe("booking memory", () => {
       productExternalId: "mock-private-charter",
       productTitle: "Private Charter",
       dateText: "tomorrow",
-      guests: 2
+      guests: 2,
+      travellerName: null,
+      travellerEmail: null,
+      travellerPhone: null,
+      bookingStatus: "DRAFT",
+      confirmationSummary: null,
+      externalBookingId: null,
+      externalProvider: null,
+      bookingError: null
     });
   });
 
@@ -43,7 +51,15 @@ describe("booking memory", () => {
       productExternalId: "mock-private-charter",
       productTitle: "Private Charter",
       dateText: "tomorrow",
-      guests: 2
+      guests: 2,
+      travellerName: null,
+      travellerEmail: null,
+      travellerPhone: null,
+      bookingStatus: "DRAFT",
+      confirmationSummary: null,
+      externalBookingId: null,
+      externalProvider: null,
+      bookingError: null
     });
   });
 });

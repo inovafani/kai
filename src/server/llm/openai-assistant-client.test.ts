@@ -3,7 +3,11 @@ import { createOpenAiAssistantClient } from "./openai-assistant-client";
 
 describe("createOpenAiAssistantClient", () => {
   it("returns null when OPENAI_API_KEY is not configured", () => {
-    expect(createOpenAiAssistantClient({ OPENAI_API_KEY: "" })).toBeNull();
+    expect(createOpenAiAssistantClient({ OPENAI_API_KEY: "", ENABLE_OPENAI_LLM: "true" })).toBeNull();
+  });
+
+  it("returns null unless ENABLE_OPENAI_LLM is true", () => {
+    expect(createOpenAiAssistantClient({ OPENAI_API_KEY: "sk-test" })).toBeNull();
   });
 
   it("uses the Responses API to compose a guarded assistant reply", async () => {
@@ -20,6 +24,7 @@ describe("createOpenAiAssistantClient", () => {
     const client = createOpenAiAssistantClient(
       {
         OPENAI_API_KEY: "sk-test",
+        ENABLE_OPENAI_LLM: "true",
         OPENAI_MODEL: "gpt-test-model"
       },
       fetcher
@@ -56,12 +61,35 @@ describe("createOpenAiAssistantClient", () => {
     expect(body.model).toBe("gpt-test-model");
     expect(body.input).toContain("Komodo Day Trip");
     expect(body.input).toContain("USD 185.00");
-    expect(body.max_output_tokens).toBe(220);
+    expect(body.max_output_tokens).toBe(260);
+  });
+
+  it("passes an abort signal so slow OpenAI calls can time out", async () => {
+    const fetcher = vi.fn(async () => {
+      return new Response(JSON.stringify({ output_text: "Safe reply." }), { status: 200 });
+    });
+
+    const client = createOpenAiAssistantClient(
+      {
+        OPENAI_API_KEY: "sk-test",
+        ENABLE_OPENAI_LLM: "true",
+        OPENAI_TIMEOUT_MS: "1500"
+      },
+      fetcher
+    );
+
+    await client?.composeReply({
+      deterministicReply: "Safe reply.",
+      requiredFacts: ["Safe"]
+    });
+
+    const [, requestInit] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    expect(requestInit.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("fails closed when the OpenAI API response is not ok", async () => {
     const client = createOpenAiAssistantClient(
-      { OPENAI_API_KEY: "sk-test" },
+      { OPENAI_API_KEY: "sk-test", ENABLE_OPENAI_LLM: "true" },
       async () => new Response(JSON.stringify({ error: { message: "bad request" } }), { status: 400 })
     );
 
