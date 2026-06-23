@@ -115,6 +115,7 @@ describe("real PMS adapter shells", () => {
       remaining: 12,
       currency: "AUD",
       unitPriceCents: 9900,
+      timeOptions: [{ label: "9:00 AM", startTimeLocal: "2026-06-22 09:00:00", remaining: 12 }],
       ticketOptions: [{ label: "Adult", unitPriceCents: 9900 }]
     });
 
@@ -126,6 +127,136 @@ describe("real PMS adapter shells", () => {
     expect(url).toContain("endTimeLocal=2026-06-23+00%3A00%3A00");
     expect(url).toContain("minAvailability=2");
     expect(requestInit).toEqual(expect.objectContaining({ method: "GET", body: undefined }));
+  });
+
+  it("maps Rezdy optional extras from availability sessions", async () => {
+    const fetcher = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          sessions: [
+            {
+              productCode: "LWWVE",
+              startTimeLocal: "2026-06-27 12:00:00",
+              seatsAvailable: 82,
+              priceOptions: [{ label: '"2 people for $149.00', price: 149 }],
+              extras: [
+                { name: "Corona Bucket", price: 30 },
+                { label: "Sparkling for 2", advertisedPrice: 40 },
+                { title: "Cheese Platter for 2", amount: 10 }
+              ]
+            }
+          ]
+        }),
+        { status: 200 }
+      );
+    });
+    const adapter = new RezdyPmsAdapter({
+      baseUrl: "https://rezdy.example.test/v1",
+      apiKey: "rezdy-secret",
+      productListPath: "/products",
+      availabilityPath: "/availability",
+      fetcher
+    });
+
+    await expect(adapter.getAvailability({ productId: "LWWVE", date: "2026-06-27", guests: 2 })).resolves.toMatchObject({
+      extraOptions: [
+        { label: "Corona Bucket", unitPriceCents: 3000 },
+        { label: "Sparkling for 2", unitPriceCents: 4000 },
+        { label: "Cheese Platter for 2", unitPriceCents: 1000 }
+      ]
+    });
+  });
+
+  it("returns all Rezdy available time options for the requested date", async () => {
+    const fetcher = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          sessions: [
+            {
+              productCode: "PGG8QT",
+              startTimeLocal: "2026-06-27 09:00:00",
+              seatsAvailable: 77,
+              priceOptions: [{ label: "Adult", price: 79 }]
+            },
+            {
+              productCode: "PGG8QT",
+              startTimeLocal: "2026-06-27 12:00:00",
+              seatsAvailable: 79,
+              priceOptions: [{ label: "Adult", price: 79 }]
+            }
+          ]
+        }),
+        { status: 200 }
+      );
+    });
+    const adapter = new RezdyPmsAdapter({
+      baseUrl: "https://rezdy.example.test/v1",
+      apiKey: "rezdy-secret",
+      productListPath: "/products",
+      availabilityPath: "/availability",
+      fetcher
+    });
+
+    await expect(adapter.getAvailability({ productId: "PGG8QT", date: "2026-06-27", guests: 2 })).resolves.toMatchObject({
+      productId: "PGG8QT",
+      date: "2026-06-27 09:00:00",
+      available: true,
+      remaining: 77,
+      timeOptions: [
+        { label: "9:00 AM", startTimeLocal: "2026-06-27 09:00:00", remaining: 77 },
+        { label: "12:00 PM", startTimeLocal: "2026-06-27 12:00:00", remaining: 79 }
+      ]
+    });
+  });
+
+  it("keeps Rezdy checkout session identifiers on time options when available", async () => {
+    const fetcher = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          sessions: [
+            {
+              id: "480938442",
+              productCode: "LWWVE",
+              startTimeLocal: "2026-06-25 12:00:00",
+              seatsAvailable: 82,
+              priceOptions: [{ label: '"2 people for $149.00', price: 149 }]
+            },
+            {
+              itemKey: "item-431872-480938443",
+              productCode: "LWWVE",
+              startTimeLocal: "2026-06-25 15:00:00",
+              seatsAvailable: 82,
+              priceOptions: [{ label: '"2 people for $149.00', price: 149 }]
+            }
+          ]
+        }),
+        { status: 200 }
+      );
+    });
+    const adapter = new RezdyPmsAdapter({
+      baseUrl: "https://rezdy.example.test/v1",
+      apiKey: "rezdy-secret",
+      productListPath: "/products",
+      availabilityPath: "/availability",
+      fetcher
+    });
+
+    await expect(adapter.getAvailability({ productId: "LWWVE", date: "2026-06-25", guests: 2 })).resolves.toMatchObject({
+      timeOptions: [
+        {
+          label: "12:00 PM",
+          startTimeLocal: "2026-06-25 12:00:00",
+          remaining: 82,
+          checkoutSessionId: "480938442"
+        },
+        {
+          label: "3:00 PM",
+          startTimeLocal: "2026-06-25 15:00:00",
+          remaining: 82,
+          checkoutItemKey: "item-431872-480938443"
+        }
+      ]
+    });
   });
 
   it("creates a Rezdy booking request with product, session, quantity, and traveller contact", async () => {
@@ -304,6 +435,7 @@ describe("real PMS adapter shells", () => {
       remaining: 86,
       currency: "AUD",
       unitPriceCents: 9900,
+      timeOptions: [{ label: "9:00 AM", startTimeLocal: "2026-06-25 09:00:00", remaining: 86 }],
       ticketOptions: [
         { label: "Family (2A +2C) 3-13", unitPriceCents: 24900 },
         { label: '"2 people for $149.00', unitPriceCents: 14900 },
@@ -400,6 +532,47 @@ describe("real PMS adapter shells", () => {
       { optionLabel: "Adult (Winter Special)", value: 2 },
       { optionLabel: "Child (3-13)", value: 1 }
     ]);
+  });
+
+  it("sends a RezdyPay Stripe card token instead of raw card details when confirming paid bookings", async () => {
+    const fetcher = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          order: {
+            orderNumber: "RZ-PAID",
+            status: "CONFIRMED"
+          }
+        }),
+        { status: 200 }
+      );
+    });
+    const adapter = new RezdyPmsAdapter({
+      baseUrl: "https://rezdy.example.test/v1",
+      apiKey: "rezdy-secret",
+      productListPath: "/products",
+      availabilityPath: "/availability",
+      bookingPath: "/bookings",
+      fetcher
+    });
+
+    await adapter.createBooking({
+      productId: "LWWVE",
+      date: "2026-06-26 13:30:00",
+      guests: 1,
+      travellerName: "Test Four",
+      travellerEmail: "test4@example.com",
+      travellerPhone: "087665234098",
+      ticketQuantities: [{ optionLabel: "Adult (Winter Special)", quantity: 1 }],
+      paymentCardToken: "tok_rezdy_123"
+    });
+
+    const [, bookingRequestInit] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(bookingRequestInit.body as string)).toMatchObject({
+      creditCard: {
+        cardToken: "tok_rezdy_123"
+      }
+    });
+    expect(JSON.stringify(JSON.parse(bookingRequestInit.body as string))).not.toContain("cardNumber");
   });
 
   it("maps Inseanq availability responses into Kai availability when configured", async () => {

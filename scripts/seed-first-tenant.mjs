@@ -65,7 +65,12 @@ const tenants = [
           publicDescription: "Luxury whale watching cruise",
           productUrl: "http://localhost:3107/demo/boattime#gold-coast-whale-escape",
           pmsProductId: "PGG8QT",
-          bookingMode: "AUTO_BOOKING"
+          bookingMode: "AUTO_BOOKING",
+          extraOptions: [
+            { label: "Corona Bucket", unitPriceCents: 3000 },
+            { label: "Sparkling for 2", unitPriceCents: 4000 },
+            { label: "Cheese Platter for 2", unitPriceCents: 1000 }
+          ]
         },
         {
           publicTitle: "Twilight Drift",

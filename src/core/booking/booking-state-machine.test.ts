@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   beginExternalBooking,
+  beginPaidExternalBooking,
   captureBookingDetails,
   markBookingReadyToConfirm,
   markExternalBookingConfirmed,
@@ -45,6 +46,29 @@ describe("booking state machine", () => {
     expect(confirmed).toMatchObject({
       bookingStatus: "CONFIRMED",
       externalBookingId: "RZ-123",
+      externalProvider: "REZDY"
+    });
+  });
+
+  it("moves payment-pending bookings into external pending after a secure card token exists", () => {
+    const pending = beginPaidExternalBooking({
+      ...capturedDetails,
+      bookingStatus: "PAYMENT_PENDING",
+      confirmationSummary:
+        "Gold Coast Whale Escape on 2026-06-23 for 2 guests under Inov, inov@example.com, 085337210180.",
+      externalBookingId: null,
+      externalProvider: null,
+      bookingError: null
+    });
+    const confirmed = markExternalBookingConfirmed(pending, {
+      externalBookingId: "RZ-PAID",
+      externalProvider: "REZDY"
+    });
+
+    expect(pending.bookingStatus).toBe("EXTERNAL_BOOKING_PENDING");
+    expect(confirmed).toMatchObject({
+      bookingStatus: "CONFIRMED",
+      externalBookingId: "RZ-PAID",
       externalProvider: "REZDY"
     });
   });

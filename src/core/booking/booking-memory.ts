@@ -1,7 +1,14 @@
 import { analyzeTravellerBookingMessage } from "./booking-brain";
 import type { BookingFlowStatus } from "./booking-state-machine";
 import { matchPmsProduct } from "./product-matcher";
-import type { PmsProduct, PmsTicketOption, PmsTicketQuantity } from "@/core/pms/types";
+import type {
+  PmsExtraOption,
+  PmsExtraQuantity,
+  PmsProduct,
+  PmsTicketOption,
+  PmsTicketQuantity,
+  PmsTimeOption
+} from "@/core/pms/types";
 
 export interface BookingMemoryState {
   productExternalId: string | null;
@@ -16,8 +23,11 @@ export interface BookingMemoryState {
   externalBookingId?: string | null;
   externalProvider?: string | null;
   bookingError?: string | null;
+  timeOptions?: PmsTimeOption[] | null;
   ticketOptions?: PmsTicketOption[] | null;
   ticketQuantities?: PmsTicketQuantity[] | null;
+  extraOptions?: PmsExtraOption[] | null;
+  extraQuantities?: PmsExtraQuantity[] | null;
 }
 
 export interface UpdateBookingMemoryStateInput {
@@ -31,10 +41,13 @@ export function updateBookingMemoryState(input: UpdateBookingMemoryStateInput): 
   const productMatch = matchPmsProduct(input.message, input.products);
   const matchedProduct = productMatch.status === "MATCHED" ? productMatch.product : null;
   const ticketState = {
+    ...(input.previousState?.timeOptions ? { timeOptions: input.previousState.timeOptions } : {}),
     ...(input.previousState?.ticketOptions ? { ticketOptions: input.previousState.ticketOptions } : {}),
     ...(input.previousState?.ticketQuantities
       ? { ticketQuantities: input.previousState.ticketQuantities }
-      : {})
+      : {}),
+    ...(input.previousState?.extraOptions ? { extraOptions: input.previousState.extraOptions } : {}),
+    ...(input.previousState?.extraQuantities ? { extraQuantities: input.previousState.extraQuantities } : {})
   };
 
   return {

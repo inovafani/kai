@@ -21,7 +21,17 @@ export interface PmsAvailabilityResult {
   remaining: number;
   currency: string;
   unitPriceCents: number;
+  timeOptions?: PmsTimeOption[];
   ticketOptions?: PmsTicketOption[];
+  extraOptions?: PmsExtraOption[];
+}
+
+export interface PmsTimeOption {
+  label: string;
+  startTimeLocal: string;
+  remaining: number;
+  checkoutItemKey?: string;
+  checkoutSessionId?: string;
 }
 
 export interface PmsTicketOption {
@@ -34,6 +44,16 @@ export interface PmsTicketQuantity {
   quantity: number;
 }
 
+export interface PmsExtraOption {
+  label: string;
+  unitPriceCents: number;
+}
+
+export interface PmsExtraQuantity {
+  optionLabel: string;
+  quantity: number;
+}
+
 export interface PmsCreateBookingRequest {
   productId: string;
   date: string;
@@ -42,6 +62,8 @@ export interface PmsCreateBookingRequest {
   travellerEmail: string;
   travellerPhone?: string | null;
   ticketQuantities?: PmsTicketQuantity[] | null;
+  extraQuantities?: PmsExtraQuantity[] | null;
+  paymentCardToken?: string | null;
 }
 
 export interface PmsCreateBookingResult {

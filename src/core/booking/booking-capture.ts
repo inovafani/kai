@@ -43,12 +43,12 @@ function cleanName(name: string) {
 }
 
 function extractTravellerName(text: string) {
-  const namedField = text.match(/\bname\s*[:=]\s*([a-z][a-z .'-]{1,60})/i);
+  const namedField = text.match(/\bname\s*[:=]\s*([a-z][a-z0-9 .'-]{1,60})/i);
   if (namedField) {
     return cleanName(namedField[1]);
   }
 
-  const naturalName = text.match(/\b(?:my name is|name is|i am|i'm)\s+([a-z][a-z .'-]{1,60})/i);
+  const naturalName = text.match(/\b(?:my name is|name is|i am|i'm)\s+([a-z][a-z0-9 .'-]{1,60})/i);
   return naturalName ? cleanName(naturalName[1]) : null;
 }
 
@@ -84,7 +84,7 @@ function getMissingContactSlots(details: BookingCaptureDetails) {
 
 export function evaluateBookingCapture(input: EvaluateBookingCaptureInput): BookingCaptureResult {
   const messages = [...(input.priorTravellerMessages ?? []), input.message];
-  const active = messages.some(hasBookingCaptureIntent);
+  const active = messages.some(hasBookingCaptureIntent) || Boolean(input.bookingMemory?.ticketQuantities?.length);
   const contactText = messages.join("\n");
   const details = {
     productExternalId: input.bookingMemory?.productExternalId ?? null,

@@ -97,7 +97,12 @@ describe("MockPmsAdapter", () => {
       available: true,
       remaining: 20,
       currency: "AUD",
-      unitPriceCents: 9900
+      unitPriceCents: 9900,
+      extraOptions: [
+        { label: "Corona Bucket", unitPriceCents: 3000 },
+        { label: "Sparkling for 2", unitPriceCents: 4000 },
+        { label: "Cheese Platter for 2", unitPriceCents: 1000 }
+      ]
     });
   });
 });

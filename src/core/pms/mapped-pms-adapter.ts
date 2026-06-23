@@ -2,6 +2,7 @@ import type {
   PmsAdapter,
   PmsAvailabilityRequest,
   PmsAvailabilityResult,
+  PmsExtraOption,
   PmsCreateBookingRequest,
   PmsCreateBookingResult,
   PmsProduct
@@ -13,6 +14,7 @@ export interface PublicProductMapping {
   productUrl?: string;
   pmsProductId: string;
   bookingMode?: "MANUAL_INQUIRY" | "AUTO_BOOKING";
+  extraOptions?: PmsExtraOption[];
 }
 
 export class MappedPmsAdapter implements PmsAdapter {
@@ -36,7 +38,16 @@ export class MappedPmsAdapter implements PmsAdapter {
   }
 
   async getAvailability(request: PmsAvailabilityRequest): Promise<PmsAvailabilityResult> {
-    return this.sourceAdapter.getAvailability(request);
+    const availability = await this.sourceAdapter.getAvailability(request);
+    const mapping = this.mappings.find((item) => item.pmsProductId === request.productId);
+
+    return {
+      ...availability,
+      extraOptions:
+        availability.extraOptions && availability.extraOptions.length > 0
+          ? availability.extraOptions
+          : mapping?.extraOptions
+    };
   }
 
   async createBooking(request: PmsCreateBookingRequest): Promise<PmsCreateBookingResult> {

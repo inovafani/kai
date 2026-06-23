@@ -142,8 +142,11 @@ model ConversationBookingState {
   externalBookingId String?
   externalProvider  String?
   bookingError      String?
+  timeOptions       Json?
   ticketOptions     Json?
   ticketQuantities  Json?
+  extraOptions      Json?
+  extraQuantities   Json?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 

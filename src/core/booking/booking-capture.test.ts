@@ -67,4 +67,16 @@ describe("booking capture", () => {
       }
     });
   });
+
+  it("keeps digits in traveller names such as test fixture names", () => {
+    const result = evaluateBookingCapture({
+      message: "My name is Test4, email test4@gmail.com, phone 087665234098",
+      bookingMemory,
+      priorTravellerMessages: ["yes book it"]
+    });
+
+    expect(result.details.travellerName).toBe("Test4");
+    expect(result.details.travellerEmail).toBe("test4@gmail.com");
+    expect(result.details.travellerPhone).toBe("087665234098");
+  });
 });

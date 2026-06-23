@@ -1,6 +1,6 @@
 import type { BookingMemoryState } from "@/core/booking/booking-memory";
 import type { BookingFlowStatus } from "@/core/booking/booking-state-machine";
-import type { PmsTicketOption, PmsTicketQuantity } from "@/core/pms/types";
+import type { PmsExtraOption, PmsExtraQuantity, PmsTicketOption, PmsTicketQuantity, PmsTimeOption } from "@/core/pms/types";
 import { Prisma, type ManualInquiryStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
@@ -9,6 +9,7 @@ const bookingFlowStatuses = new Set<BookingFlowStatus>([
   "AVAILABILITY_CHECKED",
   "CAPTURED",
   "READY_TO_CONFIRM",
+  "PAYMENT_PENDING",
   "EXTERNAL_BOOKING_PENDING",
   "CONFIRMED",
   "FAILED"
@@ -34,6 +35,30 @@ function normalizeTicketOptions(value: Prisma.JsonValue): PmsTicketOption[] | nu
   return options.length > 0 ? options : null;
 }
 
+function normalizeTimeOptions(value: Prisma.JsonValue): PmsTimeOption[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const options = value
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+      const record = item as Record<string, unknown>;
+      return typeof record.label === "string" &&
+        typeof record.startTimeLocal === "string" &&
+        typeof record.remaining === "number"
+        ? {
+            label: record.label,
+            startTimeLocal: record.startTimeLocal,
+            remaining: record.remaining,
+            ...(typeof record.checkoutItemKey === "string" ? { checkoutItemKey: record.checkoutItemKey } : {}),
+            ...(typeof record.checkoutSessionId === "string" ? { checkoutSessionId: record.checkoutSessionId } : {})
+          }
+        : null;
+    })
+    .filter((item): item is PmsTimeOption => Boolean(item));
+
+  return options.length > 0 ? options : null;
+}
+
 function normalizeTicketQuantities(value: Prisma.JsonValue): PmsTicketQuantity[] | null {
   if (!Array.isArray(value)) return null;
 
@@ -48,6 +73,38 @@ function normalizeTicketQuantities(value: Prisma.JsonValue): PmsTicketQuantity[]
     .filter((item): item is PmsTicketQuantity => Boolean(item));
 
   return quantities.length > 0 ? quantities : null;
+}
+
+function normalizeExtraOptions(value: Prisma.JsonValue): PmsExtraOption[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const options = value
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+      const record = item as Record<string, unknown>;
+      return typeof record.label === "string" && typeof record.unitPriceCents === "number"
+        ? { label: record.label, unitPriceCents: record.unitPriceCents }
+        : null;
+    })
+    .filter((item): item is PmsExtraOption => Boolean(item));
+
+  return options.length > 0 ? options : null;
+}
+
+function normalizeExtraQuantities(value: Prisma.JsonValue): PmsExtraQuantity[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const quantities = value
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+      const record = item as Record<string, unknown>;
+      return typeof record.optionLabel === "string" && typeof record.quantity === "number"
+        ? { optionLabel: record.optionLabel, quantity: record.quantity }
+        : null;
+    })
+    .filter((item): item is PmsExtraQuantity => Boolean(item));
+
+  return quantities;
 }
 
 function toJsonArray<T extends object>(value: T[] | null | undefined) {
@@ -149,8 +206,11 @@ export async function findConversationBookingState(input: {
       externalBookingId: true,
       externalProvider: true,
       bookingError: true,
+      timeOptions: true,
       ticketOptions: true,
-      ticketQuantities: true
+      ticketQuantities: true,
+      extraOptions: true,
+      extraQuantities: true
     }
   });
 
@@ -158,8 +218,11 @@ export async function findConversationBookingState(input: {
     ? {
         ...state,
         bookingStatus: normalizeBookingFlowStatus(state.bookingStatus),
+        timeOptions: normalizeTimeOptions(state.timeOptions),
         ticketOptions: normalizeTicketOptions(state.ticketOptions),
-        ticketQuantities: normalizeTicketQuantities(state.ticketQuantities)
+        ticketQuantities: normalizeTicketQuantities(state.ticketQuantities),
+        extraOptions: normalizeExtraOptions(state.extraOptions),
+        extraQuantities: normalizeExtraQuantities(state.extraQuantities)
       }
     : null;
 }
@@ -188,8 +251,11 @@ export async function upsertConversationBookingState(input: {
       externalBookingId: input.state.externalBookingId ?? null,
       externalProvider: input.state.externalProvider ?? null,
       bookingError: input.state.bookingError ?? null,
+      timeOptions: toJsonArray(input.state.timeOptions),
       ticketOptions: toJsonArray(input.state.ticketOptions),
-      ticketQuantities: toJsonArray(input.state.ticketQuantities)
+      ticketQuantities: toJsonArray(input.state.ticketQuantities),
+      extraOptions: toJsonArray(input.state.extraOptions),
+      extraQuantities: toJsonArray(input.state.extraQuantities)
     },
     update: {
       productExternalId: input.state.productExternalId,
@@ -204,8 +270,11 @@ export async function upsertConversationBookingState(input: {
       externalBookingId: input.state.externalBookingId ?? null,
       externalProvider: input.state.externalProvider ?? null,
       bookingError: input.state.bookingError ?? null,
+      timeOptions: toJsonArray(input.state.timeOptions),
       ticketOptions: toJsonArray(input.state.ticketOptions),
-      ticketQuantities: toJsonArray(input.state.ticketQuantities)
+      ticketQuantities: toJsonArray(input.state.ticketQuantities),
+      extraOptions: toJsonArray(input.state.extraOptions),
+      extraQuantities: toJsonArray(input.state.extraQuantities)
     }
   });
 }

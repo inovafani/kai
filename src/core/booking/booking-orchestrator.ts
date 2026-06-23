@@ -15,7 +15,15 @@ import {
 } from "./booking-state-machine";
 import { matchPmsProduct } from "./product-matcher";
 import { composeAssistantReply, type AssistantLlmClient, type AssistantReplySource, type AssistantTenantContext } from "@/core/llm/assistant-reply-composer";
-import type { PmsAdapter, PmsProduct, PmsTicketOption, PmsTicketQuantity } from "@/core/pms/types";
+import type {
+  PmsAdapter,
+  PmsExtraOption,
+  PmsExtraQuantity,
+  PmsProduct,
+  PmsTicketOption,
+  PmsTicketQuantity,
+  PmsTimeOption
+} from "@/core/pms/types";
 
 export type BookingOrchestratorAction =
   | "AVAILABILITY_CHECKED"
@@ -32,6 +40,10 @@ export type BookingOrchestratorAction =
   | "BOOKING_CONFIRMED"
   | "BOOKING_FAILED"
   | "PRODUCT_LINK"
+  | "BOOKING_TIME_SELECTION_REQUIRED"
+  | "BOOKING_CHECKOUT_READY"
+  | "BOOKING_PAYMENT_REQUIRED"
+  | "BOOKING_EXTRAS_SELECTION_REQUIRED"
   | "BOOKING_TICKET_SELECTION_REQUIRED";
 
 export interface BookingOrchestratorResult {
@@ -48,6 +60,7 @@ export interface HandleTravellerBookingMessageInput {
   bookingMemory?: BookingMemoryState | null;
   pmsAdapter: PmsAdapter;
   bookingWriteEnabled?: boolean;
+  allowUnpaidExternalBooking?: boolean;
   llmClient?: AssistantLlmClient | null;
   tenantContext?: AssistantTenantContext | null;
 }
@@ -60,6 +73,10 @@ function formatList(values: string[]) {
   if (values.length <= 1) return values[0] ?? "";
 
   return `${values.slice(0, -1).join(", ")} and ${values[values.length - 1]}`;
+}
+
+function formatNumberedList(values: string[]) {
+  return values.map((value, index) => `${index + 1}. ${value}`).join("\n");
 }
 
 async function composeReplyResult(input: {
@@ -91,12 +108,182 @@ function formatProductOptions(products: Pick<PmsProduct, "title">[]) {
   return formatList(products.map((product) => product.title));
 }
 
+function formatProductOptionsList(products: PmsProduct[]) {
+  return formatNumberedList(
+    products.map((product) =>
+      `${product.title} - ${product.bookingMode === "AUTO_BOOKING" ? "live availability" : "operator confirmation required"}`
+    )
+  );
+}
+
+function formatTicketLabelForReply(label: string) {
+  return label.replace(/^"+\s*/, "").replace(/\s*"+$/g, "");
+}
+
 function formatTicketOptions(options: PmsTicketOption[], currency: string) {
-  return formatList(options.map((option) => `${option.label} (${formatPrice(currency, option.unitPriceCents)})`));
+  return formatList(
+    options.map((option) => `${formatTicketLabelForReply(option.label)} (${formatPrice(currency, option.unitPriceCents)})`)
+  );
+}
+
+function formatTicketOptionsList(options: PmsTicketOption[], currency: string) {
+  return formatNumberedList(
+    options.map((option) => `${formatTicketLabelForReply(option.label)} - ${formatPrice(currency, option.unitPriceCents)}`)
+  );
 }
 
 function formatTicketQuantities(quantities: PmsTicketQuantity[]) {
-  return formatList(quantities.map((ticket) => `${ticket.quantity} ${ticket.optionLabel}`));
+  return formatList(quantities.map((ticket) => `${ticket.quantity} ${formatTicketLabelForReply(ticket.optionLabel)}`));
+}
+
+function formatExtraOptionsList(options: PmsExtraOption[], currency: string) {
+  return formatNumberedList(
+    options.map((option) => `${formatTicketLabelForReply(option.label)} - ${formatPrice(currency, option.unitPriceCents)}`)
+  );
+}
+
+function formatExtraQuantities(quantities: PmsExtraQuantity[]) {
+  if (quantities.length === 0) return "no extras";
+
+  return formatList(quantities.map((extra) => `${extra.quantity} ${formatTicketLabelForReply(extra.optionLabel)}`));
+}
+
+function formatTimeOptionsList(options: PmsTimeOption[]) {
+  return formatNumberedList(
+    options.map((option) => `${option.label} - ${option.remaining} spot${option.remaining === 1 ? "" : "s"}`)
+  );
+}
+
+const knownRezdyCheckoutUrls: Record<string, string> = {
+  "boattime-whale-escape": "https://boattimeyachtcharters.rezdy.com/services/431872",
+  "gold coast whale escape": "https://boattimeyachtcharters.rezdy.com/services/431872"
+};
+
+const knownRezdyProductCodes: Record<string, string> = {
+  "boattime-whale-escape": "LWWVE",
+  "gold coast whale escape": "LWWVE"
+};
+
+const knownBookingFormUrls: Record<string, string> = {
+  "boattime-whale-escape": "https://www.boattimeyachtcharters.com/cruise-tickets-luxury-whale-watching#book",
+  "gold coast whale escape": "https://www.boattimeyachtcharters.com/cruise-tickets-luxury-whale-watching#book"
+};
+
+function isLocalOrDemoUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return ["localhost", "127.0.0.1", "::1"].includes(url.hostname) || url.pathname.startsWith("/demo/");
+  } catch {
+    return true;
+  }
+}
+
+function isRezdyBookingUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return (
+      url.hostname.endsWith(".rezdy.com") &&
+      (url.pathname.startsWith("/services/") || url.pathname.startsWith("/view/") || url.pathname === "/book")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function serviceIdFromRezdyUrl(value: string) {
+  try {
+    return new URL(value).pathname.match(/^\/services\/(\d+)/)?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function rezdyHostFromUrl(value: string) {
+  try {
+    const url = new URL(value);
+    return url.hostname.endsWith(".rezdy.com") ? url.hostname : null;
+  } catch {
+    return null;
+  }
+}
+
+function withRezdyCheckoutSessionParams(baseUrl: string, timeOption: PmsTimeOption | null) {
+  if (!timeOption?.checkoutItemKey && !timeOption?.checkoutSessionId) return baseUrl;
+
+  try {
+    const url = new URL(baseUrl);
+    const serviceId = serviceIdFromRezdyUrl(baseUrl);
+    const itemKey =
+      timeOption.checkoutItemKey ??
+      (serviceId && timeOption.checkoutSessionId ? `item-${serviceId}-${timeOption.checkoutSessionId}` : null);
+
+    if (!itemKey) return baseUrl;
+
+    url.searchParams.set("itemKey", itemKey);
+    url.searchParams.set("useTransparentSessions", "1");
+
+    return url.toString();
+  } catch {
+    return baseUrl;
+  }
+}
+
+function resolveCheckoutUrl(input: {
+  product: PmsProduct;
+  provider: PmsAdapter["provider"];
+  bookingState: BookingFlowState;
+}) {
+  const productUrl = input.product.productUrl?.trim() ?? "";
+  const productKey = input.product.externalProductId.toLowerCase();
+  const titleKey = input.product.title.toLowerCase();
+  const mappedRezdyUrl = knownRezdyCheckoutUrls[productKey] ?? knownRezdyCheckoutUrls[titleKey] ?? null;
+  const mappedProductCode = knownRezdyProductCodes[productKey] ?? knownRezdyProductCodes[titleKey] ?? null;
+  const mappedBookingFormUrl = knownBookingFormUrls[productKey] ?? knownBookingFormUrls[titleKey] ?? null;
+  const usableProductUrl =
+    productUrl && !isLocalOrDemoUrl(productUrl) && isRezdyBookingUrl(productUrl) ? productUrl : null;
+  const usableWebsiteUrl =
+    productUrl && !isLocalOrDemoUrl(productUrl) && !isRezdyBookingUrl(productUrl) ? productUrl : null;
+  const selectedTime = selectedTimeOption(input.bookingState.dateText, input.bookingState.timeOptions ?? []);
+  const serviceCheckoutUrl = usableProductUrl ?? mappedRezdyUrl;
+
+  if (selectedTime?.checkoutItemKey || selectedTime?.checkoutSessionId) {
+    return serviceCheckoutUrl ? withRezdyCheckoutSessionParams(serviceCheckoutUrl, selectedTime) : null;
+  }
+
+  const rezdyHost = rezdyHostFromUrl(usableProductUrl ?? mappedRezdyUrl ?? "") ?? "boattimeyachtcharters.rezdy.com";
+  const productCode =
+    mappedProductCode ??
+    (input.provider === "REZDY" && /^[A-Z0-9]{4,}$/i.test(input.product.externalProductId)
+      ? input.product.externalProductId
+      : null);
+
+  if (mappedBookingFormUrl ?? usableWebsiteUrl) {
+    return mappedBookingFormUrl ?? usableWebsiteUrl;
+  }
+
+  if (productCode) {
+    return `https://${rezdyHost}/`;
+  }
+
+  return serviceCheckoutUrl ?? null;
+}
+
+function isDirectRezdyCheckoutHandoff(value: string) {
+  try {
+    const url = new URL(value);
+    return url.hostname.endsWith(".rezdy.com") && url.searchParams.has("itemKey");
+  } catch {
+    return false;
+  }
+}
+
+function normalizeTicketText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/\baud\b/g, " ")
+    .replace(/[^a-z0-9.]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function isAdultTicket(label: string) {
@@ -121,6 +308,85 @@ function isTwoPersonTicket(label: string) {
 
 function findTicketOption(options: PmsTicketOption[], matcher: (label: string) => boolean) {
   return options.find((option) => matcher(option.label));
+}
+
+function ticketOptionParticipantMultiplier(label: string) {
+  if (isFamilyTicket(label)) return 4;
+  if (isTwoPersonTicket(label)) return 2;
+  return 1;
+}
+
+function findTicketOptionSelectedByLabel(message: string, options: PmsTicketOption[], guests?: number | null) {
+  const normalizedMessage = normalizeTicketText(message);
+
+  const selectedOption = options.find((option) => {
+    const normalizedLabel = normalizeTicketText(option.label);
+    const normalizedPrice = normalizeTicketText((option.unitPriceCents / 100).toFixed(2));
+
+    return (
+      normalizedLabel.length > 0 &&
+      normalizedMessage.includes(normalizedLabel) &&
+      (normalizedLabel.includes(normalizedPrice) || normalizedMessage.includes(normalizedPrice))
+    );
+  });
+
+  if (!selectedOption) return null;
+
+  const multiplier = ticketOptionParticipantMultiplier(selectedOption.label);
+  const quantity = guests && guests % multiplier === 0 ? guests / multiplier : 1;
+
+  return { optionLabel: selectedOption.label, quantity };
+}
+
+function ticketQuantityForGuests(optionLabel: string, guests?: number | null) {
+  const multiplier = ticketOptionParticipantMultiplier(optionLabel);
+  return guests && guests % multiplier === 0 ? guests / multiplier : 1;
+}
+
+function findTicketOptionSelectedByNumber(message: string, options: PmsTicketOption[], guests?: number | null) {
+  const normalizedMessage = message.toLowerCase().replace(/\./g, "").replace(/\s+/g, " ").trim();
+  const ordinalWords: Record<string, number> = {
+    first: 1,
+    second: 2,
+    third: 3,
+    fourth: 4,
+    fifth: 5,
+    sixth: 6,
+    seventh: 7,
+    eighth: 8,
+    ninth: 9,
+    tenth: 10
+  };
+  const numberedSelection =
+    normalizedMessage.match(/\b(?:option|choice|ticket|number|no)\s*#?\s*(\d{1,2})\b/) ??
+    normalizedMessage.match(/#\s*(\d{1,2})\b/);
+  let selectedIndex = numberedSelection ? Number(numberedSelection[1]) : null;
+
+  if (!selectedIndex) {
+    for (const [word, index] of Object.entries(ordinalWords)) {
+      if (
+        normalizedMessage.includes(`${word} option`) ||
+        normalizedMessage.includes(`${word} choice`) ||
+        normalizedMessage.includes(`${word} ticket`) ||
+        normalizedMessage.includes(`option ${word}`) ||
+        normalizedMessage.includes(`choice ${word}`) ||
+        normalizedMessage.includes(`ticket ${word}`)
+      ) {
+        selectedIndex = index;
+        break;
+      }
+    }
+  }
+
+  if (!selectedIndex) return null;
+
+  const selectedOption = options[selectedIndex - 1];
+  if (!selectedOption) return null;
+
+  return {
+    optionLabel: selectedOption.label,
+    quantity: ticketQuantityForGuests(selectedOption.label, guests)
+  };
 }
 
 function parseQuantityWord(value: string) {
@@ -151,8 +417,20 @@ function readQuantityForWords(message: string, words: string[]) {
   return reversed ? parseQuantityWord(reversed[1]) : 0;
 }
 
-function parseTicketQuantities(message: string, options: PmsTicketOption[]) {
+function parseTicketQuantities(message: string, options: PmsTicketOption[], guests?: number | null) {
   const quantities: PmsTicketQuantity[] = [];
+  const selectedByNumber = findTicketOptionSelectedByNumber(message, options, guests);
+
+  if (selectedByNumber) {
+    return [selectedByNumber];
+  }
+
+  const selectedByLabel = findTicketOptionSelectedByLabel(message, options, guests);
+
+  if (selectedByLabel) {
+    return [selectedByLabel];
+  }
+
   const twoPerson = findTicketOption(options, isTwoPersonTicket);
   const adult = findTicketOption(options, isAdultTicket);
   const child = findTicketOption(options, isChildTicket);
@@ -178,26 +456,83 @@ function parseTicketQuantities(message: string, options: PmsTicketOption[]) {
   return quantities;
 }
 
+function isNoExtrasMessage(message: string) {
+  return /\b(no extras?|skip extras?|nothing else|none|no thanks|no thank you)\b/i.test(message);
+}
+
+function findExtraOptionSelectedByNumber(message: string, options: PmsExtraOption[]) {
+  const normalizedMessage = message.toLowerCase().replace(/\./g, "").replace(/\s+/g, " ").trim();
+  const numberedSelection =
+    normalizedMessage.match(/\b(?:option|choice|extra|number|no)\s*#?\s*(\d{1,2})\b/) ??
+    normalizedMessage.match(/#\s*(\d{1,2})\b/);
+
+  if (!numberedSelection) return null;
+
+  const selectedOption = options[Number(numberedSelection[1]) - 1];
+  return selectedOption ? { optionLabel: selectedOption.label, quantity: 1 } : null;
+}
+
+function parseExtraQuantities(message: string, options: PmsExtraOption[]) {
+  if (isNoExtrasMessage(message)) return [] satisfies PmsExtraQuantity[];
+
+  const selectedByNumber = findExtraOptionSelectedByNumber(message, options);
+  if (selectedByNumber) return [selectedByNumber];
+
+  const normalizedMessage = normalizeTicketText(message);
+  const matchedOption = options.find((option) => {
+    const normalizedLabel = normalizeTicketText(option.label);
+    const labelWords = normalizedLabel.split(" ").filter(Boolean);
+    const shortLabel = labelWords.slice(0, Math.min(2, labelWords.length)).join(" ");
+
+    return (
+      (normalizedLabel.length > 0 && normalizedMessage.includes(normalizedLabel)) ||
+      (shortLabel.length > 0 && normalizedMessage.includes(shortLabel))
+    );
+  });
+
+  if (!matchedOption) return null;
+
+  const quantity =
+    readQuantityForWords(message, [matchedOption.label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")]) ||
+    Number(message.match(/\b(\d{1,2})\s*x\b/i)?.[1]) ||
+    1;
+
+  return [{ optionLabel: matchedOption.label, quantity }];
+}
+
 function ticketParticipantCount(quantities: PmsTicketQuantity[]) {
   return quantities.reduce((total, ticket) => {
-    const multiplier = isFamilyTicket(ticket.optionLabel) ? 4 : /\b2\s*people\b/i.test(ticket.optionLabel) ? 2 : 1;
+    const multiplier = ticketOptionParticipantMultiplier(ticket.optionLabel);
     return total + ticket.quantity * multiplier;
   }, 0);
 }
 
+function composeMissingDetailsReply(input: {
+  missingSlots: ("product" | "date" | "guests")[];
+  productTitle: string | null;
+  dateText: string | null;
+  guests: number | null;
+}) {
+  if (input.missingSlots.length === 1 && input.missingSlots[0] === "guests" && input.productTitle && input.dateText) {
+    return `I have ${input.productTitle} for ${input.dateText}. Please share the number of guests so I can check safely.`;
+  }
+
+  if (input.missingSlots.length === 1 && input.missingSlots[0] === "date" && input.productTitle && input.guests) {
+    return `I have ${input.productTitle} for ${input.guests} guest${
+      input.guests === 1 ? "" : "s"
+    }. Please share the date so I can check safely.`;
+  }
+
+  return `I can help with that. Please share the ${input.missingSlots.join(", ")} so I can check safely.`;
+}
+
 function formatRecommendationReply(products: PmsProduct[], dateText: string | null) {
-  const autoBookingProducts = products.filter((product) => product.bookingMode === "AUTO_BOOKING");
-  const manualProducts = products.filter((product) => product.bookingMode === "MANUAL_INQUIRY");
   const datePrefix = dateText ? `For ${dateText}, ` : "";
   const firstWord = dateText ? "you" : "You";
-  const manualNote =
-    manualProducts.length > 0
-      ? ` ${formatProductOptions(manualProducts)} needs operator confirmation.`
-      : "";
 
-  return `${datePrefix}${firstWord} can choose from ${formatProductOptions(products)}. I can check live availability for ${formatProductOptions(
-    autoBookingProducts
-  )}.${manualNote} Which one sounds closest to what you want?`;
+  return `${datePrefix}${firstWord} can choose from:\n${formatProductOptionsList(
+    products
+  )}\n\nWhich one sounds closest to what you want?`;
 }
 
 function lowerFirstLetter(value: string) {
@@ -219,6 +554,89 @@ function formatDatePhrase(dateText: string | null) {
   }
 
   return ["today", "tomorrow", "tonight"].includes(dateText.toLowerCase()) ? dateText : `on ${dateText}`;
+}
+
+function formatDateAndTime(dateText: string | null) {
+  if (!dateText) return "that date";
+
+  const match = dateText.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}):\d{2}$/);
+  if (!match) return formatDatePhrase(dateText);
+
+  const hour24 = Number(match[2]);
+  const period = hour24 >= 12 ? "PM" : "AM";
+  const hour12 = hour24 % 12 || 12;
+
+  return `on ${match[1]} at ${hour12}:${match[3]} ${period}`;
+}
+
+function selectedTimeOption(dateText: string | null | undefined, options: PmsTimeOption[]) {
+  return options.find((option) => option.startTimeLocal === dateText) ?? null;
+}
+
+function normalizeTimeSelectionText(value: string) {
+  return value.toLowerCase().replace(/\./g, "").replace(/\s+/g, " ").trim();
+}
+
+function timeSelectionAliases(label: string) {
+  const normalized = normalizeTimeSelectionText(label);
+  const compact = normalized.replace(/\s+/g, "");
+  const aliases = new Set([normalized, compact, compact.replace(":", "")]);
+  const timeMatch = compact.match(/^(\d{1,2})(?::?00)?(am|pm)$/);
+
+  if (timeMatch) {
+    aliases.add(`${timeMatch[1]}${timeMatch[2]}`);
+    aliases.add(`${timeMatch[1]}:00${timeMatch[2]}`);
+    aliases.add(`${timeMatch[1]}:00 ${timeMatch[2]}`);
+  }
+
+  return [...aliases];
+}
+
+function parseSelectedTimeOption(message: string, options: PmsTimeOption[]) {
+  const normalizedMessage = normalizeTimeSelectionText(message);
+  const compactMessage = normalizedMessage.replace(/\s+/g, "");
+  const matchedOption = options
+    .map((option) => {
+      const latestIndex = Math.max(
+        ...timeSelectionAliases(option.label).map((alias) => {
+          const normalizedAlias = normalizeTimeSelectionText(alias);
+          const compactAlias = normalizedAlias.replace(/\s+/g, "");
+          const spacedIndex = normalizedMessage.lastIndexOf(normalizedAlias);
+          const compactIndex = compactMessage.lastIndexOf(compactAlias);
+
+          return Math.max(spacedIndex, compactIndex);
+        })
+      );
+
+      return { option, latestIndex };
+    })
+    .filter((item) => item.latestIndex >= 0)
+    .sort((left, right) => right.latestIndex - left.latestIndex)[0]?.option;
+
+  if (matchedOption) {
+    return matchedOption;
+  }
+
+  const ordinalWords: Record<string, number> = {
+    first: 1,
+    second: 2,
+    third: 3,
+    fourth: 4,
+    fifth: 5
+  };
+
+  const numberedSelection = normalizedMessage.match(/\b([1-5])\b/);
+  if (numberedSelection) {
+    return options[Number(numberedSelection[1]) - 1] ?? null;
+  }
+
+  for (const [word, index] of Object.entries(ordinalWords)) {
+    if (normalizedMessage.includes(word)) {
+      return options[index - 1] ?? null;
+    }
+  }
+
+  return null;
 }
 
 function isBookingConfirmationMessage(message: string) {
@@ -256,8 +674,11 @@ function bookingMemoryToFlowState(memory: BookingMemoryState): BookingFlowState 
     externalBookingId: memory.externalBookingId ?? null,
     externalProvider: (memory.externalProvider as BookingFlowState["externalProvider"]) ?? null,
     bookingError: memory.bookingError ?? null,
+    ...(memory.timeOptions ? { timeOptions: memory.timeOptions } : {}),
     ...(memory.ticketOptions ? { ticketOptions: memory.ticketOptions } : {}),
-    ...(memory.ticketQuantities ? { ticketQuantities: memory.ticketQuantities } : {})
+    ...(memory.ticketQuantities ? { ticketQuantities: memory.ticketQuantities } : {}),
+    ...(memory.extraOptions ? { extraOptions: memory.extraOptions } : {}),
+    ...(memory.extraQuantities ? { extraQuantities: memory.extraQuantities } : {})
   };
 }
 
@@ -265,7 +686,9 @@ function buildAvailabilityState(input: {
   product: PmsProduct;
   dateText: string | null;
   guests: number | null;
+  timeOptions?: PmsTimeOption[] | null;
   ticketOptions?: PmsTicketOption[] | null;
+  extraOptions?: PmsExtraOption[] | null;
 }): BookingFlowState {
   return {
     productExternalId: input.product.externalProductId,
@@ -280,8 +703,12 @@ function buildAvailabilityState(input: {
     externalBookingId: null,
     externalProvider: null,
     bookingError: null,
-    ticketOptions: input.ticketOptions ?? null,
-    ticketQuantities: null
+    ...(input.timeOptions ? { timeOptions: input.timeOptions } : {}),
+    ...(input.ticketOptions ? { ticketOptions: input.ticketOptions } : {}),
+    ticketQuantities: null,
+    ...(input.extraOptions && input.extraOptions.length > 0
+      ? { extraOptions: input.extraOptions, extraQuantities: null }
+      : {})
   };
 }
 
@@ -304,6 +731,30 @@ export async function handleTravellerBookingMessage(
     }
 
     const pendingState = beginExternalBooking(readyState);
+
+    if (input.allowUnpaidExternalBooking !== true) {
+      const blockedState = {
+        ...readyState,
+        bookingError: "External booking blocked because payment has not been collected in Kai."
+      };
+
+      return {
+        action: "BOOKING_WRITE_DISABLED",
+        reply:
+          "I have saved this booking request for the operator. Kai has not collected payment yet, so I will not create an unpaid confirmed booking in the PMS automatically.",
+        replySource: "DETERMINISTIC",
+        inquiryDraft: {
+          productExternalId: readyState.productExternalId,
+          productTitle: readyState.productTitle,
+          dateText: readyState.dateText,
+          guests: readyState.guests,
+          travellerName: readyState.travellerName,
+          travellerEmail: readyState.travellerEmail,
+          travellerPhone: readyState.travellerPhone
+        },
+        bookingStatePatch: blockedState
+      };
+    }
 
     try {
       const booking = await input.pmsAdapter.createBooking({
@@ -371,9 +822,9 @@ export async function handleTravellerBookingMessage(
       ? contextAnalysis
       : currentMessageAnalysis;
   const effectiveSlots = {
-    productHint: analysis.slots.productHint ?? contextAnalysis.slots.productHint ?? input.bookingMemory?.productTitle ?? null,
-    dateText: currentMessageAnalysis.slots.dateText ?? contextAnalysis.slots.dateText ?? input.bookingMemory?.dateText ?? null,
-    guests: currentMessageAnalysis.slots.guests ?? contextAnalysis.slots.guests ?? input.bookingMemory?.guests ?? null
+    productHint: currentMessageAnalysis.slots.productHint ?? input.bookingMemory?.productTitle ?? contextAnalysis.slots.productHint ?? null,
+    dateText: currentMessageAnalysis.slots.dateText ?? input.bookingMemory?.dateText ?? contextAnalysis.slots.dateText ?? null,
+    guests: currentMessageAnalysis.slots.guests ?? input.bookingMemory?.guests ?? contextAnalysis.slots.guests ?? null
   };
   const missingSlots = [
     effectiveSlots.productHint ? null : "product",
@@ -384,6 +835,7 @@ export async function handleTravellerBookingMessage(
     message: input.message,
     priorTravellerMessages: input.priorTravellerMessages ?? [],
     bookingMemory: {
+      ...(input.bookingMemory ?? {}),
       productExternalId: input.bookingMemory?.productExternalId ?? null,
       productTitle: effectiveSlots.productHint ?? input.bookingMemory?.productTitle ?? null,
       dateText: effectiveSlots.dateText,
@@ -394,9 +846,82 @@ export async function handleTravellerBookingMessage(
     capture.active &&
     (capture.ready ||
       (currentMessageAnalysis.intent !== "CHECK_AVAILABILITY" && analysis.intent !== "CHECK_AVAILABILITY"));
+  const timeOptions = input.bookingMemory?.timeOptions ?? [];
+  const rememberedTime = selectedTimeOption(input.bookingMemory?.dateText, timeOptions);
+
+  if (timeOptions.length > 1 && !rememberedTime) {
+    const parsedTime = parseSelectedTimeOption(input.message, timeOptions);
+
+    if (parsedTime) {
+      const timeStatePatch: BookingFlowState = {
+        productExternalId: input.bookingMemory?.productExternalId ?? null,
+        productTitle: input.bookingMemory?.productTitle ?? null,
+        dateText: parsedTime.startTimeLocal,
+        guests: input.bookingMemory?.guests ?? null,
+        travellerName: input.bookingMemory?.travellerName ?? null,
+        travellerEmail: input.bookingMemory?.travellerEmail ?? null,
+        travellerPhone: input.bookingMemory?.travellerPhone ?? null,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        confirmationSummary: null,
+        externalBookingId: null,
+        externalProvider: null,
+        bookingError: null,
+        timeOptions,
+        ticketOptions: input.bookingMemory?.ticketOptions ?? null,
+        ticketQuantities: input.bookingMemory?.ticketQuantities ?? null
+      };
+      const rememberedTicketOptions = input.bookingMemory?.ticketOptions ?? [];
+
+      if (rememberedTicketOptions.length > 1 && !input.bookingMemory?.ticketQuantities) {
+        return {
+          action: "BOOKING_TICKET_SELECTION_REQUIRED",
+          reply: `Got it: ${input.bookingMemory?.productTitle} ${formatDateAndTime(
+            parsedTime.startTimeLocal
+          )} for ${input.bookingMemory?.guests} guest${
+            input.bookingMemory?.guests === 1 ? "" : "s"
+          }.\n\nTicket options:\n${formatTicketOptionsList(
+            rememberedTicketOptions,
+            "AUD"
+          )}\n\nWhich ticket option should I use? You can say "option 2" or "1 x 2 people".`,
+          replySource: "DETERMINISTIC",
+          bookingStatePatch: timeStatePatch
+        };
+      }
+
+      return {
+        action: "BOOKING_DETAILS_REQUIRED",
+        reply: `Got it: ${input.bookingMemory?.productTitle} ${formatDateAndTime(
+          parsedTime.startTimeLocal
+        )} for ${input.bookingMemory?.guests} guest${
+          input.bookingMemory?.guests === 1 ? "" : "s"
+        }. Please share your name, email, and phone number so I can prepare the checkout handoff.`,
+        replySource: "DETERMINISTIC",
+        inquiryDraft: null,
+        bookingStatePatch: timeStatePatch
+      };
+    }
+
+    if (
+      shouldHandleCapture ||
+      Boolean(currentMessageAnalysis.slots.dateText) ||
+      Boolean(currentMessageAnalysis.slots.guests) ||
+      isBookingConfirmationMessage(input.message)
+    ) {
+      return {
+        action: "BOOKING_TIME_SELECTION_REQUIRED",
+        reply: `Please choose one available time:\n${formatTimeOptionsList(timeOptions)}\n\nI have not confirmed anything yet.`,
+        replySource: "DETERMINISTIC"
+      };
+    }
+  }
+
   const ticketOptions = input.bookingMemory?.ticketOptions ?? [];
   if (ticketOptions.length > 1 && !input.bookingMemory?.ticketQuantities) {
-    const parsedTicketQuantities = parseTicketQuantities(input.message, ticketOptions);
+    const correctedTime =
+      timeOptions.length > 1 ? parseSelectedTimeOption(input.message, timeOptions) : null;
+    const dateTextForTicketSelection =
+      correctedTime?.startTimeLocal ?? input.bookingMemory?.dateText ?? null;
+    const parsedTicketQuantities = parseTicketQuantities(input.message, ticketOptions, input.bookingMemory?.guests);
 
     if (parsedTicketQuantities.length > 0) {
       const participantCount = ticketParticipantCount(parsedTicketQuantities);
@@ -406,7 +931,9 @@ export async function handleTravellerBookingMessage(
           action: "BOOKING_TICKET_SELECTION_REQUIRED",
           reply: `I counted ${participantCount} participant${
             participantCount === 1 ? "" : "s"
-          } from that ticket mix, but we were checking ${input.bookingMemory.guests}. Please send the ticket mix again so it matches ${input.bookingMemory.guests} participants.`,
+          } from that ticket selection, but we were checking ${
+            input.bookingMemory.guests
+          }. Please choose a ticket option and quantity that matches ${input.bookingMemory.guests} participants.`,
           replySource: "DETERMINISTIC"
         };
       }
@@ -414,7 +941,7 @@ export async function handleTravellerBookingMessage(
       const ticketStatePatch: BookingFlowState = {
         productExternalId: input.bookingMemory?.productExternalId ?? null,
         productTitle: input.bookingMemory?.productTitle ?? null,
-        dateText: input.bookingMemory?.dateText ?? null,
+        dateText: dateTextForTicketSelection,
         guests: input.bookingMemory?.guests ?? participantCount,
         travellerName: input.bookingMemory?.travellerName ?? null,
         travellerEmail: input.bookingMemory?.travellerEmail ?? null,
@@ -424,18 +951,78 @@ export async function handleTravellerBookingMessage(
         externalBookingId: null,
         externalProvider: null,
         bookingError: null,
+        ...(input.bookingMemory?.timeOptions ? { timeOptions: input.bookingMemory.timeOptions } : {}),
         ticketOptions,
-        ticketQuantities: parsedTicketQuantities
+        ticketQuantities: parsedTicketQuantities,
+        ...(input.bookingMemory?.extraOptions ? { extraOptions: input.bookingMemory.extraOptions } : {}),
+        ...(input.bookingMemory?.extraOptions
+          ? { extraQuantities: input.bookingMemory?.extraQuantities ?? null }
+          : {})
       };
+      const extraOptions = input.bookingMemory?.extraOptions ?? [];
+
+      if (extraOptions.length > 0 && input.bookingMemory?.extraQuantities == null) {
+        return {
+          action: "BOOKING_EXTRAS_SELECTION_REQUIRED",
+          reply: `Got it: ${input.bookingMemory?.productTitle} ${formatDateAndTime(
+            dateTextForTicketSelection
+          )} for ${input.bookingMemory?.guests ?? participantCount} guest${
+            (input.bookingMemory?.guests ?? participantCount) === 1 ? "" : "s"
+          } with ${formatTicketQuantities(
+            parsedTicketQuantities
+          )}.\n\nOptional extras:\n${formatExtraOptionsList(
+            extraOptions,
+            "AUD"
+          )}\n\nWould you like to add any extras? You can say "no extras" or "1 x Corona Bucket".`,
+          replySource: "DETERMINISTIC",
+          bookingStatePatch: ticketStatePatch
+        };
+      }
 
       return {
         action: "BOOKING_DETAILS_REQUIRED",
-        reply: `Great. I have the ticket mix as ${formatTicketQuantities(parsedTicketQuantities)} for ${
-          input.bookingMemory?.productTitle
-        } ${input.bookingMemory?.dateText}. Please share your name, email, and phone number before I create the booking.`,
+        reply: `Got it. I have ${input.bookingMemory?.productTitle} ${formatDateAndTime(
+          dateTextForTicketSelection
+        )} for ${input.bookingMemory?.guests ?? participantCount} guest${
+          (input.bookingMemory?.guests ?? participantCount) === 1 ? "" : "s"
+        } with ${formatTicketQuantities(parsedTicketQuantities)}. Please share your name, email, and phone number so I can prepare the secure payment step.`,
         replySource: "DETERMINISTIC",
         inquiryDraft: null,
         bookingStatePatch: ticketStatePatch
+      };
+    }
+
+    if (correctedTime && correctedTime.startTimeLocal !== input.bookingMemory?.dateText) {
+      const correctedTimeStatePatch: BookingFlowState = {
+        productExternalId: input.bookingMemory?.productExternalId ?? null,
+        productTitle: input.bookingMemory?.productTitle ?? null,
+        dateText: correctedTime.startTimeLocal,
+        guests: input.bookingMemory?.guests ?? null,
+        travellerName: input.bookingMemory?.travellerName ?? null,
+        travellerEmail: input.bookingMemory?.travellerEmail ?? null,
+        travellerPhone: input.bookingMemory?.travellerPhone ?? null,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        confirmationSummary: null,
+        externalBookingId: null,
+        externalProvider: null,
+        bookingError: null,
+        ...(input.bookingMemory?.timeOptions ? { timeOptions: input.bookingMemory.timeOptions } : {}),
+        ticketOptions,
+        ticketQuantities: null
+      };
+
+      return {
+        action: "BOOKING_TICKET_SELECTION_REQUIRED",
+        reply: `Got it, I have ${input.bookingMemory?.productTitle} ${formatDateAndTime(
+          correctedTime.startTimeLocal
+        )} for ${input.bookingMemory?.guests} guest${
+          input.bookingMemory?.guests === 1 ? "" : "s"
+        }.\n\nTicket options:\n${formatTicketOptionsList(
+          ticketOptions,
+          "AUD"
+        )}\n\nPlease choose one ticket option and quantity.`,
+        replySource: "DETERMINISTIC",
+        bookingStatePatch: correctedTimeStatePatch
       };
     }
 
@@ -447,15 +1034,62 @@ export async function handleTravellerBookingMessage(
     ) {
       return {
         action: "BOOKING_TICKET_SELECTION_REQUIRED",
-        reply: `Before I prepare the booking, please choose the ticket mix for ${
+        reply: `Before I prepare the booking, please choose one ticket option and quantity for ${
           input.bookingMemory?.guests
-        } participant${input.bookingMemory?.guests === 1 ? "" : "s"}: ${formatTicketOptions(
+        } participant${input.bookingMemory?.guests === 1 ? "" : "s"}:\n${formatTicketOptionsList(
           ticketOptions,
           "AUD"
-        )}. For example, "2 adults and 1 child".`,
+        )}\n\nFor example, "1 x 2 people" or "2 adults".`,
         replySource: "DETERMINISTIC"
       };
     }
+  }
+
+  const extraOptions = input.bookingMemory?.extraOptions ?? [];
+  if (extraOptions.length > 0 && input.bookingMemory?.extraQuantities == null && input.bookingMemory?.ticketQuantities) {
+    const parsedExtraQuantities = parseExtraQuantities(input.message, extraOptions);
+
+    if (parsedExtraQuantities !== null) {
+      const extraStatePatch: BookingFlowState = {
+        productExternalId: input.bookingMemory.productExternalId ?? null,
+        productTitle: input.bookingMemory.productTitle ?? null,
+        dateText: input.bookingMemory.dateText ?? null,
+        guests: input.bookingMemory.guests ?? null,
+        travellerName: input.bookingMemory.travellerName ?? null,
+        travellerEmail: input.bookingMemory.travellerEmail ?? null,
+        travellerPhone: input.bookingMemory.travellerPhone ?? null,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        confirmationSummary: null,
+        externalBookingId: null,
+        externalProvider: null,
+        bookingError: null,
+        ...(input.bookingMemory.timeOptions ? { timeOptions: input.bookingMemory.timeOptions } : {}),
+        ...(input.bookingMemory.ticketOptions ? { ticketOptions: input.bookingMemory.ticketOptions } : {}),
+        ticketQuantities: input.bookingMemory.ticketQuantities,
+        extraOptions,
+        extraQuantities: parsedExtraQuantities
+      };
+      const extraReplyPrefix =
+        parsedExtraQuantities.length === 0
+          ? "No extras added."
+          : `Added ${formatExtraQuantities(parsedExtraQuantities)}.`;
+
+      return {
+        action: "BOOKING_DETAILS_REQUIRED",
+        reply: `${extraReplyPrefix} Please share your name, email, and phone number so I can prepare the secure payment step.`,
+        replySource: "DETERMINISTIC",
+        bookingStatePatch: extraStatePatch
+      };
+    }
+
+    return {
+      action: "BOOKING_EXTRAS_SELECTION_REQUIRED",
+      reply: `Optional extras:\n${formatExtraOptionsList(
+        extraOptions,
+        "AUD"
+      )}\n\nWould you like to add any extras? You can say "no extras" or "1 x Corona Bucket".`,
+      replySource: "DETERMINISTIC"
+    };
   }
 
   if (isProductLinkRequest(input.message) && input.bookingMemory?.productTitle) {
@@ -546,21 +1180,38 @@ export async function handleTravellerBookingMessage(
         const readyState = markBookingReadyToConfirm({
           ...capturedState,
           ...(input.bookingMemory?.ticketOptions ? { ticketOptions: input.bookingMemory.ticketOptions } : {}),
-          ...(input.bookingMemory?.ticketQuantities ? { ticketQuantities: input.bookingMemory.ticketQuantities } : {})
+          ...(input.bookingMemory?.ticketQuantities ? { ticketQuantities: input.bookingMemory.ticketQuantities } : {}),
+          ...(input.bookingMemory?.extraOptions ? { extraOptions: input.bookingMemory.extraOptions } : {}),
+          ...(input.bookingMemory?.extraQuantities ? { extraQuantities: input.bookingMemory.extraQuantities } : {})
         });
         const ticketSummary = readyState.ticketQuantities?.length
           ? ` with ${formatTicketQuantities(readyState.ticketQuantities)}`
           : "";
+        const extraSummary =
+          readyState.extraQuantities && readyState.extraQuantities.length > 0
+            ? ` and ${formatExtraQuantities(readyState.extraQuantities)}`
+            : "";
+        const paymentState: BookingFlowState = {
+          ...readyState,
+          ...(input.bookingMemory?.timeOptions ? { timeOptions: input.bookingMemory.timeOptions } : {}),
+          bookingStatus: "PAYMENT_PENDING",
+          bookingError: "Awaiting secure payment before creating the external booking."
+        };
 
         return {
-          action: "BOOKING_READY_TO_CONFIRM",
-          reply: `I have the details for ${readyState.productTitle} on ${readyState.dateText} for ${
+          action: "BOOKING_PAYMENT_REQUIRED",
+          reply: `Thanks, I have everything for ${readyState.productTitle} ${formatDateAndTime(
+            readyState.dateText
+          )} for ${
             readyState.guests
-          } guest${readyState.guests === 1 ? "" : "s"}${ticketSummary} under ${readyState.travellerName}, ${
+          } guest${readyState.guests === 1 ? "" : "s"}${ticketSummary}${extraSummary} under ${readyState.travellerName}, ${
             readyState.travellerEmail
-          }, ${readyState.travellerPhone}. Please confirm: should I create this booking now?`,
+          }, ${
+            readyState.travellerPhone
+          }.\n\nUse the secure payment panel below when you are ready. I cannot take card details in chat.\n\nFor now, I saved this as a lead for the operator.`,
           replySource: "DETERMINISTIC",
-          bookingStatePatch: readyState
+          inquiryDraft: capture.details,
+          bookingStatePatch: paymentState
         };
       }
     }
@@ -616,7 +1267,12 @@ export async function handleTravellerBookingMessage(
   if (missingSlots.includes("date") || missingSlots.includes("guests")) {
     return {
       action: "NEEDS_MORE_DETAILS",
-      reply: `I can help with that. Please share the ${missingSlots.join(", ")} so I can check safely.`,
+      reply: composeMissingDetailsReply({
+        missingSlots,
+        productTitle: effectiveSlots.productHint,
+        dateText: effectiveSlots.dateText,
+        guests: effectiveSlots.guests
+      }),
       replySource: "DETERMINISTIC"
     };
   }
@@ -663,23 +1319,45 @@ export async function handleTravellerBookingMessage(
     });
   }
 
-  if (input.bookingWriteEnabled === true && availability.ticketOptions && availability.ticketOptions.length > 1) {
+  if (input.bookingWriteEnabled === true && availability.timeOptions && availability.timeOptions.length > 1) {
     return {
-      action: "BOOKING_TICKET_SELECTION_REQUIRED",
-      reply: `Good news, ${product.title} has availability for ${
+      action: "BOOKING_TIME_SELECTION_REQUIRED",
+      reply: `${product.title} is available for ${
         effectiveSlots.guests
-      } guests ${formatDatePhrase(effectiveSlots.dateText)}. There are ${
-        availability.remaining
-      } spots left. Ticket options are ${formatTicketOptions(
-        availability.ticketOptions,
-        availability.currency
-      )}. Please tell me the ticket mix, for example "2 adults and 1 child". I have not confirmed anything yet.`,
+      } guests ${formatDatePhrase(effectiveSlots.dateText)}. I found these times:\n${formatTimeOptionsList(
+        availability.timeOptions
+      )}\n\nWhich time works best? Nothing is booked yet.`,
       replySource: "DETERMINISTIC",
       bookingStatePatch: buildAvailabilityState({
         product,
         dateText: effectiveSlots.dateText,
         guests: effectiveSlots.guests,
-        ticketOptions: availability.ticketOptions
+        timeOptions: availability.timeOptions,
+        ticketOptions: availability.ticketOptions,
+        extraOptions: availability.extraOptions
+      })
+    };
+  }
+
+  if (input.bookingWriteEnabled === true && availability.ticketOptions && availability.ticketOptions.length > 1) {
+    return {
+      action: "BOOKING_TICKET_SELECTION_REQUIRED",
+      reply: `${product.title} is available for ${
+        effectiveSlots.guests
+      } guests ${formatDatePhrase(effectiveSlots.dateText)}. There are ${
+        availability.remaining
+      } spots left.\n\nTicket options:\n${formatTicketOptionsList(
+        availability.ticketOptions,
+        availability.currency
+      )}\n\nWhich ticket option should I use? You can say "option 2" or "1 x 2 people". Nothing is booked yet.`,
+      replySource: "DETERMINISTIC",
+      bookingStatePatch: buildAvailabilityState({
+        product,
+        dateText: effectiveSlots.dateText,
+        guests: effectiveSlots.guests,
+        timeOptions: availability.timeOptions,
+        ticketOptions: availability.ticketOptions,
+        extraOptions: availability.extraOptions
       })
     };
   }

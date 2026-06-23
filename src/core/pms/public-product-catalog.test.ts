@@ -43,6 +43,32 @@ describe("public product catalog parsing", () => {
     ]);
   });
 
+  it("keeps configured fallback optional extras for mapped public products", () => {
+    expect(
+      parsePublicProductCatalog([
+        {
+          publicTitle: "Gold Coast Whale Escape",
+          pmsProductId: "LWWVE",
+          extraOptions: [
+            { label: "Corona Bucket", unitPriceCents: 3000 },
+            { name: "Sparkling for 2", price: 40 }
+          ]
+        }
+      ])
+    ).toEqual([
+      {
+        publicTitle: "Gold Coast Whale Escape",
+        publicDescription: "",
+        pmsProductId: "LWWVE",
+        bookingMode: "AUTO_BOOKING",
+        extraOptions: [
+          { label: "Corona Bucket", unitPriceCents: 3000 },
+          { label: "Sparkling for 2", unitPriceCents: 4000 }
+        ]
+      }
+    ]);
+  });
+
   it("parses JSON from the admin settings textarea", () => {
     expect(
       parsePublicProductCatalogJson(

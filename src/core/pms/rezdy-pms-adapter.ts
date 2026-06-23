@@ -92,6 +92,16 @@ function readPriceOptionLabel(priceOption: UnknownRecord | undefined) {
   return readString(priceOption, ["label", "optionLabel", "name", "title"]);
 }
 
+function readExtraOptionLabel(extraOption: UnknownRecord | undefined) {
+  if (!extraOption) return "";
+
+  return readString(extraOption, ["label", "optionLabel", "name", "title"]);
+}
+
+function readExtraOptionPrice(extraOption: UnknownRecord) {
+  return readNumber(extraOption, ["unitPrice", "price", "advertisedPrice", "amount", "value"]);
+}
+
 function scorePriceOption(priceOption: UnknownRecord) {
   const label = readPriceOptionLabel(priceOption).toLowerCase();
 
@@ -114,9 +124,22 @@ function isRezdyLocalDateTime(dateText: string) {
   return /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(dateText.trim());
 }
 
+function formatRezdyTimeLabel(startTimeLocal: string) {
+  const match = startTimeLocal.match(/\b(\d{2}):(\d{2}):\d{2}\b/);
+  if (!match) return startTimeLocal;
+
+  const hour24 = Number(match[1]);
+  const minute = match[2];
+  const period = hour24 >= 12 ? "PM" : "AM";
+  const hour12 = hour24 % 12 || 12;
+
+  return `${hour12}:${minute} ${period}`;
+}
+
 interface RezdyAvailabilitySession {
   dateRange: ReturnType<typeof resolveRezdyDateRange>;
   session?: UnknownRecord;
+  sessions: UnknownRecord[];
 }
 
 export class RezdyPmsAdapter extends RealPmsHttpAdapter {
@@ -127,7 +150,7 @@ export class RezdyPmsAdapter extends RealPmsHttpAdapter {
   }
 
   async getAvailability(request: PmsAvailabilityRequest): Promise<PmsAvailabilityResult> {
-    const { dateRange, session } = await this.findAvailabilitySession(request);
+    const { dateRange, session, sessions } = await this.findAvailabilitySession(request);
 
     if (!session) {
       return {
@@ -144,12 +167,37 @@ export class RezdyPmsAdapter extends RealPmsHttpAdapter {
     const selectedPrice = selectPriceOption(priceOptions);
     const unitPrice = selectedPrice ? readNumber(selectedPrice, ["price", "adultPrice", "advertisedPrice"]) : 0;
     const remaining = readNumber(session, ["seatsAvailable", "availability", "remaining"]);
+    const timeOptions = sessions
+      .filter((item) => readNumber(item, ["seatsAvailable", "availability", "remaining"]) >= request.guests)
+      .map((item) => {
+        const startTimeLocal = readString(item, ["startTimeLocal", "startTime"]);
+        const checkoutItemKey = readString(item, ["itemKey"]);
+        const checkoutSessionId = readString(item, ["id", "sessionId", "sessionKey", "availabilityId"]);
+
+        return startTimeLocal
+          ? {
+              label: formatRezdyTimeLabel(startTimeLocal),
+              startTimeLocal,
+              remaining: readNumber(item, ["seatsAvailable", "availability", "remaining"]),
+              ...(checkoutItemKey ? { checkoutItemKey } : {}),
+              ...(checkoutSessionId ? { checkoutSessionId } : {})
+            }
+          : null;
+      })
+      .filter((item): item is NonNullable<typeof item> => Boolean(item));
     const ticketOptions = priceOptions
       .map((priceOption) => ({
         label: readPriceOptionLabel(priceOption),
         unitPriceCents: Math.round(readNumber(priceOption, ["price", "adultPrice", "advertisedPrice"]) * 100)
       }))
       .filter((ticketOption) => ticketOption.label);
+    const extraOptions = ["extras", "extraOptions", "productExtras"]
+      .flatMap((key) => readArrayRecords(session, key))
+      .map((extraOption) => ({
+        label: readExtraOptionLabel(extraOption),
+        unitPriceCents: Math.round(readExtraOptionPrice(extraOption) * 100)
+      }))
+      .filter((extraOption) => extraOption.label);
 
     return {
       productId: readString(session, ["productCode", "productId"]) || request.productId,
@@ -158,7 +206,9 @@ export class RezdyPmsAdapter extends RealPmsHttpAdapter {
       remaining,
       currency: readString(session, ["currency", "currencyCode"]) || "AUD",
       unitPriceCents: Math.round(unitPrice * 100),
-      ticketOptions
+      timeOptions,
+      ticketOptions,
+      ...(extraOptions.length > 0 ? { extraOptions } : {})
     };
   }
 
@@ -196,6 +246,13 @@ export class RezdyPmsAdapter extends RealPmsHttpAdapter {
               value: request.guests
             }
           ];
+    const extraQuantities =
+      request.extraQuantities && request.extraQuantities.length > 0
+        ? request.extraQuantities.map((extra) => ({
+            name: extra.optionLabel,
+            quantity: extra.quantity
+          }))
+        : undefined;
     const name = splitTravellerName(request.travellerName);
     const payload = await this.requestJson("POST", this.config.bookingPath as string, {
       customer: {
@@ -208,9 +265,11 @@ export class RezdyPmsAdapter extends RealPmsHttpAdapter {
         {
           productCode: (session ? readString(session, ["productCode", "productId"]) : "") || request.productId,
           startTimeLocal: (session ? readString(session, ["startTimeLocal", "startTime"]) : "") || request.date,
-          quantities: ticketQuantities
+          quantities: ticketQuantities,
+          ...(extraQuantities ? { extras: extraQuantities } : {})
         }
       ],
+      ...(request.paymentCardToken ? { creditCard: { cardToken: request.paymentCardToken } } : {}),
       resellerComments: "Created by Kai after traveller confirmation."
     });
     const record = asRecord(payload);
@@ -246,6 +305,6 @@ export class RezdyPmsAdapter extends RealPmsHttpAdapter {
       sessions.find((item) => readNumber(item, ["seatsAvailable", "availability", "remaining"]) >= request.guests) ??
       sessions[0];
 
-    return { dateRange, session };
+    return { dateRange, session, sessions };
   }
 }

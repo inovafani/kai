@@ -110,6 +110,15 @@ export async function POST(request: NextRequest) {
   const llmClient = createAssistantLlmClient(process.env);
   let assistantContent: string;
   let manualInquiry: Awaited<ReturnType<typeof createManualInquiry>> | null = null;
+  let paymentRequest:
+    | {
+        conversationId: string;
+        productTitle: string | null;
+        dateText: string | null;
+        guests: number | null;
+        status: "PAYMENT_PENDING";
+      }
+    | null = null;
 
   try {
     const sourcePmsAdapter = getPmsAdapter(provider, process.env, fetch, resolved.tenant.slug);
@@ -135,6 +144,7 @@ export async function POST(request: NextRequest) {
       bookingMemory: bookingState,
       pmsAdapter,
       bookingWriteEnabled: resolved.tenant.config?.bookingWriteEnabled ?? false,
+      allowUnpaidExternalBooking: process.env.KAI_ALLOW_UNPAID_EXTERNAL_BOOKINGS === "true",
       llmClient,
       tenantContext: {
         tenantName: resolved.tenant.name,
@@ -160,6 +170,16 @@ export async function POST(request: NextRequest) {
         conversationId: conversation.id,
         state: bookingResult.bookingStatePatch
       });
+
+      if (bookingResult.action === "BOOKING_PAYMENT_REQUIRED") {
+        paymentRequest = {
+          conversationId: conversation.id,
+          productTitle: bookingResult.bookingStatePatch.productTitle,
+          dateText: bookingResult.bookingStatePatch.dateText,
+          guests: bookingResult.bookingStatePatch.guests,
+          status: "PAYMENT_PENDING"
+        };
+      }
     }
 
     const bookingFailureInquiry = buildBookingFailureManualInquiry(bookingResult);
@@ -176,7 +196,10 @@ export async function POST(request: NextRequest) {
     }
 
     if (
-      (bookingResult.action === "BOOKING_INQUIRY_READY" || bookingResult.action === "BOOKING_WRITE_DISABLED") &&
+      (bookingResult.action === "BOOKING_INQUIRY_READY" ||
+        bookingResult.action === "BOOKING_WRITE_DISABLED" ||
+        bookingResult.action === "BOOKING_CHECKOUT_READY" ||
+        bookingResult.action === "BOOKING_PAYMENT_REQUIRED") &&
       bookingResult.inquiryDraft
     ) {
       manualInquiry = await createManualInquiry({
@@ -238,6 +261,7 @@ export async function POST(request: NextRequest) {
           travellerEmail: manualInquiry.travellerEmail,
           travellerPhone: manualInquiry.travellerPhone
         }
-      : null
+      : null,
+    paymentRequest
   });
 }

@@ -33,7 +33,8 @@ describe("MappedPmsAdapter", () => {
         publicDescription: "Luxury whale watching",
         pmsProductId: "rezdy-whale-direct",
         productUrl: "https://tenant.example/whale",
-        bookingMode: "AUTO_BOOKING"
+        bookingMode: "AUTO_BOOKING",
+        extraOptions: [{ label: "Corona Bucket", unitPriceCents: 3000 }]
       }
     ]);
 
@@ -47,7 +48,11 @@ describe("MappedPmsAdapter", () => {
       }
     ]);
 
-    await adapter.getAvailability({ productId: "rezdy-whale-direct", date: "tomorrow", guests: 2 });
+    await expect(
+      adapter.getAvailability({ productId: "rezdy-whale-direct", date: "tomorrow", guests: 2 })
+    ).resolves.toMatchObject({
+      extraOptions: [{ label: "Corona Bucket", unitPriceCents: 3000 }]
+    });
 
     expect(sourceAdapter.listProducts).not.toHaveBeenCalled();
     expect(sourceAdapter.getAvailability).toHaveBeenCalledWith({

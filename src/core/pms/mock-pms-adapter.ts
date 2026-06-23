@@ -4,6 +4,7 @@ import type {
   PmsAvailabilityResult,
   PmsCreateBookingRequest,
   PmsCreateBookingResult,
+  PmsExtraOption,
   PmsProduct
 } from "./types";
 
@@ -13,6 +14,7 @@ type MockPmsProduct = PmsProduct & {
   capacity: number;
   currency: string;
   unitPriceCents: number;
+  extraOptions?: PmsExtraOption[];
 };
 
 const catalogProducts: Record<MockPmsCatalog, MockPmsProduct[]> = {
@@ -53,7 +55,12 @@ const catalogProducts: Record<MockPmsCatalog, MockPmsProduct[]> = {
       bookingMode: "AUTO_BOOKING",
       capacity: 24,
       currency: "AUD",
-      unitPriceCents: 9900
+      unitPriceCents: 9900,
+      extraOptions: [
+        { label: "Corona Bucket", unitPriceCents: 3000 },
+        { label: "Sparkling for 2", unitPriceCents: 4000 },
+        { label: "Cheese Platter for 2", unitPriceCents: 1000 }
+      ]
     },
     {
       externalProductId: "boattime-private-yacht-charter",
@@ -152,7 +159,8 @@ export class MockPmsAdapter implements PmsAdapter {
       available: remaining >= 0 && product.bookingMode === "AUTO_BOOKING",
       remaining: Math.max(remaining, 0),
       currency: product.currency,
-      unitPriceCents: product.unitPriceCents
+      unitPriceCents: product.unitPriceCents,
+      ...(product.extraOptions ? { extraOptions: product.extraOptions } : {})
     };
   }
 

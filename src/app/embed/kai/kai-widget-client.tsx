@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type WidgetConfig = {
   tenant: {
@@ -34,6 +34,41 @@ type ApiError = {
   };
 };
 
+type PaymentRequest = {
+  conversationId: string;
+  productTitle: string | null;
+  dateText: string | null;
+  guests: number | null;
+  status: "PAYMENT_PENDING";
+};
+
+type PaymentIntent = {
+  provider: "REZDYPAY_STRIPE";
+  publishableKey: string;
+  conversationId: string;
+};
+
+type StripeCardElement = {
+  mount(selector: string): void;
+  unmount?: () => void;
+};
+
+type StripeInstance = {
+  elements(): {
+    create(type: "card", options?: unknown): StripeCardElement;
+  };
+  createToken(
+    cardElement: StripeCardElement,
+    details?: { name?: string }
+  ): Promise<{ token?: { id: string }; error?: { message?: string } }>;
+};
+
+declare global {
+  interface Window {
+    Stripe?: (publishableKey: string) => StripeInstance | null;
+  }
+}
+
 type KaiWidgetClientProps = {
   widgetKey: string;
 };
@@ -48,6 +83,34 @@ async function readJson<T>(response: Response): Promise<T> {
   return payload;
 }
 
+function loadStripeScript() {
+  if (typeof window === "undefined") {
+    return Promise.reject(new Error("Secure payment can only start in a browser."));
+  }
+
+  if (window.Stripe) {
+    return Promise.resolve();
+  }
+
+  return new Promise<void>((resolve, reject) => {
+    const existingScript = document.querySelector<HTMLScriptElement>('script[src="https://js.stripe.com/v3/"]');
+    if (existingScript) {
+      existingScript.addEventListener("load", () => resolve(), { once: true });
+      existingScript.addEventListener("error", () => reject(new Error("Secure payment could not load.")), {
+        once: true
+      });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://js.stripe.com/v3/";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Secure payment could not load."));
+    document.head.appendChild(script);
+  });
+}
+
 function createLocalMessageId() {
   return `local-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
@@ -56,11 +119,61 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
   const [config, setConfig] = useState<WidgetConfig | null>(null);
   const [conversationId, setConversationId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [paymentRequest, setPaymentRequest] = useState<PaymentRequest | null>(null);
+  const [paymentIntent, setPaymentIntent] = useState<PaymentIntent | null>(null);
+  const [paymentStatus, setPaymentStatus] = useState<"idle" | "starting" | "ready" | "confirming" | "confirmed">(
+    "idle"
+  );
+  const [paymentError, setPaymentError] = useState("");
+  const [cardholderName, setCardholderName] = useState("");
   const [message, setMessage] = useState("");
   const [status, setStatus] = useState<"loading" | "ready" | "sending" | "error">(
     "loading"
   );
   const [error, setError] = useState("");
+  const stripeRef = useRef<StripeInstance | null>(null);
+  const cardElementRef = useRef<StripeCardElement | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    async function mountPaymentElement() {
+      if (!paymentIntent) return;
+
+      try {
+        setPaymentError("");
+        await loadStripeScript();
+        if (!active) return;
+
+        const stripe = window.Stripe?.(paymentIntent.publishableKey) ?? null;
+        if (!stripe) {
+          throw new Error("Secure payment could not initialize.");
+        }
+
+        const elements = stripe.elements();
+        const cardElement = elements.create("card", {
+          hidePostalCode: true
+        });
+        stripeRef.current = stripe;
+        cardElementRef.current = cardElement;
+        cardElement.mount("#kai-payment-card-element");
+        setPaymentStatus("ready");
+      } catch (mountError) {
+        if (!active) return;
+        setPaymentStatus("idle");
+        setPaymentError(mountError instanceof Error ? mountError.message : "Secure payment could not load.");
+      }
+    }
+
+    void mountPaymentElement();
+
+    return () => {
+      active = false;
+      cardElementRef.current?.unmount?.();
+      cardElementRef.current = null;
+      stripeRef.current = null;
+    };
+  }, [paymentIntent]);
 
   useEffect(() => {
     let active = true;
@@ -154,6 +267,7 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
       const response = await readJson<{
         message: ChatMessage;
         assistantMessage: ChatMessage;
+        paymentRequest?: PaymentRequest | null;
       }>(
         await fetch("/api/widget/messages", {
           method: "POST",
@@ -172,6 +286,10 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
         ),
         response.assistantMessage
       ]);
+      setPaymentRequest(response.paymentRequest ?? null);
+      setPaymentIntent(null);
+      setPaymentError("");
+      setCardholderName("");
       setStatus("ready");
     } catch (sendError) {
       setStatus("ready");
@@ -180,6 +298,74 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
         currentMessages.filter((chatMessage) => chatMessage.id !== localTravellerMessage.id)
       );
       setError(sendError instanceof Error ? sendError.message : "Message failed to send.");
+    }
+  }
+
+  async function startPayment() {
+    if (!paymentRequest) return;
+
+    try {
+      setPaymentStatus("starting");
+      setPaymentError("");
+
+      const intent = await readJson<PaymentIntent>(
+        await fetch("/api/widget/payments/intent", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            key: widgetKey,
+            conversationId: paymentRequest.conversationId
+          })
+        })
+      );
+      setPaymentIntent(intent);
+    } catch (paymentStartError) {
+      setPaymentError(
+        paymentStartError instanceof Error ? paymentStartError.message : "Secure payment is not available yet."
+      );
+      setPaymentStatus("idle");
+    }
+  }
+
+  async function confirmPayment() {
+    if (!paymentRequest || !paymentIntent || !stripeRef.current || !cardElementRef.current) return;
+
+    try {
+      setPaymentStatus("confirming");
+      setPaymentError("");
+
+      const tokenResult = await stripeRef.current.createToken(cardElementRef.current, {
+        name: cardholderName.trim() || undefined
+      });
+
+      if (tokenResult.error || !tokenResult.token?.id) {
+        throw new Error(tokenResult.error?.message ?? "Card details could not be verified.");
+      }
+
+      const response = await readJson<{
+        booking: { externalBookingId: string; status: "CONFIRMED" | "PENDING" | "FAILED" };
+        assistantMessage?: ChatMessage;
+      }>(
+        await fetch("/api/widget/payments/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            key: widgetKey,
+            conversationId: paymentIntent.conversationId,
+            cardToken: tokenResult.token.id
+          })
+        })
+      );
+
+      if (response.assistantMessage) {
+        setMessages((currentMessages) => [...currentMessages, response.assistantMessage as ChatMessage]);
+      }
+      setPaymentStatus("confirmed");
+      setPaymentRequest(null);
+      setPaymentIntent(null);
+    } catch (confirmError) {
+      setPaymentStatus("ready");
+      setPaymentError(confirmError instanceof Error ? confirmError.message : "Payment could not be completed.");
     }
   }
 
@@ -274,7 +460,8 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
                   border: isTraveller ? "1px solid transparent" : "1px solid #dfe9e5",
                   color: isTraveller ? "#ffffff" : "#17231f",
                   lineHeight: 1.45,
-                  fontSize: 14
+                  fontSize: 14,
+                  whiteSpace: "pre-wrap"
                 }}
               >
                 {chatMessage.content}
@@ -324,6 +511,120 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
             >
               {error}
             </p>
+          ) : null}
+
+          {paymentRequest ? (
+            <section
+              aria-label="Secure payment"
+              style={{
+                alignSelf: "stretch",
+                padding: 14,
+                border: "1px solid #cfded9",
+                borderRadius: 8,
+                background: "#ffffff",
+                boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)"
+              }}
+            >
+              <h2 style={{ margin: 0, fontSize: 16, lineHeight: 1.25 }}>Secure payment</h2>
+              <p style={{ margin: "8px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
+                {paymentRequest.productTitle ?? "Selected booking"}
+                {paymentRequest.dateText ? ` · ${paymentRequest.dateText}` : ""}
+                {paymentRequest.guests ? ` · ${paymentRequest.guests} guest${paymentRequest.guests === 1 ? "" : "s"}` : ""}
+              </p>
+              <p style={{ margin: "10px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
+                Card details must be entered only in the secure payment form.
+              </p>
+              {paymentError ? (
+                <p
+                  role="alert"
+                  style={{
+                    margin: "10px 0 0",
+                    padding: "8px 10px",
+                    border: "1px solid #fecaca",
+                    borderRadius: 8,
+                    background: "#fef2f2",
+                    color: "#991b1b",
+                    fontSize: 13,
+                    lineHeight: 1.4
+                  }}
+                >
+                  {paymentError}
+                </p>
+              ) : null}
+              {paymentIntent ? (
+                <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
+                  <label htmlFor="kai-cardholder-name" style={{ fontSize: 13, fontWeight: 800 }}>
+                    Name on card
+                  </label>
+                  <input
+                    id="kai-cardholder-name"
+                    value={cardholderName}
+                    onChange={(event) => setCardholderName(event.target.value)}
+                    autoComplete="cc-name"
+                    style={{
+                      height: 40,
+                      border: "1px solid #cfded9",
+                      borderRadius: 8,
+                      padding: "0 10px",
+                      font: "inherit",
+                      outlineColor: accentColor
+                    }}
+                  />
+                  <div
+                    id="kai-payment-card-element"
+                    aria-label="Card details"
+                    style={{
+                      minHeight: 42,
+                      display: "grid",
+                      alignItems: "center",
+                      border: "1px solid #cfded9",
+                      borderRadius: 8,
+                      padding: "10px",
+                      background: "#fbfdfc",
+                      color: "#4f625b",
+                      fontSize: 13
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={confirmPayment}
+                    disabled={paymentStatus !== "ready"}
+                    style={{
+                      width: "100%",
+                      height: 42,
+                      border: "none",
+                      borderRadius: 8,
+                      background: accentColor,
+                      color: "#ffffff",
+                      fontWeight: 800,
+                      cursor: paymentStatus === "confirming" ? "wait" : paymentStatus === "ready" ? "pointer" : "not-allowed",
+                      opacity: paymentStatus === "ready" ? 1 : 0.75
+                    }}
+                  >
+                    {paymentStatus === "confirming" ? "Confirming..." : "Pay securely"}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={startPayment}
+                  disabled={paymentStatus === "starting"}
+                  style={{
+                    width: "100%",
+                    height: 42,
+                    marginTop: 12,
+                    border: "none",
+                    borderRadius: 8,
+                    background: accentColor,
+                    color: "#ffffff",
+                    fontWeight: 800,
+                    cursor: paymentStatus === "starting" ? "wait" : "pointer"
+                  }}
+                >
+                  {paymentStatus === "starting" ? "Preparing..." : "Continue to payment"}
+                </button>
+              )}
+            </section>
           ) : null}
         </div>
 

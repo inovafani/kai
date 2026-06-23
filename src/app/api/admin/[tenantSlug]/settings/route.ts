@@ -14,20 +14,29 @@ function parseList(value: FormDataEntryValue | null) {
     .filter(Boolean);
 }
 
-function assertAllowedOrigins(origins: string[]) {
+function parseOriginList(value: FormDataEntryValue | null) {
+  return String(value ?? "")
+    .split(/\r?\n|,|(?=https?:\/\/)/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeAllowedOrigins(origins: string[]) {
   if (origins.length === 0) {
     throw new Error("At least one allowed origin is required.");
   }
 
-  for (const origin of origins) {
-    const url = new URL(origin);
+  const normalized = origins.map((origin) => {
+    const cleanedOrigin = origin.replace(/https?$/i, "");
+    const url = new URL(cleanedOrigin);
     if (!["http:", "https:"].includes(url.protocol)) {
       throw new Error("Allowed origins must use http or https.");
     }
-    if (url.pathname !== "/" || url.search || url.hash) {
-      throw new Error("Allowed origins must not include paths, query strings, or hashes.");
-    }
-  }
+
+    return url.origin;
+  });
+
+  return Array.from(new Set(normalized));
 }
 
 type TenantSettingsRouteProps = {
@@ -48,7 +57,7 @@ export async function POST(request: NextRequest, { params }: TenantSettingsRoute
     );
   }
   const pmsProvider = String(formData.get("pmsProvider") ?? "") as PmsProvider;
-  const allowedOrigins = parseList(formData.get("allowedOrigins"));
+  const allowedOrigins = parseOriginList(formData.get("allowedOrigins"));
   const enabledFeatures = parseList(formData.get("enabledFeatures"));
   const responseGuardrails = parseList(formData.get("responseGuardrails"));
   const brandVoice = String(formData.get("brandVoice") ?? "").trim();
@@ -63,7 +72,8 @@ export async function POST(request: NextRequest, { params }: TenantSettingsRoute
   }
 
   try {
-    assertAllowedOrigins(allowedOrigins);
+    const normalizedAllowedOrigins = normalizeAllowedOrigins(allowedOrigins);
+    allowedOrigins.splice(0, allowedOrigins.length, ...normalizedAllowedOrigins);
     publicProductCatalog = parsePublicProductCatalogRows({
       publicTitles: formData.getAll("productPublicTitle").map(String),
       publicDescriptions: formData.getAll("productPublicDescription").map(String),
