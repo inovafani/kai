@@ -10,6 +10,7 @@ import {
   createTravellerMessage,
   findConversationBookingState,
   findTenantConversation,
+  listRecentConversationMessages,
   listRecentTravellerMessageContents,
   upsertConversationBookingState
 } from "@/server/conversation/conversation-repository";
@@ -99,6 +100,10 @@ export async function POST(request: NextRequest) {
     tenantId: resolved.tenant.id,
     conversationId: conversation.id
   });
+  const priorConversationMessages = await listRecentConversationMessages({
+    tenantId: resolved.tenant.id,
+    conversationId: conversation.id
+  });
 
   const message = await createTravellerMessage({
     tenantId: resolved.tenant.id,
@@ -141,6 +146,7 @@ export async function POST(request: NextRequest) {
     const bookingResult = await handleTravellerBookingMessage({
       message: content,
       priorTravellerMessages,
+      conversationHistory: [...priorConversationMessages, { role: "traveller", content }],
       bookingMemory: bookingState,
       pmsAdapter,
       bookingWriteEnabled: resolved.tenant.config?.bookingWriteEnabled ?? false,

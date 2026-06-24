@@ -160,6 +160,53 @@ describe("booking orchestrator", () => {
     });
   });
 
+  it("switches product context when the traveller asks about another product", async () => {
+    const result = await handleTravellerBookingMessage({
+      message: "what about twilight drift?",
+      priorTravellerMessages: ["can you give me recommendation?", "info on gold coast whale escape please"],
+      bookingMemory: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: null,
+        guests: null
+      },
+      pmsAdapter: {
+        provider: "MOCK",
+        listProducts: async () => [
+          {
+            externalProductId: "boattime-whale-escape",
+            title: "Gold Coast Whale Escape",
+            description: "Luxury whale watching cruise",
+            bookingMode: "AUTO_BOOKING",
+            productUrl: "http://localhost:3107/demo/boattime#gold-coast-whale-escape"
+          },
+          {
+            externalProductId: "boattime-twilight-drift",
+            title: "Twilight Drift",
+            description: "Sunset cruise experience",
+            bookingMode: "AUTO_BOOKING",
+            productUrl: "http://localhost:3107/demo/boattime#twilight-drift"
+          }
+        ],
+        getAvailability: async () => {
+          throw new Error("Availability should not be checked for product switching info requests.");
+        },
+        createBooking: async () => {
+          throw new Error("Booking should not be created for product info requests.");
+        },
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(result).toEqual({
+      action: "PRODUCT_LINK",
+      reply:
+        "Twilight Drift is a sunset cruise experience. You can see the product page here: http://localhost:3107/demo/boattime#twilight-drift. If you like it, tell me your date and group size and I can check availability.",
+      replySource: "DETERMINISTIC"
+    });
+  });
+
   it("uses the latest availability request instead of looping on an earlier product browsing intent", async () => {
     const result = await handleTravellerBookingMessage({
       message: "ok is it available tomorrow for 2 guests?",
@@ -248,6 +295,65 @@ describe("booking orchestrator", () => {
         "Good news, Gold Coast Whale Escape has availability for 2 guests on 2026-06-24. There are 18 spots left at AUD 99.00 per guest. I have not confirmed anything yet, but I can help you continue if this looks good.",
       replySource: "DETERMINISTIC"
     });
+  });
+
+  it("checks availability when traveller types a compact date after product browsing", async () => {
+    const result = await handleTravellerBookingMessage({
+      message: "28june, 3 people",
+      priorTravellerMessages: ["can you give me recommendation?", "info on gold coast whale escape please"],
+      bookingMemory: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: null,
+        guests: null
+      },
+      bookingWriteEnabled: true,
+      pmsAdapter: {
+        provider: "MOCK",
+        listProducts: async () => [
+          {
+            externalProductId: "boattime-whale-escape",
+            title: "Gold Coast Whale Escape",
+            description: "Luxury whale watching cruise",
+            bookingMode: "AUTO_BOOKING",
+            productUrl: "http://localhost:3107/demo/boattime#gold-coast-whale-escape"
+          }
+        ],
+        getAvailability: async (input) => ({
+          productId: input.productId,
+          date: "2026-06-28 09:00:00",
+          available: true,
+          remaining: 78,
+          currency: "AUD",
+          unitPriceCents: 7900,
+          timeOptions: [
+            { label: "9:00 AM", startTimeLocal: "2026-06-28 09:00:00", remaining: 78 },
+            { label: "12:00 PM", startTimeLocal: "2026-06-28 12:00:00", remaining: 75 },
+            { label: "1:30 PM", startTimeLocal: "2026-06-28 13:30:00", remaining: 75 }
+          ],
+          ticketOptions: [
+            { label: "Family (2A +2C) 3-13", unitPriceCents: 24900 },
+            { label: '"2 people for $149.00', unitPriceCents: 14900 }
+          ]
+        }),
+        createBooking: async () => {
+          throw new Error("Booking should not be created during availability checks.");
+        },
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(result).toMatchObject({
+      action: "BOOKING_TIME_SELECTION_REQUIRED",
+      bookingStatePatch: {
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-06-28",
+        guests: 3
+      }
+    });
+    expect(result.reply).toContain("Gold Coast Whale Escape is available for 3 guests on 2026-06-28");
+    expect(result.reply).toContain("1. 9:00 AM - 78 spots");
   });
 
   it("asks for a ticket option when an available product exposes multiple ticket options", async () => {
@@ -556,6 +662,94 @@ describe("booking orchestrator", () => {
       }
     });
     expect(result.reply).toContain("at 1:30 PM");
+  });
+
+  it("understands time labels with minutes even when the traveller omits am or pm", async () => {
+    const result = await handleTravellerBookingMessage({
+      message: "1:30 please",
+      bookingMemory: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-06-28",
+        guests: 3,
+        timeOptions: [
+          { label: "9:00 AM", startTimeLocal: "2026-06-28 09:00:00", remaining: 78 },
+          { label: "12:00 PM", startTimeLocal: "2026-06-28 12:00:00", remaining: 75 },
+          { label: "1:30 PM", startTimeLocal: "2026-06-28 13:30:00", remaining: 75 }
+        ],
+        ticketOptions: [
+          { label: "Family (2A +2C) 3-13", unitPriceCents: 24900 },
+          { label: '"2 people for $149.00', unitPriceCents: 14900 },
+          { label: "Child (3-13)", unitPriceCents: 5900 },
+          { label: "Infant (under 3)", unitPriceCents: 0 },
+          { label: "Adult (Winter Special)", unitPriceCents: 7900 }
+        ],
+        ticketQuantities: null
+      },
+      bookingWriteEnabled: true,
+      pmsAdapter: {
+        provider: "MOCK",
+        listProducts: async () => [],
+        getAvailability: async () => {
+          throw new Error("Availability should not be rechecked when choosing a remembered time.");
+        },
+        createBooking: async () => {
+          throw new Error("Booking should not be created before checkout handoff.");
+        },
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(result).toMatchObject({
+      action: "BOOKING_TICKET_SELECTION_REQUIRED",
+      bookingStatePatch: {
+        dateText: "2026-06-28 13:30:00"
+      }
+    });
+    expect(result.reply).toContain("at 1:30 PM");
+  });
+
+  it.each(["12p", "12 pm", "noon please"])("understands common shorthand time selection: %s", async (message) => {
+    const result = await handleTravellerBookingMessage({
+      message,
+      bookingMemory: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-06-28",
+        guests: 3,
+        timeOptions: [
+          { label: "9:00 AM", startTimeLocal: "2026-06-28 09:00:00", remaining: 78 },
+          { label: "12:00 PM", startTimeLocal: "2026-06-28 12:00:00", remaining: 75 },
+          { label: "1:30 PM", startTimeLocal: "2026-06-28 13:30:00", remaining: 75 }
+        ],
+        ticketOptions: [
+          { label: "Family (2A +2C) 3-13", unitPriceCents: 24900 },
+          { label: '"2 people for $149.00', unitPriceCents: 14900 }
+        ],
+        ticketQuantities: null
+      },
+      bookingWriteEnabled: true,
+      pmsAdapter: {
+        provider: "MOCK",
+        listProducts: async () => [],
+        getAvailability: async () => {
+          throw new Error("Availability should not be rechecked when choosing a remembered time.");
+        },
+        createBooking: async () => {
+          throw new Error("Booking should not be created before checkout handoff.");
+        },
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(result).toMatchObject({
+      action: "BOOKING_TICKET_SELECTION_REQUIRED",
+      bookingStatePatch: {
+        dateText: "2026-06-28 12:00:00"
+      }
+    });
   });
 
   it("understands numbered ticket option selections from the displayed list", async () => {
@@ -1566,6 +1760,88 @@ describe("booking orchestrator", () => {
           { label: "Adult (Winter Special)", unitPriceCents: 7900 }
         ],
         ticketQuantities: [{ optionLabel: '"2 people for $149.00', quantity: 1 }]
+      }
+    });
+  });
+
+  it("keeps collecting contact details when the traveller only sends a bare name", async () => {
+    const result = await handleTravellerBookingMessage({
+      message: "David Samantha",
+      priorTravellerMessages: [
+        "Can you check Gold Coast Whale Escape for 2 guests on 2026-06-28?",
+        "12:00 PM",
+        "option 2 please"
+      ],
+      bookingMemory: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-06-28 12:00:00",
+        guests: 2,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        timeOptions: [
+          { label: "9:00 AM", startTimeLocal: "2026-06-28 09:00:00", remaining: 78 },
+          { label: "12:00 PM", startTimeLocal: "2026-06-28 12:00:00", remaining: 75 },
+          { label: "1:30 PM", startTimeLocal: "2026-06-28 13:30:00", remaining: 75 }
+        ],
+        ticketOptions: [
+          { label: "Adult (Winter Special)", unitPriceCents: 7900 },
+          { label: '"2 people for $149.00', unitPriceCents: 14900 }
+        ],
+        ticketQuantities: [{ optionLabel: '"2 people for $149.00', quantity: 1 }],
+        extraQuantities: []
+      },
+      bookingWriteEnabled: true,
+      pmsAdapter: {
+        provider: "MOCK",
+        listProducts: async () => [
+          {
+            externalProductId: "boattime-whale-escape",
+            title: "Gold Coast Whale Escape",
+            description: "Luxury whale watching cruise",
+            bookingMode: "AUTO_BOOKING"
+          }
+        ],
+        getAvailability: async () => {
+          throw new Error("Availability should not be rechecked while collecting contact details.");
+        },
+        createBooking: async () => {
+          throw new Error("Booking should not be created before secure payment succeeds.");
+        },
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(result).toEqual({
+      action: "BOOKING_DETAILS_REQUIRED",
+      reply:
+        "Thanks, David Samantha. I still need your email and phone number to prepare the secure payment step.",
+      replySource: "DETERMINISTIC",
+      inquiryDraft: null,
+      bookingStatePatch: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-06-28 12:00:00",
+        guests: 2,
+        travellerName: "David Samantha",
+        travellerEmail: null,
+        travellerPhone: null,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        confirmationSummary: null,
+        externalBookingId: null,
+        externalProvider: null,
+        bookingError: null,
+        timeOptions: [
+          { label: "9:00 AM", startTimeLocal: "2026-06-28 09:00:00", remaining: 78 },
+          { label: "12:00 PM", startTimeLocal: "2026-06-28 12:00:00", remaining: 75 },
+          { label: "1:30 PM", startTimeLocal: "2026-06-28 13:30:00", remaining: 75 }
+        ],
+        ticketOptions: [
+          { label: "Adult (Winter Special)", unitPriceCents: 7900 },
+          { label: '"2 people for $149.00', unitPriceCents: 14900 }
+        ],
+        ticketQuantities: [{ optionLabel: '"2 people for $149.00', quantity: 1 }],
+        extraQuantities: []
       }
     });
   });

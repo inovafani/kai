@@ -28,6 +28,10 @@ function formatTenantContext(context?: AssistantTenantContext | null) {
 }
 
 function buildInput(input: Parameters<AssistantLlmClient["composeReply"]>[0]) {
+  const history = (input.conversationHistory ?? [])
+    .map((message) => `${message.role === "traveller" ? "Traveller" : "Kai"}: ${message.content}`)
+    .join("\n");
+
   return [
     "Rewrite the assistant reply so it sounds natural, helpful, and concise for this tenant's traveller.",
     "Do not start with greetings like Hello, Hi, Good day, or I am Kai; the widget already greeted the traveller.",
@@ -36,8 +40,16 @@ function buildInput(input: Parameters<AssistantLlmClient["composeReply"]>[0]) {
     "Do not invent PMS products or recommendations outside the PMS products list.",
     "Do not claim that a booking is confirmed.",
     "Preserve every required fact exactly as written.",
+    "Keep the reply to 2-3 sentences unless the traveller explicitly asks for detail.",
+    "Ask no more than one question.",
+    "Avoid bullet points unless the traveller asked for a list or the deterministic reply contains required options.",
     "",
     formatTenantContext(input.tenantContext),
+    "",
+    "Conversation history:",
+    history || "No prior conversation history.",
+    "",
+    "Latest traveller message: " + (input.latestUserMessage ?? "not provided"),
     "",
     "Required facts: " + input.requiredFacts.join(" | "),
     "",
@@ -75,10 +87,10 @@ export function createOpenAiAssistantClient(
           },
           body: JSON.stringify({
             model,
-            instructions:
-              "You are Kai, a tenant-aware booking assistant. You polish wording around PMS-verified facts, tenant tone, and safety constraints.",
+            instructions: input.tenantSystemPrompt || formatTenantContext(input.tenantContext),
             input: buildInput(input),
-            max_output_tokens: maxOutputTokens
+            max_output_tokens: maxOutputTokens,
+            temperature: 0.75
           }),
           signal: abortController.signal
         });

@@ -73,6 +73,16 @@ describe("validateKaiEnvironment", () => {
     });
   });
 
+  it("defaults Groq to the 70B versatile model", () => {
+    expect(
+      getKaiLlmRuntimeSettings({
+        ENABLE_LLM: "true",
+        LLM_PROVIDER: "groq",
+        GROQ_API_KEY: "gsk-secret-value"
+      }).model
+    ).toBe("llama-3.3-70b-versatile");
+  });
+
   it("fails closed for unsupported LLM providers and clamps output token limits", () => {
     expect(
       getKaiLlmRuntimeSettings({

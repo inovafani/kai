@@ -14,7 +14,13 @@ import {
   type BookingFlowState
 } from "./booking-state-machine";
 import { matchPmsProduct } from "./product-matcher";
-import { composeAssistantReply, type AssistantLlmClient, type AssistantReplySource, type AssistantTenantContext } from "@/core/llm/assistant-reply-composer";
+import {
+  composeAssistantReply,
+  type AssistantConversationMessage,
+  type AssistantLlmClient,
+  type AssistantReplySource,
+  type AssistantTenantContext
+} from "@/core/llm/assistant-reply-composer";
 import type {
   PmsAdapter,
   PmsExtraOption,
@@ -57,6 +63,7 @@ export interface BookingOrchestratorResult {
 export interface HandleTravellerBookingMessageInput {
   message: string;
   priorTravellerMessages?: string[];
+  conversationHistory?: AssistantConversationMessage[];
   bookingMemory?: BookingMemoryState | null;
   pmsAdapter: PmsAdapter;
   bookingWriteEnabled?: boolean;
@@ -85,12 +92,16 @@ async function composeReplyResult(input: {
   requiredFacts?: string[];
   llmClient?: AssistantLlmClient | null;
   tenantContext?: AssistantTenantContext | null;
+  latestUserMessage?: string | null;
+  conversationHistory?: AssistantConversationMessage[];
 }): Promise<BookingOrchestratorResult> {
   const composed = await composeAssistantReply({
     deterministicReply: input.deterministicReply,
     requiredFacts: input.requiredFacts,
     tenantContext: input.tenantContext,
-    llmClient: input.llmClient
+    llmClient: input.llmClient,
+    latestUserMessage: input.latestUserMessage,
+    conversationHistory: input.conversationHistory
   });
 
   return {
@@ -581,20 +592,88 @@ function timeSelectionAliases(label: string) {
   const normalized = normalizeTimeSelectionText(label);
   const compact = normalized.replace(/\s+/g, "");
   const aliases = new Set([normalized, compact, compact.replace(":", "")]);
-  const timeMatch = compact.match(/^(\d{1,2})(?::?00)?(am|pm)$/);
+  const timeMatch = compact.match(/^(\d{1,2})(?::?(\d{2}))?(am|pm)$/);
 
   if (timeMatch) {
-    aliases.add(`${timeMatch[1]}${timeMatch[2]}`);
-    aliases.add(`${timeMatch[1]}:00${timeMatch[2]}`);
-    aliases.add(`${timeMatch[1]}:00 ${timeMatch[2]}`);
+    const minutes = timeMatch[2] ?? "00";
+    const period = timeMatch[3];
+    const periodShort = period[0];
+
+    aliases.add(`${timeMatch[1]}:${minutes}${period}`);
+    aliases.add(`${timeMatch[1]}:${minutes} ${period}`);
+    aliases.add(`${timeMatch[1]}${minutes}${period}`);
+    aliases.add(`${timeMatch[1]}:${minutes}${periodShort}`);
+    aliases.add(`${timeMatch[1]}:${minutes} ${periodShort}`);
+    aliases.add(`${timeMatch[1]}${minutes}${periodShort}`);
+
+    if (minutes === "00") {
+      aliases.add(`${timeMatch[1]}${period}`);
+      aliases.add(`${timeMatch[1]} ${period}`);
+      aliases.add(`${timeMatch[1]}${periodShort}`);
+      aliases.add(`${timeMatch[1]} ${periodShort}`);
+    }
   }
 
   return [...aliases];
 }
 
+function parseClockFromOptionLabel(label: string) {
+  const match = normalizeTimeSelectionText(label).match(/\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/);
+  if (!match) return null;
+
+  return {
+    hour: Number(match[1]),
+    minute: Number(match[2] ?? "00"),
+    period: match[3]
+  };
+}
+
+function findClockSelection(message: string, options: PmsTimeOption[]) {
+  const normalizedMessage = normalizeTimeSelectionText(message);
+
+  if (/\b(noon|midday)\b/.test(normalizedMessage)) {
+    const noonOption = options.find((option) => {
+      const optionClock = parseClockFromOptionLabel(option.label);
+      return optionClock?.hour === 12 && optionClock.minute === 0 && optionClock.period === "pm";
+    });
+
+    if (noonOption) return noonOption;
+  }
+
+  const matches = [...normalizedMessage.matchAll(/\b(\d{1,2})(?::(\d{2}))?\s*(a|am|p|pm)?\b/g)];
+
+  for (const match of matches.reverse()) {
+    const hour = Number(match[1]);
+    const minute = Number(match[2] ?? "00");
+    const period = match[3]?.length === 1 ? (match[3] === "a" ? "am" : "pm") : match[3] ?? null;
+    const hasExplicitClockShape = Boolean(match[2] || period);
+
+    if (!hasExplicitClockShape || hour < 1 || hour > 12 || minute > 59) continue;
+
+    const matchedOption = options.find((option) => {
+      const optionClock = parseClockFromOptionLabel(option.label);
+      if (!optionClock) return false;
+
+      if (optionClock.hour !== hour || optionClock.minute !== minute) return false;
+
+      return period ? optionClock.period === period : true;
+    });
+
+    if (matchedOption) return matchedOption;
+  }
+
+  return null;
+}
+
 function parseSelectedTimeOption(message: string, options: PmsTimeOption[]) {
   const normalizedMessage = normalizeTimeSelectionText(message);
   const compactMessage = normalizedMessage.replace(/\s+/g, "");
+  const clockSelection = findClockSelection(message, options);
+
+  if (clockSelection) {
+    return clockSelection;
+  }
+
   const matchedOption = options
     .map((option) => {
       const latestIndex = Math.max(
@@ -710,6 +789,49 @@ function buildAvailabilityState(input: {
       ? { extraOptions: input.extraOptions, extraQuantities: null }
       : {})
   };
+}
+
+function formatMissingContactSlots(slots: ("name" | "email" | "phone")[]) {
+  const labels = slots.map((slot) => (slot === "phone" ? "phone number" : slot));
+  if (labels.length === 1) return labels[0];
+  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
+
+  return `${labels.slice(0, -1).join(", ")}, and ${labels[labels.length - 1]}`;
+}
+
+function buildContactCollectionState(input: {
+  memory: BookingMemoryState | null | undefined;
+  capture: ReturnType<typeof evaluateBookingCapture>;
+}): BookingFlowState {
+  return {
+    productExternalId: input.capture.details.productExternalId ?? input.memory?.productExternalId ?? null,
+    productTitle: input.capture.details.productTitle ?? input.memory?.productTitle ?? null,
+    dateText: input.capture.details.dateText ?? input.memory?.dateText ?? null,
+    guests: input.capture.details.guests ?? input.memory?.guests ?? null,
+    travellerName: input.capture.details.travellerName ?? input.memory?.travellerName ?? null,
+    travellerEmail: input.capture.details.travellerEmail ?? input.memory?.travellerEmail ?? null,
+    travellerPhone: input.capture.details.travellerPhone ?? input.memory?.travellerPhone ?? null,
+    bookingStatus: input.memory?.bookingStatus ?? "AVAILABILITY_CHECKED",
+    confirmationSummary: input.memory?.confirmationSummary ?? null,
+    externalBookingId: input.memory?.externalBookingId ?? null,
+    externalProvider: (input.memory?.externalProvider as BookingFlowState["externalProvider"]) ?? null,
+    bookingError: input.memory?.bookingError ?? null,
+    ...(input.memory?.timeOptions ? { timeOptions: input.memory.timeOptions } : {}),
+    ...(input.memory?.ticketOptions ? { ticketOptions: input.memory.ticketOptions } : {}),
+    ...(input.memory?.ticketQuantities ? { ticketQuantities: input.memory.ticketQuantities } : {}),
+    ...(input.memory?.extraOptions ? { extraOptions: input.memory.extraOptions } : {}),
+    ...(input.memory?.extraQuantities ? { extraQuantities: input.memory.extraQuantities } : {})
+  };
+}
+
+function composeContactCollectionReply(capture: ReturnType<typeof evaluateBookingCapture>) {
+  const missing = formatMissingContactSlots(capture.missingContactSlots);
+
+  if (capture.details.travellerName) {
+    return `Thanks, ${capture.details.travellerName}. I still need your ${missing} to prepare the secure payment step.`;
+  }
+
+  return `I still need your ${missing} to prepare the secure payment step.`;
 }
 
 export async function handleTravellerBookingMessage(
@@ -848,6 +970,31 @@ export async function handleTravellerBookingMessage(
       (currentMessageAnalysis.intent !== "CHECK_AVAILABILITY" && analysis.intent !== "CHECK_AVAILABILITY"));
   const timeOptions = input.bookingMemory?.timeOptions ?? [];
   const rememberedTime = selectedTimeOption(input.bookingMemory?.dateText, timeOptions);
+  const ticketOptions = input.bookingMemory?.ticketOptions ?? [];
+  const awaitingContactForSelectedTickets =
+    input.bookingWriteEnabled === true &&
+    Boolean(input.bookingMemory?.ticketQuantities?.length) &&
+    !(input.bookingMemory?.extraOptions?.length && input.bookingMemory.extraQuantities == null) &&
+    capture.missingBookingSlots.length === 0 &&
+    capture.missingContactSlots.length > 0;
+  const contactMessageLooksLikeBookingChange =
+    Boolean(currentMessageAnalysis.slots.dateText) ||
+    Boolean(currentMessageAnalysis.slots.guests) ||
+    Boolean(timeOptions.length > 1 && parseSelectedTimeOption(input.message, timeOptions)) ||
+    Boolean(ticketOptions.length > 1 && parseTicketQuantities(input.message, ticketOptions, input.bookingMemory?.guests).length > 0);
+
+  if (awaitingContactForSelectedTickets && !contactMessageLooksLikeBookingChange) {
+    return {
+      action: "BOOKING_DETAILS_REQUIRED",
+      reply: composeContactCollectionReply(capture),
+      replySource: "DETERMINISTIC",
+      inquiryDraft: null,
+      bookingStatePatch: buildContactCollectionState({
+        memory: input.bookingMemory,
+        capture
+      })
+    };
+  }
 
   if (timeOptions.length > 1 && !rememberedTime) {
     const parsedTime = parseSelectedTimeOption(input.message, timeOptions);
@@ -868,7 +1015,11 @@ export async function handleTravellerBookingMessage(
         bookingError: null,
         timeOptions,
         ticketOptions: input.bookingMemory?.ticketOptions ?? null,
-        ticketQuantities: input.bookingMemory?.ticketQuantities ?? null
+        ticketQuantities: input.bookingMemory?.ticketQuantities ?? null,
+        ...(input.bookingMemory?.extraOptions ? { extraOptions: input.bookingMemory.extraOptions } : {}),
+        ...(input.bookingMemory?.extraOptions
+          ? { extraQuantities: input.bookingMemory?.extraQuantities ?? null }
+          : {})
       };
       const rememberedTicketOptions = input.bookingMemory?.ticketOptions ?? [];
 
@@ -915,7 +1066,6 @@ export async function handleTravellerBookingMessage(
     }
   }
 
-  const ticketOptions = input.bookingMemory?.ticketOptions ?? [];
   if (ticketOptions.length > 1 && !input.bookingMemory?.ticketQuantities) {
     const correctedTime =
       timeOptions.length > 1 ? parseSelectedTimeOption(input.message, timeOptions) : null;
@@ -1008,7 +1158,11 @@ export async function handleTravellerBookingMessage(
         bookingError: null,
         ...(input.bookingMemory?.timeOptions ? { timeOptions: input.bookingMemory.timeOptions } : {}),
         ticketOptions,
-        ticketQuantities: null
+        ticketQuantities: null,
+        ...(input.bookingMemory?.extraOptions ? { extraOptions: input.bookingMemory.extraOptions } : {}),
+        ...(input.bookingMemory?.extraOptions
+          ? { extraQuantities: input.bookingMemory?.extraQuantities ?? null }
+          : {})
       };
 
       return {
@@ -1229,7 +1383,9 @@ export async function handleTravellerBookingMessage(
       action: "HUMAN_HANDOFF",
       deterministicReply: composeBookingBrainReply(analysis),
       llmClient: input.llmClient,
-      tenantContext: input.tenantContext
+      tenantContext: input.tenantContext,
+      latestUserMessage: input.message,
+      conversationHistory: input.conversationHistory
     });
   }
 
@@ -1260,7 +1416,9 @@ export async function handleTravellerBookingMessage(
       action: "GENERAL_REPLY",
       deterministicReply: composeBookingBrainReply(analysis),
       llmClient: input.llmClient,
-      tenantContext: input.tenantContext
+      tenantContext: input.tenantContext,
+      latestUserMessage: input.message,
+      conversationHistory: input.conversationHistory
     });
   }
 
@@ -1278,7 +1436,7 @@ export async function handleTravellerBookingMessage(
   }
 
   const products = await input.pmsAdapter.listProducts();
-  const productMatch = matchPmsProduct(contextMessage, products);
+  const productMatch = matchPmsProduct(currentMessageAnalysis.slots.productHint ?? contextMessage, products);
 
   if (productMatch.status !== "MATCHED") {
     return composeReplyResult({
@@ -1289,7 +1447,9 @@ export async function handleTravellerBookingMessage(
       tenantContext: {
         ...(input.tenantContext ?? { tenantName: "Unknown tenant" }),
         productTitles: productMatch.products.map((product) => product.title)
-      }
+      },
+      latestUserMessage: input.message,
+      conversationHistory: input.conversationHistory
     });
   }
 
@@ -1315,7 +1475,9 @@ export async function handleTravellerBookingMessage(
       deterministicReply: `${product.title} is not available for ${effectiveSlots.guests} guests on ${effectiveSlots.dateText} according to PMS. I have not confirmed a booking.`,
       requiredFacts: [product.title, `${effectiveSlots.guests} guests`, effectiveSlots.dateText ?? "", "not available"],
       llmClient: input.llmClient,
-      tenantContext: input.tenantContext
+      tenantContext: input.tenantContext,
+      latestUserMessage: input.message,
+      conversationHistory: input.conversationHistory
     });
   }
 
@@ -1388,6 +1550,8 @@ export async function handleTravellerBookingMessage(
       formatPrice(availability.currency, availability.unitPriceCents)
     ],
     llmClient: input.llmClient,
-    tenantContext: input.tenantContext
+    tenantContext: input.tenantContext,
+    latestUserMessage: input.message,
+    conversationHistory: input.conversationHistory
   });
 }

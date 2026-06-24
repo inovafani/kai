@@ -32,19 +32,34 @@ const PRODUCT_HINTS = [
   "Private Yacht Charter"
 ];
 const MONTHS: Record<string, string> = {
+  jan: "01",
   january: "01",
+  feb: "02",
   february: "02",
+  mar: "03",
   march: "03",
+  apr: "04",
   april: "04",
   may: "05",
+  jun: "06",
   june: "06",
+  jul: "07",
   july: "07",
+  aug: "08",
   august: "08",
+  sep: "09",
+  sept: "09",
   september: "09",
+  oct: "10",
   october: "10",
+  nov: "11",
   november: "11",
+  dec: "12",
   december: "12"
 };
+const MONTH_PATTERN = Object.keys(MONTHS)
+  .sort((left, right) => right.length - left.length)
+  .join("|");
 
 function findProductHint(message: string) {
   const lowerMessage = message.toLowerCase();
@@ -67,8 +82,20 @@ function findDateText(message: string) {
     return isoDate[0];
   }
 
+  const numericDayMonthDate = lowerMessage.match(/\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b/);
+  if (numericDayMonthDate) {
+    const day = Number(numericDayMonthDate[1]);
+    const month = Number(numericDayMonthDate[2]);
+    const rawYear = numericDayMonthDate[3];
+    const year = rawYear ? (rawYear.length === 2 ? `20${rawYear}` : rawYear) : "2026";
+
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) {
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+  }
+
   const ordinalMonthDate = lowerMessage.match(
-    /\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december)\b/
+    new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s*(?:of\\s+)?(${MONTH_PATTERN})\\b`)
   );
   if (ordinalMonthDate) {
     return `2026-${MONTHS[ordinalMonthDate[2]]}-${ordinalMonthDate[1].padStart(2, "0")}`;
@@ -104,6 +131,17 @@ function classifyIntent(message: string): BookingBrainIntent {
     return "CHECK_AVAILABILITY";
   }
 
+  if (productHint && dateText && guests) {
+    return "CHECK_AVAILABILITY";
+  }
+
+  if (
+    productHint &&
+    /\b(what about|how about|instead|rather|actually|i mean|switch|change|another|other|different)\b/.test(lowerMessage)
+  ) {
+    return "PRODUCT_RECOMMENDATION";
+  }
+
   if (
     /\b(yes please|sounds good|looks good|i want it|i want this|i want that|want it|want this|want that|take it|let'?s do it|continue|go ahead|proceed)\b/.test(
       lowerMessage
@@ -117,7 +155,7 @@ function classifyIntent(message: string): BookingBrainIntent {
     /\b(what do you have|what have you got|show me options|show me experiences|what can i do|what are my options)\b/.test(
       lowerMessage
     ) ||
-    /\b(know about|learn about|tell me about|more about|info about|details about|curious about|interested in|looking at)\b/.test(
+    /\b(know about|learn about|tell me about|more about|info (about|on)|details? (about|on)|curious about|interested in|looking at)\b/.test(
       lowerMessage
     ) ||
     (Boolean(productHint) && /\b(see|view|look at|show me|let me see|open|page)\b/.test(lowerMessage))

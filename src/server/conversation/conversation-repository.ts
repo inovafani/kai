@@ -184,6 +184,35 @@ export async function listRecentTravellerMessageContents(input: {
   return messages.reverse().map((message) => message.content);
 }
 
+export async function listRecentConversationMessages(input: {
+  tenantId: string;
+  conversationId: string;
+  take?: number;
+}) {
+  const messages = await prisma.message.findMany({
+    where: {
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      role: {
+        in: ["TRAVELLER", "ASSISTANT"]
+      }
+    },
+    orderBy: {
+      createdAt: "desc"
+    },
+    take: input.take ?? 16,
+    select: {
+      role: true,
+      content: true
+    }
+  });
+
+  return messages.reverse().map((message) => ({
+    role: message.role === "ASSISTANT" ? ("assistant" as const) : ("traveller" as const),
+    content: message.content
+  }));
+}
+
 export async function findConversationBookingState(input: {
   tenantId: string;
   conversationId: string;

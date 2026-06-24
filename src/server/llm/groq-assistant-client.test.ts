@@ -59,11 +59,45 @@ describe("createGroqAssistantClient", () => {
       model: string;
       messages: Array<{ role: string; content: string }>;
       max_tokens: number;
+      temperature: number;
     };
     expect(body.model).toBe("llama-test-model");
     expect(body.messages[0].role).toBe("system");
     expect(body.messages[1].content).toContain("Komodo Day Trip");
     expect(body.max_tokens).toBe(260);
+    expect(body.temperature).toBe(0.75);
+  });
+
+  it("uses the 70B Groq model by default and includes conversation history", async () => {
+    const fetcher = vi.fn(async () => {
+      return new Response(JSON.stringify({ choices: [{ message: { content: "Safe reply." } }] }), { status: 200 });
+    });
+    const client = createGroqAssistantClient({ GROQ_API_KEY: "gsk-test" }, fetcher);
+
+    await client?.composeReply({
+      deterministicReply: "Safe reply.",
+      requiredFacts: ["Safe"],
+      tenantSystemPrompt: "Tenant-specific system prompt.",
+      latestUserMessage: "12pm please",
+      conversationHistory: [
+        { role: "traveller", content: "28 June for 2 people" },
+        { role: "assistant", content: "I found 9:00 AM and 12:00 PM." },
+        { role: "traveller", content: "12pm please" }
+      ]
+    });
+
+    const [, requestInit] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(requestInit.body as string) as {
+      model: string;
+      messages: Array<{ role: string; content: string }>;
+      temperature: number;
+    };
+    expect(body.model).toBe("llama-3.3-70b-versatile");
+    expect(body.messages[0]).toEqual({ role: "system", content: "Tenant-specific system prompt." });
+    expect(body.messages[1].content).toContain("Traveller: 28 June for 2 people");
+    expect(body.messages[1].content).toContain("Kai: I found 9:00 AM and 12:00 PM.");
+    expect(body.messages[1].content).toContain("Latest traveller message: 12pm please");
+    expect(body.temperature).toBe(0.75);
   });
 
   it("fails closed when the Groq API response is not ok", async () => {

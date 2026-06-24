@@ -50,6 +50,59 @@ describe("assistant reply composer", () => {
       responseGuardrails: ["Do not invent availability."],
       productTitles: ["Komodo Day Trip", "Private Charter"]
     });
+    expect(capturedInputs[0].tenantSystemPrompt).toContain("Kai Demo");
+    expect(capturedInputs[0].tenantSystemPrompt).toContain("Warm, concise, practical");
+    expect(capturedInputs[0].tenantSystemPrompt).toContain("Do not invent availability.");
+  });
+
+  it("passes the full conversation history to the LLM rewrite", async () => {
+    const capturedInputs: Parameters<AssistantLlmClient["composeReply"]>[0][] = [];
+
+    await composeAssistantReply({
+      deterministicReply: "Gold Coast Whale Escape is available at 12:00 PM. Which ticket option should I use?",
+      latestUserMessage: "12pm please",
+      conversationHistory: [
+        { role: "traveller", content: "I want whale watching on 28 June for 2" },
+        { role: "assistant", content: "Gold Coast Whale Escape is available at 9:00 AM and 12:00 PM." },
+        { role: "traveller", content: "12pm please" }
+      ],
+      llmClient: {
+        async composeReply(input) {
+          capturedInputs.push(input);
+          return "Gold Coast Whale Escape is available at 12:00 PM. Which ticket option should I use?";
+        }
+      }
+    });
+
+    expect(capturedInputs[0].latestUserMessage).toBe("12pm please");
+    expect(capturedInputs[0].conversationHistory).toEqual([
+      { role: "traveller", content: "I want whale watching on 28 June for 2" },
+      { role: "assistant", content: "Gold Coast Whale Escape is available at 9:00 AM and 12:00 PM." },
+      { role: "traveller", content: "12pm please" }
+    ]);
+  });
+
+  it("applies naturalness checks before returning an LLM rewrite", async () => {
+    const result = await composeAssistantReply({
+      deterministicReply: "Gold Coast Whale Escape is available at 12:00 PM. Which ticket option should I use?",
+      latestUserMessage: "12pm please",
+      conversationHistory: [{ role: "assistant", content: "I can check that date." }],
+      llmClient: {
+        async composeReply() {
+          return [
+            "I can do 12pm please.",
+            "- Gold Coast Whale Escape is available at 12:00 PM.",
+            "Which ticket option should I use?",
+            "Do you want adult tickets?"
+          ].join("\n");
+        }
+      }
+    });
+
+    expect(result.reply.startsWith("I ")).toBe(false);
+    expect(result.reply).not.toContain("- ");
+    expect(result.reply.toLowerCase()).not.toContain("12pm please");
+    expect((result.reply.match(/\?/g) ?? []).length).toBeLessThanOrEqual(1);
   });
 
   it("falls back to the deterministic reply when an LLM rewrite drops PMS facts", async () => {

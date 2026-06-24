@@ -66,6 +66,25 @@ function extractTravellerPhone(text: string) {
   return textWithoutIsoDates.match(/\+?\d[\d\s().-]{6,}\d/)?.[0].trim() ?? null;
 }
 
+function extractBareTravellerName(text: string) {
+  const trimmed = text.trim().replace(/[.!?,;:]+$/g, "");
+
+  if (!/^[a-z][a-z .'-]{1,60}$/i.test(trimmed)) return null;
+
+  const words = trimmed.split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 5) return null;
+
+  if (
+    /\b(book|booking|ticket|option|extra|adult|child|infant|family|people|guest|guests|yes|no|thanks?|please|email|phone|mobile|pm|am)\b/i.test(
+      trimmed
+    )
+  ) {
+    return null;
+  }
+
+  return trimmed;
+}
+
 function getMissingBookingSlots(bookingMemory: BookingMemoryState | null) {
   return [
     bookingMemory?.productTitle ? null : "product",
@@ -91,9 +110,12 @@ export function evaluateBookingCapture(input: EvaluateBookingCaptureInput): Book
     productTitle: input.bookingMemory?.productTitle ?? null,
     dateText: input.bookingMemory?.dateText ?? null,
     guests: input.bookingMemory?.guests ?? null,
-    travellerName: extractTravellerName(contactText),
-    travellerEmail: extractTravellerEmail(contactText),
-    travellerPhone: extractTravellerPhone(contactText)
+    travellerName:
+      extractTravellerName(contactText) ??
+      input.bookingMemory?.travellerName ??
+      (active ? extractBareTravellerName(input.message) : null),
+    travellerEmail: extractTravellerEmail(contactText) ?? input.bookingMemory?.travellerEmail ?? null,
+    travellerPhone: extractTravellerPhone(contactText) ?? input.bookingMemory?.travellerPhone ?? null
   };
   const missingBookingSlots = getMissingBookingSlots(input.bookingMemory);
   const missingContactSlots = getMissingContactSlots(details);

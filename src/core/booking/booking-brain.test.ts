@@ -68,11 +68,27 @@ describe("booking brain", () => {
     expect(result.missingSlots).toEqual([]);
   });
 
+  it("detects casual info-on product requests", () => {
+    const result = analyzeTravellerBookingMessage("info on gold coast whale escape please");
+
+    expect(result.intent).toBe("PRODUCT_RECOMMENDATION");
+    expect(result.slots.productHint).toBe("Gold Coast Whale Escape");
+    expect(result.missingSlots).toEqual([]);
+  });
+
   it("detects natural curiosity about a specific product", () => {
     const result = analyzeTravellerBookingMessage("im curious about Gold Coast Whale Escape");
 
     expect(result.intent).toBe("PRODUCT_RECOMMENDATION");
     expect(result.slots.productHint).toBe("Gold Coast Whale Escape");
+    expect(result.missingSlots).toEqual([]);
+  });
+
+  it("treats another named product as a product switch", () => {
+    const result = analyzeTravellerBookingMessage("what about twilight drift?");
+
+    expect(result.intent).toBe("PRODUCT_RECOMMENDATION");
+    expect(result.slots.productHint).toBe("Twilight Drift");
     expect(result.missingSlots).toEqual([]);
   });
 
@@ -90,6 +106,23 @@ describe("booking brain", () => {
     expect(result.intent).toBe("CHECK_AVAILABILITY");
     expect(result.slots.dateText).toBe("2026-06-23");
     expect(result.missingSlots).toEqual(["product", "guests"]);
+  });
+
+  it.each([
+    ["28june, 3 people"],
+    ["28 june, 3 people"],
+    ["28jun, 3 people"],
+    ["28 Jun, 3 people"],
+    ["28/06, 3 people"],
+    ["28-06, 3 people"],
+    ["28th june for 3 people"],
+    ["28th of june for 3 people"]
+  ])("understands compact human date format: %s", (message) => {
+    const result = analyzeTravellerBookingMessage(message);
+
+    expect(result.intent).toBe("CHECK_AVAILABILITY");
+    expect(result.slots.dateText).toBe("2026-06-28");
+    expect(result.slots.guests).toBe(3);
   });
 
   it("treats boat wording as booking intent", () => {

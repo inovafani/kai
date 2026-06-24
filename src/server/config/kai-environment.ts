@@ -97,7 +97,7 @@ export function getKaiLlmRuntimeSettings(env: KaiEnvironmentInput): KaiLlmRuntim
 
   const provider = requestedProvider;
   const keyName = provider === "groq" ? "GROQ_API_KEY" : "OPENAI_API_KEY";
-  const model = provider === "groq" ? env.GROQ_MODEL?.trim() || "llama-3.1-8b-instant" : env.OPENAI_MODEL?.trim() || "gpt-4.1-mini";
+  const model = provider === "groq" ? env.GROQ_MODEL?.trim() || "llama-3.3-70b-versatile" : env.OPENAI_MODEL?.trim() || "gpt-4.1-mini";
   const timeoutMs = parsePositiveInteger(
     provider === "groq" ? env.GROQ_TIMEOUT_MS : env.OPENAI_TIMEOUT_MS,
     defaultLlmTimeoutMs
