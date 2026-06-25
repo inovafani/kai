@@ -356,6 +356,108 @@ describe("booking orchestrator", () => {
     expect(result.reply).toContain("1. 9:00 AM - 78 spots");
   });
 
+  it("locks the only available time before ticket and extras selection", async () => {
+    const availabilityResult = await handleTravellerBookingMessage({
+      message: "26 june for 4 people",
+      priorTravellerMessages: ["can you give me recommendation?", "1"],
+      bookingMemory: {
+        productExternalId: "PGG8QT",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: null,
+        guests: null
+      },
+      bookingWriteEnabled: true,
+      pmsAdapter: {
+        provider: "REZDY",
+        listProducts: async () => [
+          {
+            externalProductId: "PGG8QT",
+            title: "Gold Coast Whale Escape",
+            description: "Luxury whale watching cruise",
+            bookingMode: "AUTO_BOOKING"
+          }
+        ],
+        getAvailability: async (input) => ({
+          productId: input.productId,
+          date: "2026-06-26 09:00:00",
+          available: true,
+          remaining: 67,
+          currency: "AUD",
+          unitPriceCents: 7900,
+          timeOptions: [{ label: "9:00 AM", startTimeLocal: "2026-06-26 09:00:00", remaining: 67 }],
+          ticketOptions: [
+            { label: "Family (2A +2C) 3-13", unitPriceCents: 24900 },
+            { label: '"2 people for $149.00', unitPriceCents: 14900 },
+            { label: "Child (3-13)", unitPriceCents: 5900 },
+            { label: "Infant (under 3)", unitPriceCents: 0 },
+            { label: "Adult (Winter Special)", unitPriceCents: 7900 }
+          ],
+          extraOptions: [
+            { label: "Corona Bucket", unitPriceCents: 3000 },
+            { label: "Sparkling for 2", unitPriceCents: 4000 }
+          ]
+        }),
+        createBooking: async () => {
+          throw new Error("Booking should not be created before time, tickets, extras, and contact are complete.");
+        },
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(availabilityResult).toMatchObject({
+      action: "BOOKING_TICKET_SELECTION_REQUIRED",
+      bookingStatePatch: {
+        dateText: "2026-06-26 09:00:00",
+        extraOptions: [
+          { label: "Corona Bucket", unitPriceCents: 3000 },
+          { label: "Sparkling for 2", unitPriceCents: 4000 }
+        ]
+      }
+    });
+    expect(availabilityResult.reply).toContain("only available time is 9:00 AM");
+
+    const ticketResult = await handleTravellerBookingMessage({
+      message: "option 5",
+      bookingMemory: availabilityResult.bookingStatePatch,
+      bookingWriteEnabled: true,
+      pmsAdapter: {
+        provider: "REZDY",
+        listProducts: async () => [
+          {
+            externalProductId: "boattime-whale-escape",
+            title: "Gold Coast Whale Escape",
+            description: "Luxury whale watching cruise",
+            bookingMode: "AUTO_BOOKING",
+            productUrl: "https://boattimeyachtcharters.rezdy.com/services/431872"
+          }
+        ],
+        getAvailability: async () => {
+          throw new Error("Availability should not be rechecked during ticket selection.");
+        },
+        createBooking: async () => {
+          throw new Error("Booking should not be created before extras are handled.");
+        },
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(ticketResult).toMatchObject({
+      action: "BOOKING_EXTRAS_SELECTION_REQUIRED",
+      bookingStatePatch: {
+        dateText: "2026-06-26 09:00:00",
+        ticketQuantities: [{ optionLabel: "Adult (Winter Special)", quantity: 4 }],
+        extraOptions: [
+          { label: "Corona Bucket", unitPriceCents: 3000 },
+          { label: "Sparkling for 2", unitPriceCents: 4000 }
+        ],
+        extraQuantities: null
+      }
+    });
+    expect(ticketResult.reply).toContain("Optional extras");
+  });
+
   it("asks for a ticket option when an available product exposes multiple ticket options", async () => {
     const result = await handleTravellerBookingMessage({
       message: "Can you check Gold Coast Whale Escape for 3 guests tomorrow?",
@@ -797,6 +899,50 @@ describe("booking orchestrator", () => {
     expect(result.reply).toContain("with 1 2 people for $149.00");
   });
 
+  it("understands mixed numbered ticket option selections from the displayed list", async () => {
+    const result = await handleTravellerBookingMessage({
+      message: "option 2 + option 5 please",
+      bookingMemory: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-06-29 13:30:00",
+        guests: 3,
+        ticketOptions: [
+          { label: "Family (2A +2C) 3-13", unitPriceCents: 24900 },
+          { label: "2 people for $149.00", unitPriceCents: 14900 },
+          { label: "Child (3-13)", unitPriceCents: 5900 },
+          { label: "Infant (under 3)", unitPriceCents: 0 },
+          { label: "Adult (Winter Special)", unitPriceCents: 7900 }
+        ],
+        ticketQuantities: null
+      },
+      bookingWriteEnabled: true,
+      pmsAdapter: {
+        provider: "MOCK",
+        listProducts: async () => [],
+        getAvailability: async () => {
+          throw new Error("Availability should not be rechecked for ticket option parsing.");
+        },
+        createBooking: async () => {
+          throw new Error("Booking should not be created before contact details are captured.");
+        },
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(result).toMatchObject({
+      action: "BOOKING_DETAILS_REQUIRED",
+      bookingStatePatch: {
+        ticketQuantities: [
+          { optionLabel: "2 people for $149.00", quantity: 1 },
+          { optionLabel: "Adult (Winter Special)", quantity: 1 }
+        ]
+      }
+    });
+    expect(result.reply).toContain("with 1 2 people for $149.00 and 1 Adult (Winter Special)");
+  });
+
   it("lets the traveller correct the selected time while choosing a ticket option", async () => {
     const result = await handleTravellerBookingMessage({
       message: "not 9am, i want 1:30 pm, option 3",
@@ -1063,8 +1209,7 @@ describe("booking orchestrator", () => {
       action: "BOOKING_PAYMENT_REQUIRED",
       reply:
         "Thanks, I have everything for Gold Coast Whale Escape on 2026-06-27 for 2 guests with 1 2 people for $149.00 under RegaTest, regatest@gmail.com, 086554789650.\n\n" +
-        "Use the secure payment panel below when you are ready. I cannot take card details in chat.\n\n" +
-        "For now, I saved this as a lead for the operator.",
+        "I saved this as a lead for the operator. Kai will not ask for or store card details; secure payment handoff is not connected yet.",
       replySource: "DETERMINISTIC",
       inquiryDraft: {
         productExternalId: "boattime-whale-escape",
@@ -1136,7 +1281,7 @@ describe("booking orchestrator", () => {
     expect(result.reply).toContain("please choose one ticket option");
   });
 
-  it("does not deep-link to Rezdy checkout even when the selected time carries a checkout session id", async () => {
+  it("does not use a raw Rezdy service checkout link as the secure payment handoff", async () => {
     const result = await handleTravellerBookingMessage({
       message: "My name is Test, email is test@gmail.com and phone number is 086775428176",
       priorTravellerMessages: [
@@ -1189,8 +1334,8 @@ describe("booking orchestrator", () => {
     });
 
     expect(result.action).toBe("BOOKING_PAYMENT_REQUIRED");
-    expect(result.reply).toContain("Use the secure payment panel below when you are ready.");
-    expect(result.reply).not.toContain("boattimeyachtcharters.rezdy.com/services/431872");
+    expect(result.reply).toContain("secure payment handoff is not connected yet");
+    expect(result.paymentHandoffUrl).toBeUndefined();
   });
 
   it("does not fall back to the website booking form when no cart session is available", async () => {
@@ -1241,9 +1386,133 @@ describe("booking orchestrator", () => {
     });
 
     expect(result.action).toBe("BOOKING_PAYMENT_REQUIRED");
-    expect(result.reply).toContain("Use the secure payment panel below when you are ready.");
+    expect(result.reply).toContain("secure payment handoff is not connected yet");
     expect(result.reply).not.toContain("https://www.boattimeyachtcharters.com/cruise-tickets-luxury-whale-watching#book");
     expect(result.reply).not.toContain("https://boattimeyachtcharters.rezdy.com/services/431872");
+  });
+
+  it("creates a pending external order with the traveller details before sending the payment handoff when enabled", async () => {
+    const createBookingCalls: unknown[] = [];
+    const result = await handleTravellerBookingMessage({
+      message: "My name is Raga Test, email is ragatest@gmail.com and phone number is 085664326198",
+      priorTravellerMessages: [
+        "Can you check Gold Coast Whale Escape for 3 guests on 2026-06-28?",
+        "12:00 PM please",
+        "3 adults",
+        "1 corona bucket"
+      ],
+      bookingMemory: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-06-28 12:00:00",
+        guests: 3,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        ticketQuantities: [{ optionLabel: "Adult (Winter Special)", quantity: 3 }],
+        extraQuantities: [{ optionLabel: "Corona Bucket", quantity: 1 }]
+      },
+      bookingWriteEnabled: true,
+      allowUnpaidExternalBooking: true,
+      pmsAdapter: {
+        provider: "REZDY",
+        listProducts: async () => [
+          {
+            externalProductId: "boattime-whale-escape",
+            title: "Gold Coast Whale Escape",
+            description: "Luxury whale watching cruise",
+            bookingMode: "AUTO_BOOKING",
+            productUrl: "https://boattimeyachtcharters.rezdy.com/services/431872"
+          }
+        ],
+        getAvailability: async () => {
+          throw new Error("Availability should not be rechecked when contact details complete payment draft.");
+        },
+        createBooking: async (request) => {
+          createBookingCalls.push(request);
+          return {
+            externalBookingId: "RZ-PENDING",
+            provider: "REZDY",
+            status: "PENDING",
+            paymentUrl: "https://boattimeyachtcharters.rezdy.com/pay/RZ-PENDING"
+          };
+        },
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(createBookingCalls).toEqual([
+      {
+        productId: "boattime-whale-escape",
+        date: "2026-06-28 12:00:00",
+        guests: 3,
+        travellerName: "Raga Test",
+        travellerEmail: "ragatest@gmail.com",
+        travellerPhone: "085664326198",
+        ticketQuantities: [{ optionLabel: "Adult (Winter Special)", quantity: 3 }],
+        extraQuantities: [{ optionLabel: "Corona Bucket", quantity: 1 }],
+        confirmationMode: "PAYMENT_HOLD"
+      }
+    ]);
+    expect(result.action).toBe("BOOKING_PAYMENT_REQUIRED");
+    expect(result.paymentHandoffUrl).toBe("https://boattimeyachtcharters.rezdy.com/pay/RZ-PENDING");
+    expect(result.reply).toContain("Please complete payment on the secure Rezdy link below");
+    expect(result.bookingStatePatch).toMatchObject({
+      bookingStatus: "PAYMENT_PENDING",
+      externalBookingId: "RZ-PENDING",
+      externalProvider: "REZDY",
+      bookingError: null
+    });
+  });
+
+  it("does not imply Rezdy emailed a payment link when a pending order has no checkout URL", async () => {
+    const result = await handleTravellerBookingMessage({
+      message: "My name is Raja Test, email is rajatest@gmail.com and phone number is 087665349192",
+      priorTravellerMessages: [
+        "Can you check Gold Coast Whale Escape for 3 guests on 2026-06-29?",
+        "9:00 AM please",
+        "3 adults",
+        "no extras"
+      ],
+      bookingMemory: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-06-29 09:00:00",
+        guests: 3,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        ticketQuantities: [{ optionLabel: "Adult (Winter Special)", quantity: 3 }],
+        extraQuantities: []
+      },
+      bookingWriteEnabled: true,
+      allowUnpaidExternalBooking: true,
+      pmsAdapter: {
+        provider: "REZDY",
+        listProducts: async () => [
+          {
+            externalProductId: "boattime-whale-escape",
+            title: "Gold Coast Whale Escape",
+            description: "Luxury whale watching cruise",
+            bookingMode: "AUTO_BOOKING",
+            productUrl: "https://boattimeyachtcharters.rezdy.com/services/431872"
+          }
+        ],
+        getAvailability: async () => {
+          throw new Error("Availability should not be rechecked when contact details complete payment draft.");
+        },
+        createBooking: async () => ({
+          externalBookingId: "RZ-ABANDONED",
+          provider: "REZDY",
+          status: "PENDING"
+        }),
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(result.action).toBe("BOOKING_PAYMENT_REQUIRED");
+    expect(result.reply).toContain("created Rezdy pending cart RZ-ABANDONED");
+    expect(result.reply).toContain("operator needs to send the secure payment link from Rezdy");
+    expect(result.reply).not.toContain("may send the secure payment link by email");
+    expect(result.paymentHandoffUrl).toBeUndefined();
   });
 
   it("does not claim availability for manual inquiry products", async () => {
@@ -1644,8 +1913,7 @@ describe("booking orchestrator", () => {
       action: "BOOKING_PAYMENT_REQUIRED",
       reply:
         "Thanks, I have everything for Komodo Day Trip tomorrow for 3 guests under Maya Chen, maya@example.com, +61 400 111 222.\n\n" +
-        "Use the secure payment panel below when you are ready. I cannot take card details in chat.\n\n" +
-        "For now, I saved this as a lead for the operator.",
+        "I saved this as a lead for the operator. Kai will not ask for or store card details; secure payment handoff is not connected yet.",
       replySource: "DETERMINISTIC",
       inquiryDraft: {
         productExternalId: "mock-komodo-day-trip",
@@ -1725,8 +1993,7 @@ describe("booking orchestrator", () => {
       action: "BOOKING_PAYMENT_REQUIRED",
       reply:
         "Thanks, I have everything for Gold Coast Whale Escape on 2026-06-27 at 12:00 PM for 2 guests with 1 2 people for $149.00 under Kaka, kaka@gmail.com, 086554329189.\n\n" +
-        "Use the secure payment panel below when you are ready. I cannot take card details in chat.\n\n" +
-        "For now, I saved this as a lead for the operator.",
+        "I saved this as a lead for the operator. Kai will not ask for or store card details; secure payment handoff is not connected yet.",
       replySource: "DETERMINISTIC",
       inquiryDraft: {
         productExternalId: "boattime-whale-escape",
@@ -2124,8 +2391,7 @@ describe("booking orchestrator", () => {
       action: "BOOKING_PAYMENT_REQUIRED",
       reply:
         "Thanks, I have everything for Gold Coast Whale Escape on 2026-06-26 at 1:30 PM for 2 guests with 1 2 people for $149.00 under Test, test@gmail.com, 086775428176.\n\n" +
-        "Use the secure payment panel below when you are ready. I cannot take card details in chat.\n\n" +
-        "For now, I saved this as a lead for the operator.",
+        "I saved this as a lead for the operator. Kai will not ask for or store card details; secure payment handoff is not connected yet.",
       replySource: "DETERMINISTIC",
       inquiryDraft: {
         productExternalId: "boattime-whale-escape",

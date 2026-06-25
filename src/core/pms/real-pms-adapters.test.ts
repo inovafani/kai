@@ -167,6 +167,56 @@ describe("real PMS adapter shells", () => {
     });
   });
 
+  it("falls back to Rezdy product extras when availability sessions omit extras", async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            sessions: [
+              {
+                productCode: "PGG8QT",
+                startTimeLocal: "2026-06-29 12:00:00",
+                seatsAvailable: 80,
+                priceOptions: [{ label: "Adult", price: 79 }]
+              }
+            ]
+          }),
+          { status: 200 }
+        )
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            products: [
+              {
+                productCode: "PGG8QT",
+                extras: [
+                  { name: "Corona Bucket", price: 30 },
+                  { name: "Sparkling for 2", price: 40 }
+                ]
+              }
+            ]
+          }),
+          { status: 200 }
+        )
+      );
+    const adapter = new RezdyPmsAdapter({
+      baseUrl: "https://rezdy.example.test/v1",
+      apiKey: "rezdy-secret",
+      productListPath: "/products",
+      availabilityPath: "/availability",
+      fetcher
+    });
+
+    await expect(adapter.getAvailability({ productId: "PGG8QT", date: "2026-06-29", guests: 2 })).resolves.toMatchObject({
+      extraOptions: [
+        { label: "Corona Bucket", unitPriceCents: 3000 },
+        { label: "Sparkling for 2", unitPriceCents: 4000 }
+      ]
+    });
+  });
+
   it("returns all Rezdy available time options for the requested date", async () => {
     const fetcher = vi.fn(async () => {
       return new Response(
@@ -460,7 +510,10 @@ describe("real PMS adapter shells", () => {
       status: "CONFIRMED"
     });
 
-    const [, bookingRequestInit] = fetcher.mock.calls[2] as unknown as [string, RequestInit];
+    const bookingCall = fetcher.mock.calls.find(([input]) => String(input).includes("/bookings?"));
+    expect(bookingCall).toBeDefined();
+
+    const [, bookingRequestInit] = bookingCall as unknown as [string, RequestInit];
     expect(JSON.parse(bookingRequestInit.body as string).items[0]).toEqual({
       productCode: "PGG8QT",
       startTimeLocal: "2026-06-25 09:00:00",
@@ -573,6 +626,105 @@ describe("real PMS adapter shells", () => {
       }
     });
     expect(JSON.stringify(JSON.parse(bookingRequestInit.body as string))).not.toContain("cardNumber");
+  });
+
+  it("creates an unpaid Rezdy processing order and returns its payment link when requested", async () => {
+    const fetcher = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          order: {
+            orderNumber: "RZ-PENDING",
+            status: "PROCESSING",
+            paymentUrl: "https://boattimeyachtcharters.rezdy.com/pay/RZ-PENDING"
+          }
+        }),
+        { status: 200 }
+      );
+    });
+    const adapter = new RezdyPmsAdapter({
+      baseUrl: "https://rezdy.example.test/v1",
+      apiKey: "rezdy-secret",
+      productListPath: "/products",
+      availabilityPath: "/availability",
+      bookingPath: "/bookings",
+      fetcher
+    });
+
+    await expect(
+      adapter.createBooking({
+        productId: "LWWVE",
+        date: "2026-06-28 12:00:00",
+        guests: 3,
+        travellerName: "Raga Test",
+        travellerEmail: "raga@example.com",
+        travellerPhone: "085664326198",
+        ticketQuantities: [{ optionLabel: "Adult (Winter Special)", quantity: 3 }],
+        extraQuantities: [{ optionLabel: "Corona Bucket", quantity: 1 }],
+        confirmationMode: "PAYMENT_HOLD"
+      })
+    ).resolves.toEqual({
+      externalBookingId: "RZ-PENDING",
+      provider: "REZDY",
+      status: "PENDING",
+      paymentUrl: "https://boattimeyachtcharters.rezdy.com/pay/RZ-PENDING"
+    });
+
+    const [, requestInit] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(requestInit.body as string)).toEqual({
+      status: "PROCESSING",
+      customer: {
+        firstName: "Raga",
+        lastName: "Test",
+        email: "raga@example.com",
+        phone: "085664326198"
+      },
+      items: [
+        {
+          productCode: "LWWVE",
+          startTimeLocal: "2026-06-28 12:00:00",
+          quantities: [{ optionLabel: "Adult (Winter Special)", value: 3 }],
+          extras: [{ name: "Corona Bucket", quantity: 1 }]
+        }
+      ],
+      resellerComments: "Created by Kai after traveller confirmation."
+    });
+  });
+
+  it("treats a Rezdy booking response without an order reference as failed", async () => {
+    const fetcher = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          requestStatus: { success: true },
+          status: "PROCESSING"
+        }),
+        { status: 200 }
+      );
+    });
+    const adapter = new RezdyPmsAdapter({
+      baseUrl: "https://rezdy.example.test/v1",
+      apiKey: "rezdy-secret",
+      productListPath: "/products",
+      availabilityPath: "/availability",
+      bookingPath: "/bookings",
+      fetcher
+    });
+
+    await expect(
+      adapter.createBooking({
+        productId: "LWWVE",
+        date: "2026-06-28 12:00:00",
+        guests: 2,
+        travellerName: "Missing Ref",
+        travellerEmail: "missing@example.com",
+        travellerPhone: "085000000000",
+        ticketQuantities: [{ optionLabel: "Adult (Winter Special)", quantity: 2 }],
+        confirmationMode: "PAYMENT_HOLD"
+      })
+    ).resolves.toEqual({
+      externalBookingId: "",
+      provider: "REZDY",
+      status: "FAILED"
+    });
   });
 
   it("maps Inseanq availability responses into Kai availability when configured", async () => {

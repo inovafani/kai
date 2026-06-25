@@ -121,7 +121,15 @@ export async function POST(request: NextRequest) {
         productTitle: string | null;
         dateText: string | null;
         guests: number | null;
+        checkoutUrl: string | null;
         status: "PAYMENT_PENDING";
+      }
+    | null = null;
+  let contactRequest:
+    | {
+        conversationId: string;
+        fields: ["name", "email", "phone"];
+        status: "CONTACT_DETAILS_REQUIRED";
       }
     | null = null;
 
@@ -150,7 +158,7 @@ export async function POST(request: NextRequest) {
       bookingMemory: bookingState,
       pmsAdapter,
       bookingWriteEnabled: resolved.tenant.config?.bookingWriteEnabled ?? false,
-      allowUnpaidExternalBooking: process.env.KAI_ALLOW_UNPAID_EXTERNAL_BOOKINGS === "true",
+      allowUnpaidExternalBooking: false,
       llmClient,
       tenantContext: {
         tenantName: resolved.tenant.name,
@@ -170,19 +178,22 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    if (bookingResult.bookingStatePatch) {
+    const bookingStatePatch = bookingResult.bookingStatePatch;
+
+    if (bookingStatePatch) {
       await upsertConversationBookingState({
         tenantId: resolved.tenant.id,
         conversationId: conversation.id,
-        state: bookingResult.bookingStatePatch
+        state: bookingStatePatch
       });
 
       if (bookingResult.action === "BOOKING_PAYMENT_REQUIRED") {
         paymentRequest = {
           conversationId: conversation.id,
-          productTitle: bookingResult.bookingStatePatch.productTitle,
-          dateText: bookingResult.bookingStatePatch.dateText,
-          guests: bookingResult.bookingStatePatch.guests,
+          productTitle: bookingStatePatch.productTitle,
+          dateText: bookingStatePatch.dateText,
+          guests: bookingStatePatch.guests,
+          checkoutUrl: null,
           status: "PAYMENT_PENDING"
         };
       }
@@ -225,6 +236,17 @@ export async function POST(request: NextRequest) {
     }
 
     assistantContent = bookingResult.reply;
+    const asksForContactDetails =
+      bookingResult.action === "BOOKING_DETAILS_REQUIRED" &&
+      /name,\s*email,\s*and\s*phone/i.test(bookingResult.reply);
+
+    if (asksForContactDetails) {
+      contactRequest = {
+        conversationId: conversation.id,
+        fields: ["name", "email", "phone"],
+        status: "CONTACT_DETAILS_REQUIRED"
+      };
+    }
   } catch (error) {
     assistantContent =
       error instanceof Error
@@ -268,6 +290,7 @@ export async function POST(request: NextRequest) {
           travellerPhone: manualInquiry.travellerPhone
         }
       : null,
-    paymentRequest
+    paymentRequest,
+    contactRequest
   });
 }

@@ -58,6 +58,7 @@ export interface BookingOrchestratorResult {
   replySource: AssistantReplySource;
   inquiryDraft?: BookingCaptureDetails | null;
   bookingStatePatch?: BookingFlowState | null;
+  paymentHandoffUrl?: string | null;
 }
 
 export interface HandleTravellerBookingMessageInput {
@@ -127,6 +128,41 @@ function formatProductOptionsList(products: PmsProduct[]) {
   );
 }
 
+function parseNumberedProductSelection(message: string) {
+  const match = message
+    .trim()
+    .toLowerCase()
+    .match(/^(?:(?:option|choice|number|no)\s*)?#?\s*(\d{1,2})(?:\s*(?:please|pls|thanks|thank you))?$/);
+
+  return match ? Number(match[1]) : null;
+}
+
+function recentAssistantOfferedProductList(
+  history: AssistantConversationMessage[] | undefined,
+  products: PmsProduct[]
+) {
+  const lastAssistant = [...(history ?? [])].reverse().find((message) => message.role === "assistant");
+  if (!lastAssistant) return false;
+
+  const lowerContent = lastAssistant.content.toLowerCase();
+  const productMentions = products.filter((product) => lowerContent.includes(product.title.toLowerCase())).length;
+
+  return productMentions >= 2 && /\b(you can choose from|available options|which one sounds|which tour)\b/i.test(lastAssistant.content);
+}
+
+function selectedProductFromRecentList(input: {
+  message: string;
+  products: PmsProduct[];
+  history?: AssistantConversationMessage[];
+}) {
+  const selectedNumber = parseNumberedProductSelection(input.message);
+  if (!selectedNumber || !recentAssistantOfferedProductList(input.history, input.products)) {
+    return null;
+  }
+
+  return input.products[selectedNumber - 1] ?? null;
+}
+
 function formatTicketLabelForReply(label: string) {
   return label.replace(/^"+\s*/, "").replace(/\s*"+$/g, "");
 }
@@ -165,127 +201,26 @@ function formatTimeOptionsList(options: PmsTimeOption[]) {
   );
 }
 
-const knownRezdyCheckoutUrls: Record<string, string> = {
-  "boattime-whale-escape": "https://boattimeyachtcharters.rezdy.com/services/431872",
-  "gold coast whale escape": "https://boattimeyachtcharters.rezdy.com/services/431872"
-};
-
-const knownRezdyProductCodes: Record<string, string> = {
-  "boattime-whale-escape": "LWWVE",
-  "gold coast whale escape": "LWWVE"
-};
-
-const knownBookingFormUrls: Record<string, string> = {
-  "boattime-whale-escape": "https://www.boattimeyachtcharters.com/cruise-tickets-luxury-whale-watching#book",
-  "gold coast whale escape": "https://www.boattimeyachtcharters.com/cruise-tickets-luxury-whale-watching#book"
-};
-
-function isLocalOrDemoUrl(value: string) {
-  try {
-    const url = new URL(value);
-    return ["localhost", "127.0.0.1", "::1"].includes(url.hostname) || url.pathname.startsWith("/demo/");
-  } catch {
-    return true;
-  }
-}
-
-function isRezdyBookingUrl(value: string) {
-  try {
-    const url = new URL(value);
-    return (
-      url.hostname.endsWith(".rezdy.com") &&
-      (url.pathname.startsWith("/services/") || url.pathname.startsWith("/view/") || url.pathname === "/book")
-    );
-  } catch {
-    return false;
-  }
-}
-
-function serviceIdFromRezdyUrl(value: string) {
-  try {
-    return new URL(value).pathname.match(/^\/services\/(\d+)/)?.[1] ?? null;
-  } catch {
-    return null;
-  }
-}
-
-function rezdyHostFromUrl(value: string) {
-  try {
-    const url = new URL(value);
-    return url.hostname.endsWith(".rezdy.com") ? url.hostname : null;
-  } catch {
-    return null;
-  }
-}
-
-function withRezdyCheckoutSessionParams(baseUrl: string, timeOption: PmsTimeOption | null) {
-  if (!timeOption?.checkoutItemKey && !timeOption?.checkoutSessionId) return baseUrl;
-
-  try {
-    const url = new URL(baseUrl);
-    const serviceId = serviceIdFromRezdyUrl(baseUrl);
-    const itemKey =
-      timeOption.checkoutItemKey ??
-      (serviceId && timeOption.checkoutSessionId ? `item-${serviceId}-${timeOption.checkoutSessionId}` : null);
-
-    if (!itemKey) return baseUrl;
-
-    url.searchParams.set("itemKey", itemKey);
-    url.searchParams.set("useTransparentSessions", "1");
-
-    return url.toString();
-  } catch {
-    return baseUrl;
-  }
-}
-
-function resolveCheckoutUrl(input: {
-  product: PmsProduct;
-  provider: PmsAdapter["provider"];
-  bookingState: BookingFlowState;
+async function createPendingPaymentOrder(input: {
+  pmsAdapter: PmsAdapter;
+  state: BookingFlowState;
 }) {
-  const productUrl = input.product.productUrl?.trim() ?? "";
-  const productKey = input.product.externalProductId.toLowerCase();
-  const titleKey = input.product.title.toLowerCase();
-  const mappedRezdyUrl = knownRezdyCheckoutUrls[productKey] ?? knownRezdyCheckoutUrls[titleKey] ?? null;
-  const mappedProductCode = knownRezdyProductCodes[productKey] ?? knownRezdyProductCodes[titleKey] ?? null;
-  const mappedBookingFormUrl = knownBookingFormUrls[productKey] ?? knownBookingFormUrls[titleKey] ?? null;
-  const usableProductUrl =
-    productUrl && !isLocalOrDemoUrl(productUrl) && isRezdyBookingUrl(productUrl) ? productUrl : null;
-  const usableWebsiteUrl =
-    productUrl && !isLocalOrDemoUrl(productUrl) && !isRezdyBookingUrl(productUrl) ? productUrl : null;
-  const selectedTime = selectedTimeOption(input.bookingState.dateText, input.bookingState.timeOptions ?? []);
-  const serviceCheckoutUrl = usableProductUrl ?? mappedRezdyUrl;
+  if (!input.state.productExternalId || !input.state.dateText || !input.state.guests) return null;
+  if (!input.state.travellerName || !input.state.travellerEmail) return null;
 
-  if (selectedTime?.checkoutItemKey || selectedTime?.checkoutSessionId) {
-    return serviceCheckoutUrl ? withRezdyCheckoutSessionParams(serviceCheckoutUrl, selectedTime) : null;
-  }
+  const booking = await input.pmsAdapter.createBooking({
+    productId: input.state.productExternalId,
+    date: input.state.dateText,
+    guests: input.state.guests,
+    travellerName: input.state.travellerName,
+    travellerEmail: input.state.travellerEmail,
+    travellerPhone: input.state.travellerPhone,
+    ticketQuantities: input.state.ticketQuantities ?? null,
+    extraQuantities: input.state.extraQuantities ?? null,
+    confirmationMode: "PAYMENT_HOLD"
+  });
 
-  const rezdyHost = rezdyHostFromUrl(usableProductUrl ?? mappedRezdyUrl ?? "") ?? "boattimeyachtcharters.rezdy.com";
-  const productCode =
-    mappedProductCode ??
-    (input.provider === "REZDY" && /^[A-Z0-9]{4,}$/i.test(input.product.externalProductId)
-      ? input.product.externalProductId
-      : null);
-
-  if (mappedBookingFormUrl ?? usableWebsiteUrl) {
-    return mappedBookingFormUrl ?? usableWebsiteUrl;
-  }
-
-  if (productCode) {
-    return `https://${rezdyHost}/`;
-  }
-
-  return serviceCheckoutUrl ?? null;
-}
-
-function isDirectRezdyCheckoutHandoff(value: string) {
-  try {
-    const url = new URL(value);
-    return url.hostname.endsWith(".rezdy.com") && url.searchParams.has("itemKey");
-  } catch {
-    return false;
-  }
+  return booking.status === "FAILED" ? null : booking;
 }
 
 function normalizeTicketText(value: string) {
@@ -400,6 +335,48 @@ function findTicketOptionSelectedByNumber(message: string, options: PmsTicketOpt
   };
 }
 
+function findTicketOptionsSelectedByNumber(message: string, options: PmsTicketOption[], guests?: number | null) {
+  const normalizedMessage = message.toLowerCase().replace(/\./g, "").replace(/\s+/g, " ").trim();
+  const selectedIndexes: number[] = [];
+  const addIndex = (rawIndex: string) => {
+    const index = Number(rawIndex);
+    if (!index || !options[index - 1] || selectedIndexes.includes(index)) return;
+    selectedIndexes.push(index);
+  };
+
+  for (const match of normalizedMessage.matchAll(/\b(?:option|choice|ticket|number|no)\s*#?\s*(\d{1,2})\b/g)) {
+    addIndex(match[1]);
+  }
+
+  for (const match of normalizedMessage.matchAll(/#\s*(\d{1,2})\b/g)) {
+    addIndex(match[1]);
+  }
+
+  if (selectedIndexes.length <= 1) return [];
+
+  const quantities = selectedIndexes.map((index) => ({
+    optionLabel: options[index - 1].label,
+    quantity: 1
+  }));
+
+  if (guests) {
+    const selectedParticipants = quantities.reduce(
+      (sum, quantity) => sum + ticketOptionParticipantMultiplier(quantity.optionLabel) * quantity.quantity,
+      0
+    );
+    const remainingGuests = guests - selectedParticipants;
+    const adjustableSingleTicket = quantities.find(
+      (quantity) => ticketOptionParticipantMultiplier(quantity.optionLabel) === 1 && !isInfantTicket(quantity.optionLabel)
+    );
+
+    if (remainingGuests > 0 && adjustableSingleTicket) {
+      adjustableSingleTicket.quantity += remainingGuests;
+    }
+  }
+
+  return quantities;
+}
+
 function parseQuantityWord(value: string) {
   const normalized = value.toLowerCase();
   const words: Record<string, number> = {
@@ -430,6 +407,12 @@ function readQuantityForWords(message: string, words: string[]) {
 
 function parseTicketQuantities(message: string, options: PmsTicketOption[], guests?: number | null) {
   const quantities: PmsTicketQuantity[] = [];
+  const selectedByNumbers = findTicketOptionsSelectedByNumber(message, options, guests);
+
+  if (selectedByNumbers.length > 0) {
+    return selectedByNumbers;
+  }
+
   const selectedByNumber = findTicketOptionSelectedByNumber(message, options, guests);
 
   if (selectedByNumber) {
@@ -578,6 +561,12 @@ function formatDateAndTime(dateText: string | null) {
   const hour12 = hour24 % 12 || 12;
 
   return `on ${match[1]} at ${hour12}:${match[3]} ${period}`;
+}
+
+function formatAvailabilityDatePhrase(dateText: string | null) {
+  return dateText?.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}):\d{2}$/)
+    ? formatDateAndTime(dateText)
+    : formatDatePhrase(dateText);
 }
 
 function selectedTimeOption(dateText: string | null | undefined, options: PmsTimeOption[]) {
@@ -837,6 +826,12 @@ function composeContactCollectionReply(capture: ReturnType<typeof evaluateBookin
 export async function handleTravellerBookingMessage(
   input: HandleTravellerBookingMessageInput
 ): Promise<BookingOrchestratorResult> {
+  let cachedProducts: PmsProduct[] | null = null;
+  const listProducts = async () => {
+    cachedProducts ??= await input.pmsAdapter.listProducts();
+    return cachedProducts;
+  };
+
   if (
     input.bookingWriteEnabled === true &&
     input.bookingMemory?.bookingStatus === "READY_TO_CONFIRM" &&
@@ -993,6 +988,42 @@ export async function handleTravellerBookingMessage(
         memory: input.bookingMemory,
         capture
       })
+    };
+  }
+
+  const productSelection = selectedProductFromRecentList({
+    message: input.message,
+    products: await listProducts(),
+    history: input.conversationHistory
+  });
+
+  if (productSelection && !input.bookingMemory?.productTitle) {
+    if (productSelection.bookingMode === "MANUAL_INQUIRY") {
+      return {
+        action: "MANUAL_INQUIRY_REQUIRED",
+        reply: `${productSelection.title} requires operator confirmation. I can collect the details, but I will not confirm availability automatically.`,
+        replySource: "DETERMINISTIC"
+      };
+    }
+
+    return {
+      action: "PRODUCT_LINK",
+      reply: formatProductInfoReply(productSelection),
+      replySource: "DETERMINISTIC",
+      bookingStatePatch: {
+        productExternalId: productSelection.externalProductId,
+        productTitle: productSelection.title,
+        dateText: input.bookingMemory?.dateText ?? null,
+        guests: input.bookingMemory?.guests ?? null,
+        travellerName: input.bookingMemory?.travellerName ?? null,
+        travellerEmail: input.bookingMemory?.travellerEmail ?? null,
+        travellerPhone: input.bookingMemory?.travellerPhone ?? null,
+        bookingStatus: input.bookingMemory?.bookingStatus ?? "DRAFT",
+        confirmationSummary: input.bookingMemory?.confirmationSummary ?? null,
+        externalBookingId: input.bookingMemory?.externalBookingId ?? null,
+        externalProvider: (input.bookingMemory?.externalProvider as BookingFlowState["externalProvider"]) ?? null,
+        bookingError: input.bookingMemory?.bookingError ?? null
+      }
     };
   }
 
@@ -1351,6 +1382,43 @@ export async function handleTravellerBookingMessage(
           bookingStatus: "PAYMENT_PENDING",
           bookingError: "Awaiting secure payment before creating the external booking."
         };
+        let paymentOrder:
+          | {
+              externalBookingId: string;
+              provider: PmsAdapter["provider"];
+              paymentUrl?: string | null;
+            }
+          | null = null;
+        let paymentOrderError: string | null = null;
+
+        if (input.allowUnpaidExternalBooking === true) {
+          try {
+            paymentOrder = await createPendingPaymentOrder({
+              pmsAdapter: input.pmsAdapter,
+              state: paymentState
+            });
+          } catch (error) {
+            paymentOrderError = error instanceof Error ? error.message : "PMS payment hold request failed.";
+          }
+        }
+
+        const paymentStateWithOrder: BookingFlowState = paymentOrder
+          ? {
+              ...paymentState,
+              externalBookingId: paymentOrder.externalBookingId,
+              externalProvider: paymentOrder.provider,
+              bookingError: null
+            }
+          : {
+              ...paymentState,
+              bookingError: paymentOrderError ?? paymentState.bookingError
+            };
+        const paymentHandoffUrl = paymentOrder?.paymentUrl ?? null;
+        const paymentInstruction = paymentOrder
+          ? paymentHandoffUrl
+            ? `I saved this as a lead and created pending Rezdy order ${paymentOrder.externalBookingId}. Please complete payment on the secure Rezdy link below; Kai will not ask for or store card details.`
+            : `I saved this as a lead and created Rezdy pending cart ${paymentOrder.externalBookingId}. The operator needs to send the secure payment link from Rezdy or follow up manually; Kai will not ask for or store card details.`
+          : `I saved this as a lead for the operator. Kai will not ask for or store card details; secure payment handoff is not connected yet.`;
 
         return {
           action: "BOOKING_PAYMENT_REQUIRED",
@@ -1362,10 +1430,11 @@ export async function handleTravellerBookingMessage(
             readyState.travellerEmail
           }, ${
             readyState.travellerPhone
-          }.\n\nUse the secure payment panel below when you are ready. I cannot take card details in chat.\n\nFor now, I saved this as a lead for the operator.`,
+          }.\n\n${paymentInstruction}`,
           replySource: "DETERMINISTIC",
           inquiryDraft: capture.details,
-          bookingStatePatch: paymentState
+          bookingStatePatch: paymentStateWithOrder,
+          ...(paymentHandoffUrl ? { paymentHandoffUrl } : {})
         };
       }
     }
@@ -1390,7 +1459,7 @@ export async function handleTravellerBookingMessage(
   }
 
   if (analysis.intent === "PRODUCT_RECOMMENDATION") {
-    const products = await input.pmsAdapter.listProducts();
+    const products = await listProducts();
 
     if (analysis.slots.productHint) {
       const productMatch = matchPmsProduct(analysis.slots.productHint, products);
@@ -1435,7 +1504,7 @@ export async function handleTravellerBookingMessage(
     };
   }
 
-  const products = await input.pmsAdapter.listProducts();
+  const products = await listProducts();
   const productMatch = matchPmsProduct(currentMessageAnalysis.slots.productHint ?? contextMessage, products);
 
   if (productMatch.status !== "MATCHED") {
@@ -1481,6 +1550,13 @@ export async function handleTravellerBookingMessage(
     });
   }
 
+  const onlyAvailableTime =
+    input.bookingWriteEnabled === true && availability.timeOptions?.length === 1 ? availability.timeOptions[0] : null;
+  const availabilityDateText = onlyAvailableTime?.startTimeLocal ?? effectiveSlots.dateText;
+  const onlyAvailableTimeSentence = onlyAvailableTime
+    ? ` The only available time is ${onlyAvailableTime.label}.`
+    : "";
+
   if (input.bookingWriteEnabled === true && availability.timeOptions && availability.timeOptions.length > 1) {
     return {
       action: "BOOKING_TIME_SELECTION_REQUIRED",
@@ -1492,7 +1568,7 @@ export async function handleTravellerBookingMessage(
       replySource: "DETERMINISTIC",
       bookingStatePatch: buildAvailabilityState({
         product,
-        dateText: effectiveSlots.dateText,
+        dateText: availabilityDateText,
         guests: effectiveSlots.guests,
         timeOptions: availability.timeOptions,
         ticketOptions: availability.ticketOptions,
@@ -1506,7 +1582,7 @@ export async function handleTravellerBookingMessage(
       action: "BOOKING_TICKET_SELECTION_REQUIRED",
       reply: `${product.title} is available for ${
         effectiveSlots.guests
-      } guests ${formatDatePhrase(effectiveSlots.dateText)}. There are ${
+      } guests ${formatAvailabilityDatePhrase(availabilityDateText)}.${onlyAvailableTimeSentence} There are ${
         availability.remaining
       } spots left.\n\nTicket options:\n${formatTicketOptionsList(
         availability.ticketOptions,
@@ -1515,7 +1591,7 @@ export async function handleTravellerBookingMessage(
       replySource: "DETERMINISTIC",
       bookingStatePatch: buildAvailabilityState({
         product,
-        dateText: effectiveSlots.dateText,
+        dateText: availabilityDateText,
         guests: effectiveSlots.guests,
         timeOptions: availability.timeOptions,
         ticketOptions: availability.ticketOptions,
@@ -1526,7 +1602,9 @@ export async function handleTravellerBookingMessage(
 
   const deterministicReply = `Good news, ${product.title} has availability for ${
     effectiveSlots.guests
-  } guests ${formatDatePhrase(effectiveSlots.dateText)}. There are ${availability.remaining} spots left at ${formatPrice(
+  } guests ${formatAvailabilityDatePhrase(availabilityDateText)}.${onlyAvailableTimeSentence} There are ${
+    availability.remaining
+  } spots left at ${formatPrice(
     availability.currency,
     availability.unitPriceCents
   )} per guest. I have not confirmed anything yet, but I can help you continue if this looks good.`;

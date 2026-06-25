@@ -20,6 +20,8 @@ export interface ManualInquiryViewModelInput {
       bookingStatus: string;
       confirmationSummary: string | null;
       bookingError: string | null;
+      externalBookingId?: string | null;
+      externalProvider?: string | null;
     } | null;
   };
 }
@@ -31,9 +33,24 @@ function formatGuestCount(guests: number | null) {
 export function toManualInquiryViewModel(inquiry: ManualInquiryViewModelInput) {
   const bookingState = inquiry.conversation.bookingState;
   const isFailedBooking = bookingState?.bookingStatus === "FAILED";
+  const isPaymentPending = bookingState?.bookingStatus === "PAYMENT_PENDING";
   const customerLine = [inquiry.travellerName, inquiry.travellerEmail, inquiry.travellerPhone]
     .filter(Boolean)
     .join(" · ");
+  const externalBookingId = bookingState?.externalBookingId ?? null;
+  const externalProvider = bookingState?.externalProvider ?? null;
+  const operatorReason = isFailedBooking
+    ? "PMS booking failed"
+    : isPaymentPending
+      ? "Payment follow-up required"
+      : "Manual review required";
+  const operatorNextStep = isFailedBooking
+    ? "Auto-booking failed. Retry PMS booking or create it manually, then notify the traveller."
+    : isPaymentPending && externalBookingId
+      ? `Search Rezdy order ${externalBookingId}, then send the secure payment link or follow up with the traveller.`
+      : isPaymentPending
+        ? "Check the PMS pending cart, then send the secure payment link or follow up with the traveller."
+        : "Review the conversation, contact the traveller if needed, then mark the inquiry notified or closed.";
 
   return {
     id: inquiry.id,
@@ -47,9 +64,9 @@ export function toManualInquiryViewModel(inquiry: ManualInquiryViewModelInput) {
     bookingStatus: bookingState?.bookingStatus ?? null,
     confirmationSummary: bookingState?.confirmationSummary ?? null,
     bookingError: bookingState?.bookingError ?? null,
-    operatorReason: isFailedBooking ? "PMS booking failed" : "Manual review required",
-    operatorNextStep: isFailedBooking
-      ? "Auto-booking failed. Retry PMS booking or create it manually, then notify the traveller."
-      : "Review the conversation, contact the traveller if needed, then mark the inquiry notified or closed."
+    externalBookingId,
+    externalProvider,
+    operatorReason,
+    operatorNextStep
   };
 }

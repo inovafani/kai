@@ -109,6 +109,7 @@ async function runConversation(messages: string[]) {
   const pmsAdapter = createBoattimeEvalAdapter();
   let memory: BookingMemoryState | null = null;
   const priorTravellerMessages: string[] = [];
+  const conversationHistory: Array<{ role: "traveller" | "assistant"; content: string }> = [];
   const turns: BookingOrchestratorResult[] = [];
   const products = await pmsAdapter.listProducts();
 
@@ -121,6 +122,7 @@ async function runConversation(messages: string[]) {
     const result = await handleTravellerBookingMessage({
       message,
       priorTravellerMessages: [...priorTravellerMessages],
+      conversationHistory: [...conversationHistory, { role: "traveller", content: message }],
       bookingMemory,
       pmsAdapter,
       bookingWriteEnabled: true
@@ -129,6 +131,8 @@ async function runConversation(messages: string[]) {
     turns.push(result);
     memory = result.bookingStatePatch ?? bookingMemory;
     priorTravellerMessages.push(message);
+    conversationHistory.push({ role: "traveller", content: message });
+    conversationHistory.push({ role: "assistant", content: result.reply });
   }
 
   return { turns, memory };
@@ -204,5 +208,13 @@ describe("booking conversation evals", () => {
 
     expect(turns[0]).toMatchObject({ action: "MANUAL_INQUIRY_REQUIRED" });
     expect(turns[0].reply).toContain("requires operator confirmation");
+  });
+
+  it("understands a numbered product choice after showing recommendations", async () => {
+    const { turns } = await runConversation(["can you give me recommendation?", "1"]);
+
+    expect(turns.map((turn) => turn.action)).toEqual(["PRODUCT_RECOMMENDATION", "PRODUCT_LINK"]);
+    expect(turns[1].reply).toContain("Gold Coast Whale Escape");
+    expect(turns[1].reply).not.toContain("You can choose from");
   });
 });

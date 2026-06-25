@@ -362,7 +362,9 @@ export async function listManualInquiriesForTenantSlug(input: {
             select: {
               bookingStatus: true,
               confirmationSummary: true,
-              bookingError: true
+              bookingError: true,
+              externalBookingId: true,
+              externalProvider: true
             }
           }
         }

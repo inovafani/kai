@@ -39,6 +39,7 @@ type PaymentRequest = {
   productTitle: string | null;
   dateText: string | null;
   guests: number | null;
+  checkoutUrl: string | null;
   status: "PAYMENT_PENDING";
 };
 
@@ -68,6 +69,12 @@ declare global {
     Stripe?: (publishableKey: string) => StripeInstance | null;
   }
 }
+
+type ContactRequest = {
+  conversationId: string;
+  fields: ["name", "email", "phone"];
+  status: "CONTACT_DETAILS_REQUIRED";
+};
 
 type KaiWidgetClientProps = {
   widgetKey: string;
@@ -121,9 +128,10 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [paymentRequest, setPaymentRequest] = useState<PaymentRequest | null>(null);
   const [paymentIntent, setPaymentIntent] = useState<PaymentIntent | null>(null);
-  const [paymentStatus, setPaymentStatus] = useState<"idle" | "starting" | "ready" | "confirming" | "confirmed">(
-    "idle"
-  );
+  const [contactRequest, setContactRequest] = useState<ContactRequest | null>(null);
+  const [contactForm, setContactForm] = useState({ name: "", email: "", phone: "" });
+  const [contactFormError, setContactFormError] = useState("");
+  const [paymentStatus, setPaymentStatus] = useState<"idle" | "starting" | "ready" | "confirming">("idle");
   const [paymentError, setPaymentError] = useState("");
   const [cardholderName, setCardholderName] = useState("");
   const [message, setMessage] = useState("");
@@ -150,8 +158,7 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
           throw new Error("Secure payment could not initialize.");
         }
 
-        const elements = stripe.elements();
-        const cardElement = elements.create("card", {
+        const cardElement = stripe.elements().create("card", {
           hidePostalCode: true
         });
         stripeRef.current = stripe;
@@ -233,6 +240,13 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
     };
   }, [widgetKey]);
 
+  useEffect(() => {
+    setPaymentStatus("idle");
+    setPaymentError("");
+    setPaymentIntent(null);
+    setCardholderName("");
+  }, [paymentRequest, widgetKey]);
+
   const accentColor = config?.branding.primaryColor ?? "#0f766e";
   const canSend = status !== "loading" && status !== "sending" && status !== "error" && message.trim().length > 0;
   const isSending = status === "sending";
@@ -244,10 +258,7 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
     return `${config.tenant.name} · ${config.capabilities.pmsProvider.toUpperCase()}`;
   }, [config]);
 
-  async function sendMessage(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    const content = message.trim();
+  async function submitContent(content: string) {
     if (!content || !conversationId) {
       return;
     }
@@ -261,6 +272,7 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
     try {
       setStatus("sending");
       setError("");
+      setContactFormError("");
       setMessage("");
       setMessages((currentMessages) => [...currentMessages, localTravellerMessage]);
 
@@ -268,6 +280,7 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
         message: ChatMessage;
         assistantMessage: ChatMessage;
         paymentRequest?: PaymentRequest | null;
+        contactRequest?: ContactRequest | null;
       }>(
         await fetch("/api/widget/messages", {
           method: "POST",
@@ -287,9 +300,12 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
         response.assistantMessage
       ]);
       setPaymentRequest(response.paymentRequest ?? null);
+      setContactRequest(response.contactRequest ?? null);
+      if (!response.contactRequest) {
+        setContactForm({ name: "", email: "", phone: "" });
+      }
       setPaymentIntent(null);
       setPaymentError("");
-      setCardholderName("");
       setStatus("ready");
     } catch (sendError) {
       setStatus("ready");
@@ -299,6 +315,36 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
       );
       setError(sendError instanceof Error ? sendError.message : "Message failed to send.");
     }
+  }
+
+  async function sendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    await submitContent(message.trim());
+  }
+
+  async function submitContactDetails(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const name = contactForm.name.trim();
+    const email = contactForm.email.trim();
+    const phone = contactForm.phone.trim();
+
+    if (name.length < 2) {
+      setContactFormError("Please enter your full name.");
+      return;
+    }
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setContactFormError("Please enter a valid email address.");
+      return;
+    }
+
+    if (phone.replace(/\D/g, "").length < 6) {
+      setContactFormError("Please enter a valid phone number.");
+      return;
+    }
+
+    await submitContent(`My name is ${name}, email is ${email}, phone number is ${phone}`);
   }
 
   async function startPayment() {
@@ -318,12 +364,13 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
           })
         })
       );
+
       setPaymentIntent(intent);
     } catch (paymentStartError) {
+      setPaymentStatus("idle");
       setPaymentError(
         paymentStartError instanceof Error ? paymentStartError.message : "Secure payment is not available yet."
       );
-      setPaymentStatus("idle");
     }
   }
 
@@ -342,9 +389,10 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
         throw new Error(tokenResult.error?.message ?? "Card details could not be verified.");
       }
 
-      const response = await readJson<{
-        booking: { externalBookingId: string; status: "CONFIRMED" | "PENDING" | "FAILED" };
-        assistantMessage?: ChatMessage;
+      const confirmation = await readJson<{
+        status: "CONFIRMED";
+        externalBookingId: string;
+        provider: string;
       }>(
         await fetch("/api/widget/payments/confirm", {
           method: "POST",
@@ -357,12 +405,17 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
         })
       );
 
-      if (response.assistantMessage) {
-        setMessages((currentMessages) => [...currentMessages, response.assistantMessage as ChatMessage]);
-      }
-      setPaymentStatus("confirmed");
+      setMessages((currentMessages) => [
+        ...currentMessages,
+        {
+          id: createLocalMessageId(),
+          role: "ASSISTANT",
+          content: `Payment received and your booking is confirmed. Confirmation reference: ${confirmation.externalBookingId}.`
+        }
+      ]);
       setPaymentRequest(null);
       setPaymentIntent(null);
+      setPaymentStatus("idle");
     } catch (confirmError) {
       setPaymentStatus("ready");
       setPaymentError(confirmError instanceof Error ? confirmError.message : "Payment could not be completed.");
@@ -513,6 +566,116 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
             </p>
           ) : null}
 
+          {contactRequest ? (
+            <form
+              aria-label="Contact details"
+              onSubmit={submitContactDetails}
+              style={{
+                alignSelf: "stretch",
+                display: "grid",
+                gap: 10,
+                padding: 14,
+                border: "1px solid #cfded9",
+                borderRadius: 8,
+                background: "#ffffff",
+                boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)"
+              }}
+            >
+              <h2 style={{ margin: 0, fontSize: 16, lineHeight: 1.25 }}>Contact details</h2>
+              <p style={{ margin: 0, color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
+                This keeps names, email, and phone number in the right format for the booking.
+              </p>
+              <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 800 }}>
+                Full name
+                <input
+                  aria-label="Full name"
+                  value={contactForm.name}
+                  onChange={(event) => setContactForm((current) => ({ ...current, name: event.target.value }))}
+                  disabled={isSending}
+                  autoComplete="name"
+                  style={{
+                    height: 42,
+                    border: "1px solid #cfded9",
+                    borderRadius: 8,
+                    padding: "0 12px",
+                    font: "inherit",
+                    outlineColor: accentColor
+                  }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 800 }}>
+                Email
+                <input
+                  aria-label="Email"
+                  value={contactForm.email}
+                  onChange={(event) => setContactForm((current) => ({ ...current, email: event.target.value }))}
+                  disabled={isSending}
+                  autoComplete="email"
+                  inputMode="email"
+                  style={{
+                    height: 42,
+                    border: "1px solid #cfded9",
+                    borderRadius: 8,
+                    padding: "0 12px",
+                    font: "inherit",
+                    outlineColor: accentColor
+                  }}
+                />
+              </label>
+              <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 800 }}>
+                Phone
+                <input
+                  aria-label="Phone"
+                  value={contactForm.phone}
+                  onChange={(event) => setContactForm((current) => ({ ...current, phone: event.target.value }))}
+                  disabled={isSending}
+                  autoComplete="tel"
+                  inputMode="tel"
+                  style={{
+                    height: 42,
+                    border: "1px solid #cfded9",
+                    borderRadius: 8,
+                    padding: "0 12px",
+                    font: "inherit",
+                    outlineColor: accentColor
+                  }}
+                />
+              </label>
+              {contactFormError ? (
+                <p
+                  role="alert"
+                  style={{
+                    margin: 0,
+                    padding: "8px 10px",
+                    border: "1px solid #fecaca",
+                    borderRadius: 8,
+                    background: "#fef2f2",
+                    color: "#991b1b",
+                    fontSize: 13,
+                    lineHeight: 1.4
+                  }}
+                >
+                  {contactFormError}
+                </p>
+              ) : null}
+              <button
+                type="submit"
+                disabled={isSending}
+                style={{
+                  height: 42,
+                  border: "none",
+                  borderRadius: 8,
+                  background: isSending ? "#b8c7c2" : accentColor,
+                  color: "#ffffff",
+                  fontWeight: 800,
+                  cursor: isSending ? "not-allowed" : "pointer"
+                }}
+              >
+                Send details
+              </button>
+            </form>
+          ) : null}
+
           {paymentRequest ? (
             <section
               aria-label="Secure payment"
@@ -525,14 +688,14 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
                 boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)"
               }}
             >
-              <h2 style={{ margin: 0, fontSize: 16, lineHeight: 1.25 }}>Secure payment</h2>
+              <h2 style={{ margin: 0, fontSize: 16, lineHeight: 1.25 }}>Secure RezdyPay payment</h2>
               <p style={{ margin: "8px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
                 {paymentRequest.productTitle ?? "Selected booking"}
-                {paymentRequest.dateText ? ` · ${paymentRequest.dateText}` : ""}
-                {paymentRequest.guests ? ` · ${paymentRequest.guests} guest${paymentRequest.guests === 1 ? "" : "s"}` : ""}
+                {paymentRequest.dateText ? ` - ${paymentRequest.dateText}` : ""}
+                {paymentRequest.guests ? ` - ${paymentRequest.guests} guest${paymentRequest.guests === 1 ? "" : "s"}` : ""}
               </p>
               <p style={{ margin: "10px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
-                Card details must be entered only in the secure payment form.
+                Card details are handled by RezdyPay&apos;s secure Stripe form; Kai will not store card numbers.
               </p>
               {paymentError ? (
                 <p
@@ -551,60 +714,7 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
                   {paymentError}
                 </p>
               ) : null}
-              {paymentIntent ? (
-                <div style={{ display: "grid", gap: 10, marginTop: 12 }}>
-                  <label htmlFor="kai-cardholder-name" style={{ fontSize: 13, fontWeight: 800 }}>
-                    Name on card
-                  </label>
-                  <input
-                    id="kai-cardholder-name"
-                    value={cardholderName}
-                    onChange={(event) => setCardholderName(event.target.value)}
-                    autoComplete="cc-name"
-                    style={{
-                      height: 40,
-                      border: "1px solid #cfded9",
-                      borderRadius: 8,
-                      padding: "0 10px",
-                      font: "inherit",
-                      outlineColor: accentColor
-                    }}
-                  />
-                  <div
-                    id="kai-payment-card-element"
-                    aria-label="Card details"
-                    style={{
-                      minHeight: 42,
-                      display: "grid",
-                      alignItems: "center",
-                      border: "1px solid #cfded9",
-                      borderRadius: 8,
-                      padding: "10px",
-                      background: "#fbfdfc",
-                      color: "#4f625b",
-                      fontSize: 13
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={confirmPayment}
-                    disabled={paymentStatus !== "ready"}
-                    style={{
-                      width: "100%",
-                      height: 42,
-                      border: "none",
-                      borderRadius: 8,
-                      background: accentColor,
-                      color: "#ffffff",
-                      fontWeight: 800,
-                      cursor: paymentStatus === "confirming" ? "wait" : paymentStatus === "ready" ? "pointer" : "not-allowed",
-                      opacity: paymentStatus === "ready" ? 1 : 0.75
-                    }}
-                  >
-                    {paymentStatus === "confirming" ? "Confirming..." : "Pay securely"}
-                  </button>
-                </div>
-              ) : (
+              {!paymentIntent ? (
                 <button
                   type="button"
                   onClick={startPayment}
@@ -618,11 +728,64 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
                     background: accentColor,
                     color: "#ffffff",
                     fontWeight: 800,
-                    cursor: paymentStatus === "starting" ? "wait" : "pointer"
+                    cursor: paymentStatus === "starting" ? "not-allowed" : "pointer"
                   }}
                 >
-                  {paymentStatus === "starting" ? "Preparing..." : "Continue to payment"}
+                  {paymentStatus === "starting" ? "Preparing..." : "Continue to secure payment"}
                 </button>
+              ) : (
+                <>
+                  <label style={{ display: "grid", gap: 5, marginTop: 12, fontSize: 13, fontWeight: 800 }}>
+                    Name on card
+                    <input
+                      aria-label="Name on card"
+                      value={cardholderName}
+                      onChange={(event) => setCardholderName(event.target.value)}
+                      disabled={paymentStatus === "confirming"}
+                      autoComplete="cc-name"
+                      style={{
+                        height: 42,
+                        border: "1px solid #cfded9",
+                        borderRadius: 8,
+                        padding: "0 12px",
+                        font: "inherit",
+                        outlineColor: accentColor
+                      }}
+                    />
+                  </label>
+                  <div
+                    aria-label="Card details"
+                    id="kai-payment-card-element"
+                    style={{
+                      minHeight: 46,
+                      marginTop: 10,
+                      display: "block",
+                      border: "1px solid #cfded9",
+                      borderRadius: 8,
+                      padding: "13px 12px",
+                      background: "#ffffff",
+                      cursor: paymentStatus === "confirming" ? "not-allowed" : "text"
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={confirmPayment}
+                    disabled={paymentStatus === "confirming"}
+                    style={{
+                      width: "100%",
+                      height: 42,
+                      marginTop: 12,
+                      border: "none",
+                      borderRadius: 8,
+                      background: accentColor,
+                      color: "#ffffff",
+                      fontWeight: 800,
+                      cursor: paymentStatus === "confirming" ? "not-allowed" : "pointer"
+                    }}
+                  >
+                    {paymentStatus === "confirming" ? "Confirming..." : "Pay securely"}
+                  </button>
+                </>
               )}
             </section>
           ) : null}

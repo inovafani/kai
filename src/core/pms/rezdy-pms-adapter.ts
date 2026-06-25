@@ -191,13 +191,16 @@ export class RezdyPmsAdapter extends RealPmsHttpAdapter {
         unitPriceCents: Math.round(readNumber(priceOption, ["price", "adultPrice", "advertisedPrice"]) * 100)
       }))
       .filter((ticketOption) => ticketOption.label);
-    const extraOptions = ["extras", "extraOptions", "productExtras"]
+    const sessionExtraOptions = ["extras", "extraOptions", "productExtras"]
       .flatMap((key) => readArrayRecords(session, key))
       .map((extraOption) => ({
         label: readExtraOptionLabel(extraOption),
         unitPriceCents: Math.round(readExtraOptionPrice(extraOption) * 100)
       }))
       .filter((extraOption) => extraOption.label);
+    const productExtraOptions =
+      sessionExtraOptions.length > 0 ? [] : await this.findProductExtraOptions(request.productId);
+    const extraOptions = sessionExtraOptions.length > 0 ? sessionExtraOptions : productExtraOptions;
 
     return {
       productId: readString(session, ["productCode", "productId"]) || request.productId,
@@ -210,6 +213,30 @@ export class RezdyPmsAdapter extends RealPmsHttpAdapter {
       ticketOptions,
       ...(extraOptions.length > 0 ? { extraOptions } : {})
     };
+  }
+
+  private async findProductExtraOptions(productId: string) {
+    if (!this.config.productListPath) return [];
+
+    let product: UnknownRecord | undefined;
+    try {
+      const payload = await this.requestJson("GET", this.config.productListPath);
+      const record = asRecord(payload);
+      const products = readArrayRecords(record, "products");
+      product = products.find((item) => readString(item, ["productCode", "productId", "id"]) === productId);
+    } catch {
+      return [];
+    }
+
+    if (!product) return [];
+
+    return ["extras", "extraOptions", "productExtras"]
+      .flatMap((key) => readArrayRecords(product, key))
+      .map((extraOption) => ({
+        label: readExtraOptionLabel(extraOption),
+        unitPriceCents: Math.round(readExtraOptionPrice(extraOption) * 100)
+      }))
+      .filter((extraOption) => extraOption.label);
   }
 
   async createBooking(request: PmsCreateBookingRequest): Promise<PmsCreateBookingResult> {
@@ -255,6 +282,7 @@ export class RezdyPmsAdapter extends RealPmsHttpAdapter {
         : undefined;
     const name = splitTravellerName(request.travellerName);
     const payload = await this.requestJson("POST", this.config.bookingPath as string, {
+      ...(request.confirmationMode === "PAYMENT_HOLD" ? { status: "PROCESSING" } : {}),
       customer: {
         firstName: name.firstName,
         lastName: name.lastName,
@@ -282,11 +310,23 @@ export class RezdyPmsAdapter extends RealPmsHttpAdapter {
       "orderId"
     ]);
     const rawStatus = readString(bookingRecord, ["status", "bookingStatus", "orderStatus"]).toUpperCase();
+    const paymentUrl =
+      readString(bookingRecord, ["paymentUrl", "paymentLink", "paymentPageUrl", "orderPaymentUrl", "paymentRequestUrl"]) ||
+      readString(record, ["paymentUrl", "paymentLink", "paymentPageUrl", "orderPaymentUrl", "paymentRequestUrl"]);
+    const status =
+      !externalBookingId
+        ? "FAILED"
+        : rawStatus.includes("FAIL") || rawStatus.includes("CANCEL")
+        ? "FAILED"
+        : rawStatus.includes("PROCESS") || rawStatus.includes("PEND") || rawStatus.includes("UNPAID")
+          ? "PENDING"
+          : "CONFIRMED";
 
     return {
       externalBookingId,
       provider: this.provider,
-      status: rawStatus.includes("FAIL") || rawStatus.includes("CANCEL") ? "FAILED" : "CONFIRMED"
+      status,
+      ...(paymentUrl ? { paymentUrl } : {})
     };
   }
 

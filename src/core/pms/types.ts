@@ -64,12 +64,14 @@ export interface PmsCreateBookingRequest {
   ticketQuantities?: PmsTicketQuantity[] | null;
   extraQuantities?: PmsExtraQuantity[] | null;
   paymentCardToken?: string | null;
+  confirmationMode?: "CONFIRM_NOW" | "PAYMENT_HOLD";
 }
 
 export interface PmsCreateBookingResult {
   externalBookingId: string;
   provider: PmsProvider;
   status: "CONFIRMED" | "PENDING" | "FAILED";
+  paymentUrl?: string | null;
 }
 
 export interface PmsAdapter {

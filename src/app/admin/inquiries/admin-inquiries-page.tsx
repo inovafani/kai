@@ -134,6 +134,26 @@ export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: strin
                   {inquiry.customerLine ? (
                     <p style={{ margin: "8px 0 0", color: "#53655f" }}>{inquiry.customerLine}</p>
                   ) : null}
+                  {inquiry.externalBookingId ? (
+                    <p style={{ margin: "8px 0 0", color: "#10201c", fontWeight: 800 }}>
+                      {inquiry.externalProvider ?? "PMS"} order:{" "}
+                      <code
+                        title="Copy this order number exactly into Rezdy."
+                        style={{
+                          background: "#eef6f4",
+                          border: "1px solid #cfe0dc",
+                          borderRadius: 6,
+                          fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
+                          fontSize: 16,
+                          letterSpacing: 0,
+                          padding: "2px 5px",
+                          userSelect: "all"
+                        }}
+                      >
+                        {inquiry.externalBookingId}
+                      </code>
+                    </p>
+                  ) : null}
                   <div
                     style={{
                       border: "1px solid " + (inquiry.bookingStatus === "FAILED" ? "#fecaca" : "#dbe5e1"),

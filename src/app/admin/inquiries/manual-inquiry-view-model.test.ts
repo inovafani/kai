@@ -61,4 +61,38 @@ describe("manual inquiry view model", () => {
       requestLine: "tomorrow · 2 guests · Kai Demo"
     });
   });
+
+  it("surfaces pending Rezdy cart references for operator payment follow-up", () => {
+    const viewModel = toManualInquiryViewModel({
+      id: "inquiry-3",
+      conversationId: "conversation-3",
+      status: "OPEN",
+      productTitle: "Gold Coast Whale Escape",
+      dateText: "2026-06-29 13:30:00",
+      guests: 3,
+      travellerName: "Inov Test",
+      travellerEmail: "inoveka@gmail.com",
+      travellerPhone: "087665321876",
+      travellerMessage: "My name is Inov Test, email is inoveka@gmail.com, phone number is 087665321876",
+      createdAt: new Date("2026-06-24T15:18:47.000Z"),
+      tenant: { name: "Boattime Yacht Charters" },
+      conversation: {
+        bookingState: {
+          bookingStatus: "PAYMENT_PENDING",
+          confirmationSummary: null,
+          bookingError: null,
+          externalBookingId: "RYGUNQF",
+          externalProvider: "REZDY"
+        }
+      }
+    });
+
+    expect(viewModel).toMatchObject({
+      bookingStatus: "PAYMENT_PENDING",
+      externalBookingId: "RYGUNQF",
+      externalProvider: "REZDY",
+      operatorReason: "Payment follow-up required",
+      operatorNextStep: "Search Rezdy order RYGUNQF, then send the secure payment link or follow up with the traveller."
+    });
+  });
 });
