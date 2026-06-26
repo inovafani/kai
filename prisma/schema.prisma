@@ -35,6 +35,35 @@ enum ManualInquiryStatus {
   CLOSED
 }
 
+enum BluePassInquiryStatus {
+  DRAFT
+  READY_TO_DISPATCH
+  OPERATOR_PENDING
+  OPERATOR_ACCEPTED
+  COUNTER_OFFERED
+  DECLINED
+  CLOSED
+}
+
+enum BluePassLedgerKind {
+  CREATOR_COMMISSION_ESTIMATE
+  BLUEPASS_PLATFORM_COMMISSION
+  CONSERVATION_ALLOCATION
+  OPERATOR_PAYOUT_PLACEHOLDER
+}
+
+enum BluePassLedgerStatus {
+  PENDING
+  FINALIZED
+  VOIDED
+}
+
+enum BluePassOperatorDispatchStatus {
+  QUEUED
+  SENT
+  FAILED
+}
+
 model Tenant {
   id              String              @id @default(cuid())
   slug            String              @unique
@@ -176,4 +205,104 @@ model ManualInquiry {
 
   @@index([tenantId, status, createdAt])
   @@index([tenantId, conversationId, createdAt])
+}
+
+model BluePassInquiry {
+  id                String                @id @default(cuid())
+  tenantId          String
+  conversationId    String
+  status            BluePassInquiryStatus @default(DRAFT)
+  sourceChannel     String                @default("WEB_WIDGET")
+  travellerName     String?
+  travellerEmail    String?
+  travellerPhone    String?
+  destination       String?
+  tripType          String?
+  dateWindow        String?
+  guests            Int?
+  budget            String?
+  interests         Json?
+  selectedYachtSlug String?
+  selectedYachtName String?
+  operatorId        String?
+  operatorName      String?
+  operatorPhone     String?
+  notes             String?
+  travellerMessage  String
+  referralPartnerId String?
+  referralLinkId    String?
+  referralCode      String?
+  referralRole      String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  events     BluePassInquiryEvent[]
+  ledger     BluePassLedgerEntry[]
+  dispatches BluePassOperatorDispatch[]
+
+  @@index([tenantId, conversationId, status, createdAt])
+  @@index([tenantId, status, createdAt])
+}
+
+model BluePassInquiryEvent {
+  id                String   @id @default(cuid())
+  tenantId          String
+  conversationId    String
+  bluePassInquiryId String
+  type              String
+  fromStatus        String?
+  toStatus          String?
+  metadata          Json?
+  createdAt         DateTime @default(now())
+
+  inquiry BluePassInquiry @relation(fields: [bluePassInquiryId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, conversationId, createdAt])
+  @@index([bluePassInquiryId, createdAt])
+}
+
+model BluePassLedgerEntry {
+  id                String               @id @default(cuid())
+  tenantId          String
+  conversationId    String
+  bluePassInquiryId String
+  kind              BluePassLedgerKind
+  amountCents       Int
+  currency          String               @default("USD")
+  status            BluePassLedgerStatus @default(PENDING)
+  referralPartnerId String?
+  referralLinkId    String?
+  referralCode      String?
+  referralRole      String?
+  metadata          Json?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  inquiry BluePassInquiry @relation(fields: [bluePassInquiryId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, conversationId, status, createdAt])
+  @@index([bluePassInquiryId, status])
+}
+
+model BluePassOperatorDispatch {
+  id                String                         @id @default(cuid())
+  tenantId          String
+  conversationId    String
+  bluePassInquiryId String
+  status            BluePassOperatorDispatchStatus @default(QUEUED)
+  operatorId        String?
+  operatorName      String?
+  operatorPhone     String
+  outboundText      String
+  providerMessageId String?
+  failureReason     String?
+  metadata          Json?
+  sentAt            DateTime?
+  createdAt         DateTime                       @default(now())
+  updatedAt         DateTime                       @updatedAt
+
+  inquiry BluePassInquiry @relation(fields: [bluePassInquiryId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, conversationId, status, createdAt])
+  @@index([bluePassInquiryId, createdAt])
 }
