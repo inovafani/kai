@@ -65,9 +65,7 @@ export async function createOrReuseBluePassInquiry(input: CreateOrReuseBluePassI
     data: {
       tenantId: input.tenantId,
       conversationId: input.conversationId,
-      status: "READY_TO_DISPATCH",
       sourceChannel: input.sourceChannel ?? "WEB_WIDGET",
-      travellerMessage: input.travellerMessage,
       ...buildInquiryData(input)
     }
   });
