@@ -4,8 +4,10 @@ import {
   createOrReuseBluePassInquiry,
   dispatchBluePassOperatorWhatsApp,
   getActiveBluePassInquiryStatus,
+  listBluePassInquiriesForTenantSlug,
   syncBluePassReferralLedgerEstimate
 } from "./bluepass-inquiry-repository";
+import { prisma } from "@/lib/prisma";
 
 describe("bluepass inquiry repository", () => {
   it("creates and reads a tenant conversation scoped BluePass inquiry", async () => {
@@ -154,6 +156,66 @@ describe("bluepass inquiry repository", () => {
     expect(status?.dispatches[0]).toMatchObject({
       id: dispatch.id,
       status: "QUEUED"
+    });
+  }, 20_000);
+
+  it("lists BluePass inquiries for an admin tenant slug", async () => {
+    const slug = `bluepass-admin-${randomUUID()}`;
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug,
+        name: "BluePass Admin Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const conversationId = `conversation_${randomUUID()}`;
+    const created = await createOrReuseBluePassInquiry({
+      tenantId: tenant.id,
+      conversationId,
+      travellerMessage: "Komodo yacht for 8 guests next month around USD 10000",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "next month",
+        guests: 8,
+        budget: "USD 10000",
+        travellerName: "Maya Chen",
+        travellerEmail: "maya@example.com",
+        travellerPhone: "+61 400 111 222"
+      },
+      selectedYacht: {
+        slug: "alila-purnama",
+        name: "Alila Purnama",
+        operatorId: "operator_alila_purnama",
+        operatorName: "Alila Purnama",
+        operatorPhone: "+6281234567001"
+      },
+      referral: {
+        referralPartnerId: "partner_creator_1",
+        referralLinkId: "link_1",
+        referralCode: "CREATOR42",
+        referralRole: "CREATOR"
+      }
+    });
+    await syncBluePassReferralLedgerEstimate(created.inquiry);
+    await dispatchBluePassOperatorWhatsApp({ inquiryId: created.inquiry.id });
+
+    const adminList = await listBluePassInquiriesForTenantSlug({ tenantSlug: slug });
+
+    expect(adminList[0]).toMatchObject({
+      id: created.inquiry.id,
+      tenant: {
+        slug,
+        name: "BluePass Admin Test"
+      },
+      selectedYachtName: "Alila Purnama",
+      status: "OPERATOR_PENDING"
+    });
+    expect(adminList[0].ledger).toHaveLength(4);
+    expect(adminList[0].dispatches[0]).toMatchObject({
+      status: "QUEUED",
+      operatorPhone: "+6281234567001"
     });
   }, 20_000);
 });

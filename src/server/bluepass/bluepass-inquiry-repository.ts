@@ -216,6 +216,39 @@ export async function getActiveBluePassInquiryStatus(input: { tenantId: string; 
     : null;
 }
 
+export async function listBluePassInquiriesForTenantSlug(input: { tenantSlug: string; take?: number }) {
+  const tenant = await prisma.tenant.findUnique({
+    where: { slug: input.tenantSlug },
+    select: { id: true, slug: true, name: true }
+  });
+
+  if (!tenant) {
+    return [];
+  }
+
+  const inquiries = await prisma.bluePassInquiry.findMany({
+    where: { tenantId: tenant.id },
+    orderBy: { createdAt: "desc" },
+    take: input.take ?? 50,
+    include: {
+      events: { orderBy: { createdAt: "desc" }, take: 5 },
+      ledger: {
+        where: { status: "PENDING" },
+        orderBy: { createdAt: "asc" }
+      },
+      dispatches: { orderBy: { createdAt: "desc" } }
+    }
+  });
+
+  return inquiries.map((inquiry) => ({
+    ...inquiry,
+    tenant,
+    events: inquiry.events,
+    ledger: inquiry.ledger,
+    dispatches: inquiry.dispatches
+  }));
+}
+
 function buildInquiryData(input: CreateOrReuseBluePassInquiryInput, existing?: BluePassInquiry) {
   return {
     status: "READY_TO_DISPATCH" as const,
