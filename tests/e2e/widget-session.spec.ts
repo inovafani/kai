@@ -81,6 +81,53 @@ test("widget message persists traveller and mock assistant messages for the reso
   expect(payload.assistantMessage.content).toContain("USD 185.00");
 });
 
+test("widget message routes BluePass marketplace conversations through the business pack gate", async ({ request }) => {
+  const sessionResponse = await request.post("/api/widget/session", {
+    headers: {
+      origin: "https://bluepass.co"
+    },
+    data: {
+      key: "pk_test_bluepass"
+    }
+  });
+  const session = await sessionResponse.json();
+
+  const messageResponse = await request.post("/api/widget/messages", {
+    headers: {
+      origin: "https://bluepass.co"
+    },
+    data: {
+      key: "pk_test_bluepass",
+      conversationId: session.conversation.id,
+      content: "Can Kai find me a yacht in Komodo for 8 guests next month?"
+    }
+  });
+
+  expect(messageResponse.ok()).toBe(true);
+  await expect(messageResponse.json()).resolves.toMatchObject({
+    message: {
+      tenantSlug: "bluepass",
+      conversationId: session.conversation.id,
+      role: "TRAVELLER",
+      content: "Can Kai find me a yacht in Komodo for 8 guests next month?"
+    },
+    assistantMessage: {
+      tenantSlug: "bluepass",
+      conversationId: session.conversation.id,
+      role: "ASSISTANT",
+      content:
+        "I can help shape this BluePass request, but I will route marketplace availability, referral context, and operator follow-up through the BluePass inquiry flow instead of confirming a booking here."
+    },
+    businessPack: {
+      kind: "bluepass_marketplace",
+      paymentPolicy: "operator_acceptance_required"
+    },
+    manualInquiry: null,
+    paymentRequest: null,
+    contactRequest: null
+  });
+});
+
 test("widget message matches PMS product aliases before replying", async ({ request }) => {
   const sessionResponse = await request.post("/api/widget/session", {
     headers: {

@@ -16,9 +16,11 @@ import {
 } from "@/server/conversation/conversation-repository";
 import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
 import { buildBookingFailureManualInquiry } from "@/server/conversation/manual-inquiry-fallback";
+import { resolveTenantBusinessPack } from "@/server/business-pack/resolve-tenant-business-pack";
 import { getPmsAdapter } from "@/server/pms/pms-adapter-registry";
 import { getWidgetRequestOrigin } from "@/server/widget/request-origin";
 import { resolveWidgetRequest } from "@/server/widget/resolve-widget-request";
+import { buildBusinessPackGateReply } from "./business-pack-gate";
 
 export const runtime = "nodejs";
 
@@ -90,6 +92,44 @@ export async function POST(request: NextRequest) {
       },
       { status: 404 }
     );
+  }
+
+  const businessPack = resolveTenantBusinessPack(resolved.tenant);
+  const gateReply = buildBusinessPackGateReply(businessPack);
+
+  if (gateReply) {
+    const message = await createTravellerMessage({
+      tenantId: resolved.tenant.id,
+      conversationId: conversation.id,
+      content
+    });
+
+    const assistantMessage = await createAssistantMessage({
+      tenantId: resolved.tenant.id,
+      conversationId: conversation.id,
+      content: gateReply.content
+    });
+
+    return NextResponse.json({
+      message: {
+        id: message.id,
+        tenantSlug: resolved.tenant.slug,
+        conversationId: message.conversationId,
+        role: message.role,
+        content: message.content
+      },
+      assistantMessage: {
+        id: assistantMessage.id,
+        tenantSlug: resolved.tenant.slug,
+        conversationId: assistantMessage.conversationId,
+        role: assistantMessage.role,
+        content: assistantMessage.content
+      },
+      businessPack: gateReply.businessPack,
+      manualInquiry: null,
+      paymentRequest: null,
+      contactRequest: null
+    });
   }
 
   const previousBookingState = await findConversationBookingState({
