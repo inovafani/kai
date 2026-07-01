@@ -243,4 +243,119 @@ describe("/api/whatsapp/webhook", () => {
       failed: 1
     });
   });
+
+  it("records traveller WhatsApp delivery statuses from Meta callbacks", async () => {
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: `bluepass-whatsapp-status-${randomUUID()}`,
+        name: "BluePass WhatsApp Status Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const conversation = await prisma.conversation.create({
+      data: {
+        tenantId: tenant.id,
+        channel: "WEB_WIDGET"
+      }
+    });
+    const created = await createOrReuseBluePassInquiry({
+      tenantId: tenant.id,
+      conversationId: conversation.id,
+      travellerMessage: "Calico Jack in Komodo for 4 guests on 6 July 2026",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "6 July 2026",
+        guests: 4,
+        travellerName: "Inova",
+        travellerEmail: "inova@example.com",
+        travellerPhone: "085156246329"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorId: "operator_calico_jack",
+        operatorName: "Calico Jack",
+        operatorPhone: "6285337210180"
+      }
+    });
+    await prisma.bluePassInquiryEvent.create({
+      data: {
+        tenantId: tenant.id,
+        conversationId: conversation.id,
+        bluePassInquiryId: created.inquiry.id,
+        type: "TRAVELLER_WHATSAPP_NOTIFICATION_SENT",
+        fromStatus: created.inquiry.status,
+        toStatus: created.inquiry.status,
+        metadata: {
+          providerMessageId: "wamid.traveller.status"
+        }
+      }
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/whatsapp/webhook", {
+        method: "POST",
+        body: JSON.stringify({
+          entry: [
+            {
+              changes: [
+                {
+                  value: {
+                    statuses: [
+                      {
+                        id: "wamid.traveller.status",
+                        status: "failed",
+                        timestamp: "1780000000",
+                        recipient_id: "6285156246329",
+                        errors: [
+                          {
+                            code: 131026,
+                            title: "Message undeliverable",
+                            message: "Message was not delivered.",
+                            error_data: {
+                              details: "Recipient phone number is not in the allowed list."
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      })
+    );
+    const body = await response.json();
+    const event = await prisma.bluePassInquiryEvent.findFirst({
+      where: {
+        bluePassInquiryId: created.inquiry.id,
+        type: "TRAVELLER_WHATSAPP_DELIVERY_STATUS"
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      ok: true,
+      statusesHandled: 1,
+      statusesFailed: 0
+    });
+    expect(event?.metadata).toMatchObject({
+      providerMessageId: "wamid.traveller.status",
+      status: "failed",
+      recipientId: "6285156246329",
+      errors: [
+        {
+          code: 131026,
+          title: "Message undeliverable",
+          message: "Message was not delivered.",
+          details: "Recipient phone number is not in the allowed list."
+        }
+      ]
+    });
+  }, 20_000);
 });

@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import {
   handleBluePassOperatorResponse,
+  recordBluePassTravellerWhatsAppDeliveryStatus,
   resolveLatestPendingBluePassInquiryIdForOperatorPhone
 } from "@/server/bluepass/bluepass-inquiry-repository";
-import { extractBluePassOperatorResponsesFromWhatsAppWebhook } from "@/server/whatsapp/webhook";
+import {
+  extractBluePassOperatorResponsesFromWhatsAppWebhook,
+  extractWhatsAppMessageStatusesFromWebhook
+} from "@/server/whatsapp/webhook";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -21,8 +25,11 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
   const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook(payload);
+  const statuses = extractWhatsAppMessageStatusesFromWebhook(payload);
   const failures: Array<{ inquiryId: string; reason: string }> = [];
+  const statusFailures: Array<{ providerMessageId: string; reason: string }> = [];
   let handled = 0;
+  let statusesHandled = 0;
 
   for (const response of responses) {
     try {
@@ -45,10 +52,25 @@ export async function POST(request: Request) {
     }
   }
 
+  for (const status of statuses) {
+    try {
+      await recordBluePassTravellerWhatsAppDeliveryStatus(status);
+      statusesHandled += 1;
+    } catch (error) {
+      statusFailures.push({
+        providerMessageId: status.providerMessageId,
+        reason: error instanceof Error ? error.message : "WhatsApp status callback failed."
+      });
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     handled,
     failed: failures.length,
-    failures
+    failures,
+    statusesHandled,
+    statusesFailed: statusFailures.length,
+    statusFailures
   });
 }
