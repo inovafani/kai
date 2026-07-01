@@ -50,6 +50,19 @@ export type HandleBluePassOperatorResponseInput = {
   operatorPhone?: string | null;
 };
 
+export type RecordBluePassTravellerWhatsAppDeliveryStatusInput = {
+  providerMessageId: string;
+  status: string;
+  timestamp?: string | null;
+  recipientId?: string | null;
+  errors?: Array<{
+    code: number | null;
+    title: string | null;
+    message: string | null;
+    details: string | null;
+  }>;
+};
+
 export async function createOrReuseBluePassInquiry(input: CreateOrReuseBluePassInquiryInput) {
   const existing = await prisma.bluePassInquiry.findFirst({
     where: {
@@ -375,6 +388,36 @@ export async function resolveLatestPendingBluePassInquiryIdForOperatorPhone(oper
   return dispatch?.bluePassInquiryId ?? null;
 }
 
+export async function recordBluePassTravellerWhatsAppDeliveryStatus(
+  input: RecordBluePassTravellerWhatsAppDeliveryStatusInput
+) {
+  const sentEvent = await findTravellerWhatsAppSentEvent(input.providerMessageId);
+  if (!sentEvent) {
+    throw new Error(`No BluePass traveller WhatsApp notification matched ${input.providerMessageId}.`);
+  }
+
+  const inquiry = await prisma.bluePassInquiry.findUnique({
+    where: { id: sentEvent.bluePassInquiryId }
+  });
+  if (!inquiry) {
+    throw new Error(`BluePass inquiry ${sentEvent.bluePassInquiryId} was not found for WhatsApp delivery status.`);
+  }
+
+  return createBluePassInquiryEvent({
+    inquiry,
+    type: "TRAVELLER_WHATSAPP_DELIVERY_STATUS",
+    fromStatus: inquiry.status,
+    toStatus: inquiry.status,
+    metadata: {
+      providerMessageId: input.providerMessageId,
+      status: input.status,
+      timestamp: input.timestamp ?? null,
+      recipientId: input.recipientId ?? null,
+      errors: input.errors ?? []
+    }
+  });
+}
+
 export async function listBluePassInquiriesForTenantSlug(input: { tenantSlug: string; take?: number }) {
   const tenant = await prisma.tenant.findUnique({
     where: { slug: input.tenantSlug },
@@ -446,6 +489,29 @@ function buildOperatorPhoneCandidates(value?: string | null) {
 
   const digits = raw.replace(/\D/g, "");
   return Array.from(new Set([raw, digits, digits ? `+${digits}` : ""])).filter(Boolean);
+}
+
+async function findTravellerWhatsAppSentEvent(providerMessageId: string) {
+  const recentSentEvents = await prisma.bluePassInquiryEvent.findMany({
+    where: {
+      type: "TRAVELLER_WHATSAPP_NOTIFICATION_SENT"
+    },
+    orderBy: { createdAt: "desc" },
+    take: 500
+  });
+
+  return (
+    recentSentEvents.find((event) => {
+      const metadata = event.metadata;
+      return (
+        metadata !== null &&
+        typeof metadata === "object" &&
+        !Array.isArray(metadata) &&
+        "providerMessageId" in metadata &&
+        metadata.providerMessageId === providerMessageId
+      );
+    }) ?? null
+  );
 }
 
 async function createBluePassInquiryEvent(input: {

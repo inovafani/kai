@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { extractBluePassOperatorResponsesFromWhatsAppWebhook } from "./webhook";
+import {
+  extractBluePassOperatorResponsesFromWhatsAppWebhook,
+  extractWhatsAppMessageStatusesFromWebhook
+} from "./webhook";
 
 describe("extractBluePassOperatorResponsesFromWhatsAppWebhook", () => {
   it("extracts BluePass operator quick reply button payloads", () => {
@@ -143,6 +146,58 @@ describe("extractBluePassOperatorResponsesFromWhatsAppWebhook", () => {
         providerMessageId: "wamid.operator.button_text",
         operatorPhone: "6285337210180",
         counterText: null
+      }
+    ]);
+  });
+});
+
+describe("extractWhatsAppMessageStatusesFromWebhook", () => {
+  it("extracts Meta delivery statuses for outbound traveller messages", () => {
+    const statuses = extractWhatsAppMessageStatusesFromWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                statuses: [
+                  {
+                    id: "wamid.traveller.accept",
+                    status: "failed",
+                    timestamp: "1780000000",
+                    recipient_id: "6285156246329",
+                    errors: [
+                      {
+                        code: 131026,
+                        title: "Message undeliverable",
+                        message: "Message was not delivered.",
+                        error_data: {
+                          details: "Recipient phone number is not in the allowed list."
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(statuses).toEqual([
+      {
+        providerMessageId: "wamid.traveller.accept",
+        status: "failed",
+        timestamp: "1780000000",
+        recipientId: "6285156246329",
+        errors: [
+          {
+            code: 131026,
+            title: "Message undeliverable",
+            message: "Message was not delivered.",
+            details: "Recipient phone number is not in the allowed list."
+          }
+        ]
       }
     ]);
   });
