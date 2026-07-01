@@ -1,3 +1,4 @@
+import { resolveBusinessPack } from "@/core/business-pack/registry";
 import type { BookingMode, PmsProvider } from "@/core/tenant/types";
 
 interface WidgetTenantInput {
@@ -16,11 +17,22 @@ interface WidgetTenantInput {
     supportedChannels: string[];
     enabledFeatures: string[];
     bookingMode: string;
+    bookingWriteEnabled?: boolean;
     pmsProvider: PmsProvider;
   } | null;
 }
 
 export function toPublicWidgetConfig(tenant: WidgetTenantInput) {
+  const businessPack = resolveBusinessPack({
+    tenantId: tenant.id,
+    slug: tenant.slug,
+    name: tenant.name,
+    enabledFeatures: tenant.config?.enabledFeatures ?? [],
+    bookingMode: (tenant.config?.bookingMode ?? "MANUAL_INQUIRY") as BookingMode,
+    bookingWriteEnabled: tenant.config?.bookingWriteEnabled ?? false,
+    pmsProvider: tenant.config?.pmsProvider ?? "MOCK"
+  });
+
   return {
     tenant: {
       slug: tenant.slug,
@@ -38,6 +50,12 @@ export function toPublicWidgetConfig(tenant: WidgetTenantInput) {
       enabledFeatures: tenant.config?.enabledFeatures ?? [],
       bookingMode: (tenant.config?.bookingMode ?? "MANUAL_INQUIRY") as BookingMode,
       pmsProvider: tenant.config?.pmsProvider ?? "MOCK"
+    },
+    businessPack: {
+      kind: businessPack.kind,
+      tools: businessPack.tools,
+      paymentPolicy: businessPack.paymentPolicy,
+      truthPolicy: businessPack.truthPolicy
     }
   };
 }

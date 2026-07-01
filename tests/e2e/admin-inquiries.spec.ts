@@ -41,6 +41,40 @@ test("admin inquiry inbox shows manual inquiries created by Kai", async ({ page,
   await expect(page.getByText("2 guests").first()).toBeVisible();
 });
 
+test("admin inquiry inbox shows BluePass marketplace inquiries", async ({ page, request }) => {
+  const sessionResponse = await request.post("/api/widget/session", {
+    headers: { origin: "https://bluepass.co" },
+    data: { key: "pk_test_bluepass" }
+  });
+  const session = await sessionResponse.json();
+
+  await request.post("/api/widget/messages", {
+    headers: { origin: "https://bluepass.co" },
+    data: {
+      key: "pk_test_bluepass",
+      conversationId: session.conversation.id,
+      content:
+        "Please send inquiry for Alila Purnama in Komodo next month for 8 guests around USD 10000. My name is Maya Chen, email maya@example.com, phone +61 400 111 222",
+      referral: {
+        referralPartnerId: "partner_creator_1",
+        referralLinkId: "link_1",
+        referralCode: "CREATOR42",
+        referralRole: "CREATOR"
+      }
+    }
+  });
+
+  await page.goto("/admin/bluepass/inquiries");
+
+  await expect(page.getByRole("heading", { name: "BluePass marketplace inquiries" })).toBeVisible();
+  const inquiryCard = page.locator("article").filter({ hasText: "Alila Purnama" }).first();
+  await expect(inquiryCard.getByText("OPERATOR_PENDING")).toBeVisible();
+  await expect(inquiryCard.getByText("Komodo · next month · 8 guests · USD 10000")).toBeVisible();
+  await expect(inquiryCard.getByText("CREATOR42")).toBeVisible();
+  await expect(inquiryCard.getByText("CONSERVATION_ALLOCATION")).toBeVisible();
+  await expect(inquiryCard.getByText("QUEUED")).toBeVisible();
+});
+
 
 test("admin can move a manual inquiry through operator statuses", async ({ page, request }) => {
   const uniqueMessage = "private boat for 2 guests tomorrow admin action " + Date.now();

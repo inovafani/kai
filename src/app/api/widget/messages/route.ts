@@ -16,9 +16,13 @@ import {
 } from "@/server/conversation/conversation-repository";
 import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
 import { buildBookingFailureManualInquiry } from "@/server/conversation/manual-inquiry-fallback";
+import { handleBluePassMarketplaceMessage } from "@/server/bluepass/bluepass-message-flow";
+import type { BluePassCatalogSnapshotItem } from "@/core/bluepass/catalog";
+import { resolveTenantBusinessPack } from "@/server/business-pack/resolve-tenant-business-pack";
 import { getPmsAdapter } from "@/server/pms/pms-adapter-registry";
 import { getWidgetRequestOrigin } from "@/server/widget/request-origin";
 import { resolveWidgetRequest } from "@/server/widget/resolve-widget-request";
+import { shouldUseGenericBookingFlow } from "./business-pack-gate";
 
 export const runtime = "nodejs";
 
@@ -27,6 +31,13 @@ export async function POST(request: NextRequest) {
     key?: string;
     conversationId?: string;
     content?: string;
+    referral?: {
+      referralPartnerId?: string | null;
+      referralLinkId?: string | null;
+      referralCode?: string | null;
+      referralRole?: string | null;
+    } | null;
+    bluepassCatalog?: BluePassCatalogSnapshotItem[];
   } | null;
 
   if (!body?.key) {
@@ -90,6 +101,106 @@ export async function POST(request: NextRequest) {
       },
       { status: 404 }
     );
+  }
+
+  const businessPack = resolveTenantBusinessPack(resolved.tenant);
+
+  if (!shouldUseGenericBookingFlow(businessPack)) {
+    const priorTravellerMessages = await listRecentTravellerMessageContents({
+      tenantId: resolved.tenant.id,
+      conversationId: conversation.id
+    });
+    const message = await createTravellerMessage({
+      tenantId: resolved.tenant.id,
+      conversationId: conversation.id,
+      content
+    });
+    const bluepassResult = await handleBluePassMarketplaceMessage({
+      tenantId: resolved.tenant.id,
+      conversationId: conversation.id,
+      content,
+      priorTravellerMessages,
+      referral: body.referral ?? null,
+      catalog: body.bluepassCatalog
+    });
+
+    const assistantMessage = await createAssistantMessage({
+      tenantId: resolved.tenant.id,
+      conversationId: conversation.id,
+      content: bluepassResult.assistantContent
+    });
+
+    return NextResponse.json({
+      message: {
+        id: message.id,
+        tenantSlug: resolved.tenant.slug,
+        conversationId: message.conversationId,
+        role: message.role,
+        content: message.content
+      },
+      assistantMessage: {
+        id: assistantMessage.id,
+        tenantSlug: resolved.tenant.slug,
+        conversationId: assistantMessage.conversationId,
+        role: assistantMessage.role,
+        content: assistantMessage.content
+      },
+      businessPack: {
+        kind: businessPack.kind,
+        paymentPolicy: businessPack.paymentPolicy,
+        truthPolicy: businessPack.truthPolicy
+      },
+      bluepassMatches: bluepassResult.bluepassMatches,
+      bluepassInquiry: bluepassResult.bluepassInquiry
+        ? {
+            id: bluepassResult.bluepassInquiry.id,
+            tenantSlug: resolved.tenant.slug,
+            conversationId: bluepassResult.bluepassInquiry.conversationId,
+            status: bluepassResult.bluepassInquiry.status,
+            destination: bluepassResult.bluepassInquiry.destination,
+            tripType: bluepassResult.bluepassInquiry.tripType,
+            dateWindow: bluepassResult.bluepassInquiry.dateWindow,
+            guests: bluepassResult.bluepassInquiry.guests,
+            budget: bluepassResult.bluepassInquiry.budget,
+            selectedYachtSlug: bluepassResult.bluepassInquiry.selectedYachtSlug,
+            selectedYachtName: bluepassResult.bluepassInquiry.selectedYachtName,
+            travellerName: bluepassResult.bluepassInquiry.travellerName,
+            travellerEmail: bluepassResult.bluepassInquiry.travellerEmail,
+            travellerPhone: bluepassResult.bluepassInquiry.travellerPhone,
+            referralCode: bluepassResult.bluepassInquiry.referralCode
+          }
+        : null,
+      bluepassLedger: bluepassResult.bluepassLedger.map((entry) => ({
+        id: entry.id,
+        tenantSlug: resolved.tenant.slug,
+        conversationId: entry.conversationId,
+        kind: entry.kind,
+        amountCents: entry.amountCents,
+        currency: entry.currency,
+        status: entry.status,
+        referralCode: entry.referralCode
+      })),
+      bluepassDispatch: bluepassResult.bluepassDispatch
+        ? {
+            id: bluepassResult.bluepassDispatch.id,
+            tenantSlug: resolved.tenant.slug,
+            conversationId: bluepassResult.bluepassDispatch.conversationId,
+            status: bluepassResult.bluepassDispatch.status,
+            operatorId: bluepassResult.bluepassDispatch.operatorId,
+            operatorName: bluepassResult.bluepassDispatch.operatorName,
+            operatorPhone: bluepassResult.bluepassDispatch.operatorPhone
+          }
+        : null,
+      manualInquiry: null,
+      paymentRequest: null,
+      contactRequest: bluepassResult.contactRequest
+        ? {
+            conversationId: conversation.id,
+            fields: bluepassResult.contactRequest.fields,
+            status: bluepassResult.contactRequest.status
+          }
+        : null
+    });
   }
 
   const previousBookingState = await findConversationBookingState({

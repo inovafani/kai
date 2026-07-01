@@ -2,6 +2,7 @@ import Link from "next/link";
 import { cookies } from "next/headers";
 import { submitAdminTokenAction, updateManualInquiryStatusAction } from "./actions";
 import { toManualInquiryViewModel } from "./manual-inquiry-view-model";
+import { listBluePassInquiriesForTenantSlug } from "@/server/bluepass/bluepass-inquiry-repository";
 import { listManualInquiriesForTenantSlug } from "@/server/conversation/conversation-repository";
 
 function formatCreatedAt(date: Date) {
@@ -11,6 +12,14 @@ function formatCreatedAt(date: Date) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(date);
+}
+
+function formatCents(amountCents: number, currency: string) {
+  return new Intl.NumberFormat("en", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 0
+  }).format(amountCents / 100);
 }
 
 export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: string }) {
@@ -48,10 +57,13 @@ export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: strin
     );
   }
 
-  const inquiries = await listManualInquiriesForTenantSlug({ tenantSlug });
+  const [inquiries, bluePassInquiries] = await Promise.all([
+    listManualInquiriesForTenantSlug({ tenantSlug }),
+    listBluePassInquiriesForTenantSlug({ tenantSlug })
+  ]);
   const inquiryCards = inquiries.map(toManualInquiryViewModel);
   const openCount = inquiries.filter((inquiry) => inquiry.status === "OPEN").length;
-  const tenantName = inquiries[0]?.tenant.name ?? tenantSlug;
+  const tenantName = inquiries[0]?.tenant.name ?? bluePassInquiries[0]?.tenant.name ?? tenantSlug;
 
   return (
     <main style={{ minHeight: "100dvh", background: "#f5f7f6", color: "#10201c" }}>
@@ -79,7 +91,123 @@ export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: strin
             <p style={{ margin: 0, color: "#62746e", fontSize: 13 }}>Total captured</p>
             <strong style={{ display: "block", marginTop: 6, fontSize: 28 }}>{inquiries.length}</strong>
           </div>
+          <div style={{ border: "1px solid #dbe5e1", borderRadius: 8, background: "#ffffff", padding: 16 }}>
+            <p style={{ margin: 0, color: "#62746e", fontSize: 13 }}>BluePass marketplace</p>
+            <strong style={{ display: "block", marginTop: 6, fontSize: 28 }}>{bluePassInquiries.length}</strong>
+          </div>
         </div>
+
+        {bluePassInquiries.length > 0 ? (
+          <section style={{ display: "grid", gap: 10, marginBottom: 22 }}>
+            <h2 style={{ margin: "0 0 2px", fontSize: 22, lineHeight: 1.2 }}>BluePass marketplace inquiries</h2>
+            {bluePassInquiries.map((inquiry) => (
+              <article
+                key={inquiry.id}
+                style={{
+                  display: "grid",
+                  gap: 12,
+                  gridTemplateColumns: "minmax(0, 1fr) auto",
+                  border: "1px solid #c7d2fe",
+                  borderRadius: 8,
+                  background: "#ffffff",
+                  padding: 16
+                }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                    <h3 style={{ margin: 0, fontSize: 18 }}>{inquiry.selectedYachtName ?? "BluePass inquiry"}</h3>
+                    <span
+                      style={{
+                        border: "1px solid #c7d2fe",
+                        borderRadius: 999,
+                        color: "#3730a3",
+                        fontSize: 12,
+                        fontWeight: 800,
+                        padding: "3px 8px"
+                      }}
+                    >
+                      {inquiry.status}
+                    </span>
+                    {inquiry.dispatches[0] ? (
+                      <span
+                        style={{
+                          border: "1px solid #9acbc4",
+                          borderRadius: 999,
+                          color: "#0f766e",
+                          fontSize: 12,
+                          fontWeight: 800,
+                          padding: "3px 8px"
+                        }}
+                      >
+                        {inquiry.dispatches[0].status}
+                      </span>
+                    ) : null}
+                  </div>
+                  <p style={{ margin: "8px 0 0", color: "#53655f" }}>
+                    {[inquiry.destination, inquiry.dateWindow, inquiry.guests ? `${inquiry.guests} guests` : null, inquiry.budget]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </p>
+                  <p style={{ margin: "8px 0 0", color: "#53655f" }}>
+                    {[inquiry.travellerName, inquiry.travellerEmail, inquiry.travellerPhone].filter(Boolean).join(" · ")}
+                  </p>
+                  {inquiry.referralCode ? (
+                    <p style={{ margin: "8px 0 0", color: "#10201c", fontWeight: 800 }}>
+                      Referral: {inquiry.referralRole ? `${inquiry.referralRole} / ` : null}
+                      {inquiry.referralCode}
+                    </p>
+                  ) : null}
+                  {inquiry.ledger.length > 0 ? (
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+                        gap: 8,
+                        marginTop: 12
+                      }}
+                    >
+                      {inquiry.ledger.map((entry) => (
+                        <div key={entry.id} style={{ border: "1px solid #dbe5e1", borderRadius: 8, background: "#f7faf9", padding: 10 }}>
+                          <p style={{ margin: 0, color: "#53655f", fontSize: 12, fontWeight: 800 }}>{entry.kind}</p>
+                          <strong style={{ display: "block", marginTop: 4 }}>{formatCents(entry.amountCents, entry.currency)}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  <p style={{ margin: "12px 0 0", color: "#10201c" }}>{inquiry.travellerMessage}</p>
+                </div>
+                <div
+                  style={{
+                    display: "grid",
+                    alignContent: "space-between",
+                    justifyItems: "end",
+                    gap: 10,
+                    color: "#62746e",
+                    fontSize: 13,
+                    textAlign: "right",
+                    whiteSpace: "nowrap"
+                  }}
+                >
+                  <span>{formatCreatedAt(inquiry.createdAt)}</span>
+                  <Link
+                    href={"/admin/" + tenantSlug + "/conversations/" + inquiry.conversationId}
+                    style={{
+                      border: "1px solid #b8cbc5",
+                      borderRadius: 8,
+                      background: "#ffffff",
+                      color: "#10201c",
+                      fontWeight: 700,
+                      padding: "8px 10px",
+                      textDecoration: "none"
+                    }}
+                  >
+                    View conversation
+                  </Link>
+                </div>
+              </article>
+            ))}
+          </section>
+        ) : null}
 
         <div style={{ display: "grid", gap: 10 }}>
           {inquiries.length === 0 ? (

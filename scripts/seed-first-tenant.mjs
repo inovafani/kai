@@ -107,6 +107,47 @@ const tenants = [
         "For Boattime private charters, collect details and route to operator confirmation."
       ]
     }
+  },
+  {
+    slug: "bluepass",
+    name: "BluePass",
+    widgetPublicKey: "pk_test_bluepass",
+    allowedOrigins: [
+      "https://bluepass.co",
+      "https://www.bluepass.co",
+      "http://localhost:3107",
+      "http://127.0.0.1:3107"
+    ],
+    defaultLocale: "en",
+    branding: {
+      logoUrl: null,
+      primaryColor: "#0f766e",
+      widgetTitle: "Kai",
+      welcomeMessage: "Tell me where you want to go, and I will help shape the right ocean trip.",
+      brandVoice: "Trustworthy, concierge-like, ocean-travel fluent, and grounded in verified BluePass marketplace data."
+    },
+    config: {
+      supportedChannels: ["WEB_WIDGET", "WHATSAPP"],
+      enabledFeatures: ["widget_config", "bluepass_marketplace", "referral_ledger", "operator_whatsapp_dispatch"],
+      requiredSlots,
+      bookingMode: "MANUAL_INQUIRY",
+      bookingWriteEnabled: false,
+      pmsProvider: "NATIVE",
+      publicProductCatalog: [],
+      escalationRules: [
+        "custom_quote",
+        "operator_confirmation_required",
+        "large_group",
+        "creator_referral",
+        "human_requested"
+      ],
+      responseGuardrails: [
+        ...responseGuardrails,
+        "For BluePass marketplace inquiries, do not confirm availability or final price before operator acceptance.",
+        "Preserve referral context and route qualified leads through BluePass inquiry and operator WhatsApp workflows.",
+        "Position BluePass Protection and conservation contribution only when relevant to the traveller decision."
+      ]
+    }
   }
 ];
 
