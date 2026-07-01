@@ -33,7 +33,7 @@ export function extractBluePassInquiryIntent(messages: string[]): BluePassInquir
   const lowerText = text.toLowerCase();
   const intent: BluePassInquiryIntent = {};
 
-  if (/\bkomodo\b/i.test(text)) intent.destination = "Komodo";
+  if (/\b(?:komodo|labuan\s+bajo|flores)\b/i.test(text)) intent.destination = "Komodo";
   if (/\braja\s+ampat\b/i.test(text)) intent.destination = "Raja Ampat";
   if (/\b(dive|diving)\b/i.test(text)) intent.interests = unique([...(intent.interests ?? []), "dive"]);
   if (/\b(private|charter)\b/i.test(text)) intent.interests = unique([...(intent.interests ?? []), "private"]);
@@ -54,7 +54,7 @@ export function extractBluePassInquiryIntent(messages: string[]): BluePassInquir
   const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
   if (emailMatch) intent.travellerEmail = emailMatch[0];
 
-  const phoneMatch = text.match(/\b(?:phone|whatsapp)\s*(?:is|:)?\s*([+\d][\d\s().-]{6,})/i);
+  const phoneMatch = text.match(/\b(?:phone|whatsapp|wa)(?:\s+number)?\s*(?:is|:)?\s*([+\d][\d\s().-]{6,})/i);
   if (phoneMatch) intent.travellerPhone = phoneMatch[1].trim();
 
   const nameMatch = text.match(
@@ -88,10 +88,32 @@ function extractDateWindow(text: string, lowerText: string) {
   if (lowerText.includes("tomorrow")) return "tomorrow";
   if (lowerText.includes("next week")) return "next week";
 
+  const fullDayMonthMatch = text.match(
+    /\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s*,?\s*(\d{4}))?\b/i
+  );
+  if (fullDayMonthMatch) {
+    return formatDayMonthDate(fullDayMonthMatch[1], fullDayMonthMatch[2], fullDayMonthMatch[3]);
+  }
+
+  const fullMonthDayMatch = text.match(
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(\d{4}))?\b/i
+  );
+  if (fullMonthDayMatch) {
+    return formatDayMonthDate(fullMonthDayMatch[2], fullMonthDayMatch[1], fullMonthDayMatch[3]);
+  }
+
   const monthMatch = text.match(
     /\b(january|february|march|april|may|june|july|august|september|october|november|december)\b/i
   );
-  return monthMatch?.[0];
+  return monthMatch ? titleCaseMonth(monthMatch[0]) : undefined;
+}
+
+function formatDayMonthDate(day: string, month: string, year?: string) {
+  return [String(Number(day)), titleCaseMonth(month), year].filter(Boolean).join(" ");
+}
+
+function titleCaseMonth(month: string) {
+  return month.slice(0, 1).toUpperCase() + month.slice(1).toLowerCase();
 }
 
 function unique(values: string[]) {

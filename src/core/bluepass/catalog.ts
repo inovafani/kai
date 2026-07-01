@@ -4,7 +4,7 @@ export type BluePassYachtCard = {
   slug: string;
   name: string;
   region: "Komodo" | "Raja Ampat";
-  tier: "Explorer" | "Premium" | "Legend";
+  tier: string;
   maxGuests: number;
   cabins: number;
   priceSignal: string;
@@ -12,13 +12,23 @@ export type BluePassYachtCard = {
   operatorId: string;
   operatorName: string;
   operatorPhone: string;
+  productUrl?: string | null;
   reasons: string[];
   score: number;
   truth: TruthPolicy;
 };
 
-type BluePassYachtCatalogItem = Omit<BluePassYachtCard, "reasons" | "score" | "truth"> & {
+export type BluePassYachtCatalogItem = Omit<BluePassYachtCard, "reasons" | "score" | "truth"> & {
   interests: string[];
+  cabinBookable?: boolean;
+  about?: string | null;
+  departuresPreview?: string[];
+};
+
+export type BluePassCatalogSnapshotItem = Partial<BluePassYachtCatalogItem> & {
+  slug?: string;
+  name?: string;
+  region?: string;
 };
 
 export type BluePassYachtSearchIntent = {
@@ -64,6 +74,20 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     interests: ["private", "couples", "luxury"]
   },
   {
+    slug: "calico-jack",
+    name: "Calico Jack",
+    region: "Komodo",
+    tier: "Premium",
+    maxGuests: 10,
+    cabins: 5,
+    priceSignal: "from USD 3,200 per cabin",
+    charterPriceSignal: "from USD 46,000 private charter",
+    operatorId: "operator_calico_jack",
+    operatorName: "Calico Jack",
+    operatorPhone: "+6281234567004",
+    interests: ["dive", "phinisi", "private", "cabin"]
+  },
+  {
     slug: "aliikai",
     name: "Aliikai",
     region: "Raja Ampat",
@@ -93,8 +117,8 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
   }
 ];
 
-export function searchBluePassYachts(intent: BluePassYachtSearchIntent) {
-  return bluePassPreviewCatalog
+export function searchBluePassYachts(intent: BluePassYachtSearchIntent, catalogInput?: BluePassCatalogSnapshotItem[]) {
+  return resolveBluePassCatalog(catalogInput)
     .map((item) => {
       const reasons: string[] = [];
       let score = 0;
@@ -136,6 +160,55 @@ export function searchBluePassYachts(intent: BluePassYachtSearchIntent) {
     .slice(0, 3);
 }
 
-export function findBluePassYachtBySlug(slug?: string | null) {
-  return slug ? bluePassPreviewCatalog.find((item) => item.slug === slug) ?? null : null;
+export function findBluePassYachtBySlug(slug?: string | null, catalogInput?: BluePassCatalogSnapshotItem[]) {
+  return slug ? resolveBluePassCatalog(catalogInput).find((item) => item.slug === slug) ?? null : null;
+}
+
+export function resolveBluePassCatalog(catalogInput?: BluePassCatalogSnapshotItem[]) {
+  const externalCatalog = normalizeBluePassCatalogSnapshot(catalogInput);
+
+  return externalCatalog.length > 0 ? externalCatalog : bluePassPreviewCatalog;
+}
+
+function normalizeBluePassCatalogSnapshot(catalogInput?: BluePassCatalogSnapshotItem[]): BluePassYachtCatalogItem[] {
+  if (!Array.isArray(catalogInput)) {
+    return [];
+  }
+
+  return catalogInput
+    .map((item) => {
+      const slug = item.slug?.trim();
+      const name = item.name?.trim();
+      const region = normalizeRegion(item.region);
+
+      if (!slug || !name || !region) {
+        return null;
+      }
+
+      return {
+        slug,
+        name,
+        region,
+        tier: item.tier?.trim() ?? "",
+        maxGuests: Number(item.maxGuests) || 0,
+        cabins: Number(item.cabins) || 0,
+        priceSignal: item.priceSignal?.trim() || "Quote on request",
+        charterPriceSignal: item.charterPriceSignal ?? null,
+        operatorId: item.operatorId?.trim() || `operator_${slug.replace(/-/g, "_")}`,
+        operatorName: item.operatorName?.trim() || name,
+        operatorPhone: item.operatorPhone?.trim() || "",
+        productUrl: item.productUrl?.trim() || null,
+        interests: Array.isArray(item.interests) ? item.interests.filter(Boolean) : [],
+        cabinBookable: item.cabinBookable,
+        about: item.about ?? null,
+        departuresPreview: Array.isArray(item.departuresPreview) ? item.departuresPreview.filter(Boolean) : []
+      } satisfies BluePassYachtCatalogItem;
+    })
+    .filter((item): item is NonNullable<typeof item> => Boolean(item));
+}
+
+function normalizeRegion(value?: string) {
+  if (/komodo|labuan bajo|flores/i.test(value ?? "")) return "Komodo";
+  if (/raja\s*ampat|misool|sorong/i.test(value ?? "")) return "Raja Ampat";
+  return null;
 }

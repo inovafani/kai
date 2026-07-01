@@ -1,13 +1,40 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createOrReuseBluePassInquiry,
   dispatchBluePassOperatorWhatsApp,
   getActiveBluePassInquiryStatus,
+  handleBluePassOperatorResponse,
   listBluePassInquiriesForTenantSlug,
+  resolveLatestPendingBluePassInquiryIdForOperatorPhone,
   syncBluePassReferralLedgerEstimate
 } from "./bluepass-inquiry-repository";
 import { prisma } from "@/lib/prisma";
+
+const originalEnv = { ...process.env };
+const isolatedWhatsAppEnvKeys = [
+  "BLUEPASS_TEST_OPERATOR_PHONE",
+  "WHATSAPP_OPERATOR_INQUIRY_SEND_MODE",
+  "WHATSAPP_TRAVELLER_NOTIFY_SEND_MODE",
+  "WHATSAPP_OPERATOR_COUNTER_REQUEST_SEND_MODE",
+  "WHATSAPP_WEBHOOK_VERIFY_TOKEN",
+  "META_GRAPH_VERSION",
+  "WHATSAPP_PHONE_ID_KAI",
+  "WHATSAPP_PHONE_ID_OPS",
+  "WHATSAPP_ACCESS_TOKEN"
+];
+
+beforeEach(() => {
+  for (const key of isolatedWhatsAppEnvKeys) {
+    delete process.env[key];
+  }
+});
+
+afterEach(() => {
+  process.env = { ...originalEnv };
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 describe("bluepass inquiry repository", () => {
   it("creates and reads a tenant conversation scoped BluePass inquiry", async () => {
@@ -159,6 +186,186 @@ describe("bluepass inquiry repository", () => {
     });
   }, 20_000);
 
+  it("routes operator dispatches to the configured BluePass test operator phone", async () => {
+    process.env.BLUEPASS_TEST_OPERATOR_PHONE = "6285337210180";
+
+    const tenantId = `tenant_${randomUUID()}`;
+    const conversationId = `conversation_${randomUUID()}`;
+    const created = await createOrReuseBluePassInquiry({
+      tenantId,
+      conversationId,
+      travellerMessage: "Komodo yacht for 4 guests in July",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "July 2026",
+        guests: 4,
+        travellerName: "Eka",
+        travellerEmail: "eka@example.com",
+        travellerPhone: "0876634231987"
+      },
+      selectedYacht: {
+        slug: "alila-purnama",
+        name: "Alila Purnama",
+        operatorId: "operator_alila_purnama",
+        operatorName: "Alila Purnama",
+        operatorPhone: "+6281234567001"
+      }
+    });
+
+    const dispatch = await dispatchBluePassOperatorWhatsApp({
+      inquiryId: created.inquiry.id
+    });
+    const status = await getActiveBluePassInquiryStatus({
+      tenantId,
+      conversationId
+    });
+
+    expect(dispatch.operatorPhone).toBe("6285337210180");
+    expect(status?.inquiry.operatorPhone).toBe("6285337210180");
+    expect(status?.dispatches[0]).toMatchObject({
+      status: "QUEUED",
+      operatorPhone: "6285337210180"
+    });
+  }, 20_000);
+
+  it("sends the approved WhatsApp operator inquiry template when template mode is enabled", async () => {
+    process.env.WHATSAPP_OPERATOR_INQUIRY_SEND_MODE = "template";
+    process.env.META_GRAPH_VERSION = "v20.0";
+    process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token";
+    process.env.WHATSAPP_PHONE_ID_OPS = "1115079071692326";
+
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        messages: [{ id: "wamid.operator_template" }]
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const created = await createOrReuseBluePassInquiry({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      travellerMessage: "Komodo yacht for 8 guests next month around USD 10000",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "next month",
+        guests: 8,
+        budget: "USD 10000",
+        travellerName: "Maya Chen",
+        travellerEmail: "maya@example.com",
+        travellerPhone: "+61 400 111 222"
+      },
+      selectedYacht: {
+        slug: "alila-purnama",
+        name: "Alila Purnama",
+        operatorId: "operator_alila_purnama",
+        operatorName: "Alila Purnama",
+        operatorPhone: "+6281234567001"
+      }
+    });
+
+    const dispatch = await dispatchBluePassOperatorWhatsApp({
+      inquiryId: created.inquiry.id
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://graph.facebook.com/v20.0/1115079071692326/messages",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer test_access_token",
+          "Content-Type": "application/json"
+        })
+      })
+    );
+    const firstFetchCall = fetchMock.mock.calls[0];
+    expect(firstFetchCall).toBeDefined();
+    const requestInit = firstFetchCall?.[1] as RequestInit;
+    const requestBody = JSON.parse(requestInit.body as string);
+    expect(requestBody).toMatchObject({
+      messaging_product: "whatsapp",
+      to: "6281234567001",
+      type: "template",
+      template: {
+        name: "booking_inquiry_operator",
+        language: { code: "en" }
+      }
+    });
+    expect(requestBody.template.components[0].parameters.map((param: { text: string }) => param.text)).toEqual([
+      "Komodo / 8 guests",
+      "Maya Chen",
+      "+61 400 111 222",
+      "next month",
+      "8",
+      "USD 10000",
+      "Alila Purnama inquiry",
+      "Selected yacht: alila-purnama"
+    ]);
+    expect(dispatch).toMatchObject({
+      status: "SENT",
+      providerMessageId: "wamid.operator_template",
+      sentAt: expect.any(Date)
+    });
+  }, 20_000);
+
+  it("marks operator dispatch failed instead of throwing when Meta rejects authentication", async () => {
+    process.env.WHATSAPP_OPERATOR_INQUIRY_SEND_MODE = "template";
+    process.env.META_GRAPH_VERSION = "v20.0";
+    process.env.WHATSAPP_ACCESS_TOKEN = "expired_access_token";
+    process.env.WHATSAPP_PHONE_ID_OPS = "1115079071692326";
+
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json(
+        {
+          error: {
+            message: "Authentication Error",
+            type: "OAuthException",
+            code: 190,
+            fbtrace_id: "trace"
+          }
+        },
+        { status: 401 }
+      )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const created = await createOrReuseBluePassInquiry({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      travellerMessage: "Komodo yacht for 8 guests next month around USD 10000",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "next month",
+        guests: 8,
+        budget: "USD 10000",
+        travellerName: "Maya Chen",
+        travellerEmail: "maya@example.com",
+        travellerPhone: "+61 400 111 222"
+      },
+      selectedYacht: {
+        slug: "alila-purnama",
+        name: "Alila Purnama",
+        operatorId: "operator_alila_purnama",
+        operatorName: "Alila Purnama",
+        operatorPhone: "+6281234567001"
+      }
+    });
+
+    const dispatch = await dispatchBluePassOperatorWhatsApp({
+      inquiryId: created.inquiry.id
+    });
+    const status = await getActiveBluePassInquiryStatus({
+      tenantId: created.inquiry.tenantId,
+      conversationId: created.inquiry.conversationId
+    });
+
+    expect(dispatch).toMatchObject({
+      status: "FAILED",
+      providerMessageId: null,
+      failureReason: expect.stringContaining("Authentication Error")
+    });
+    expect(status?.inquiry.status).toBe("READY_TO_DISPATCH");
+  }, 20_000);
+
   it("lists BluePass inquiries for an admin tenant slug", async () => {
     const slug = `bluepass-admin-${randomUUID()}`;
     const tenant = await prisma.tenant.create({
@@ -217,5 +424,460 @@ describe("bluepass inquiry repository", () => {
       status: "QUEUED",
       operatorPhone: "+6281234567001"
     });
+  }, 20_000);
+
+  it("accepts an operator response and notifies the traveller conversation", async () => {
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: `bluepass-operator-accept-${randomUUID()}`,
+        name: "BluePass Operator Accept Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const conversation = await prisma.conversation.create({
+      data: {
+        tenantId: tenant.id,
+        channel: "WEB_WIDGET"
+      }
+    });
+    const created = await createOrReuseBluePassInquiry({
+      tenantId: tenant.id,
+      conversationId: conversation.id,
+      travellerMessage: "Calico Jack in Komodo for 4 guests on 20 July 2026",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "20 July 2026",
+        guests: 4,
+        travellerName: "Ekap",
+        travellerEmail: "ekap@example.com",
+        travellerPhone: "0876634231987"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorId: "operator_calico_jack",
+        operatorName: "Calico Jack",
+        operatorPhone: "+6281234567004"
+      }
+    });
+    await dispatchBluePassOperatorWhatsApp({ inquiryId: created.inquiry.id });
+
+    const result = await handleBluePassOperatorResponse({
+      inquiryId: created.inquiry.id,
+      action: "accept",
+      providerMessageId: "wamid.button.accept",
+      operatorPhone: "+6281234567004"
+    });
+    const messages = await prisma.message.findMany({
+      where: {
+        tenantId: tenant.id,
+        conversationId: conversation.id,
+        role: "ASSISTANT"
+      },
+      orderBy: { createdAt: "asc" }
+    });
+    const status = await getActiveBluePassInquiryStatus({
+      tenantId: tenant.id,
+      conversationId: conversation.id
+    });
+
+    expect(result.inquiry).toMatchObject({
+      id: created.inquiry.id,
+      status: "OPERATOR_ACCEPTED"
+    });
+    expect(result.travellerNotification).toMatchObject({
+      channel: "conversation",
+      sent: true
+    });
+    expect(messages.at(-1)?.content).toContain("Calico Jack accepted");
+    expect(messages.at(-1)?.content).toContain("final quote");
+    expect(status).toBeNull();
+    const event = await prisma.bluePassInquiryEvent.findFirst({
+      where: {
+        bluePassInquiryId: created.inquiry.id,
+        type: "OPERATOR_ACCEPTED"
+      },
+      orderBy: { createdAt: "desc" }
+    });
+    expect(event?.metadata).toMatchObject({
+      providerMessageId: "wamid.button.accept"
+    });
+  }, 20_000);
+
+  it("declines an operator response and tells the traveller BluePass will compare alternatives first", async () => {
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: `bluepass-operator-decline-${randomUUID()}`,
+        name: "BluePass Operator Decline Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const conversation = await prisma.conversation.create({
+      data: {
+        tenantId: tenant.id,
+        channel: "WEB_WIDGET"
+      }
+    });
+    const created = await createOrReuseBluePassInquiry({
+      tenantId: tenant.id,
+      conversationId: conversation.id,
+      travellerMessage: "Calico Jack in Komodo for 4 guests on 20 July 2026",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "20 July 2026",
+        guests: 4,
+        travellerName: "Ekap",
+        travellerEmail: "ekap@example.com",
+        travellerPhone: "0876634231987"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorId: "operator_calico_jack",
+        operatorName: "Calico Jack",
+        operatorPhone: "+6281234567004"
+      }
+    });
+    await dispatchBluePassOperatorWhatsApp({ inquiryId: created.inquiry.id });
+
+    const result = await handleBluePassOperatorResponse({
+      inquiryId: created.inquiry.id,
+      action: "decline",
+      providerMessageId: "wamid.button.decline"
+    });
+    const messages = await prisma.message.findMany({
+      where: {
+        tenantId: tenant.id,
+        conversationId: conversation.id,
+        role: "ASSISTANT"
+      },
+      orderBy: { createdAt: "asc" }
+    });
+
+    expect(result.inquiry).toMatchObject({
+      status: "DECLINED"
+    });
+    expect(messages.at(-1)?.content).toContain("Calico Jack is not available");
+    expect(messages.at(-1)?.content).toContain("2-3 similar alternatives");
+    expect(messages.at(-1)?.content).toContain("permission");
+  }, 20_000);
+
+  it("records a counter-offer and notifies the traveller without recommending alternatives by default", async () => {
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: `bluepass-operator-counter-${randomUUID()}`,
+        name: "BluePass Operator Counter Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const conversation = await prisma.conversation.create({
+      data: {
+        tenantId: tenant.id,
+        channel: "WEB_WIDGET"
+      }
+    });
+    const created = await createOrReuseBluePassInquiry({
+      tenantId: tenant.id,
+      conversationId: conversation.id,
+      travellerMessage: "Calico Jack in Komodo for 4 guests on 20 July 2026",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "20 July 2026",
+        guests: 4,
+        travellerName: "Ekap",
+        travellerEmail: "ekap@example.com",
+        travellerPhone: "0876634231987"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorId: "operator_calico_jack",
+        operatorName: "Calico Jack",
+        operatorPhone: "+6281234567004"
+      }
+    });
+    await dispatchBluePassOperatorWhatsApp({ inquiryId: created.inquiry.id });
+
+    const result = await handleBluePassOperatorResponse({
+      inquiryId: created.inquiry.id,
+      action: "counter",
+      counterText: "Available 21 July instead at USD 48,000 private charter.",
+      providerMessageId: "wamid.button.counter"
+    });
+    const messages = await prisma.message.findMany({
+      where: {
+        tenantId: tenant.id,
+        conversationId: conversation.id,
+        role: "ASSISTANT"
+      },
+      orderBy: { createdAt: "asc" }
+    });
+    const event = await prisma.bluePassInquiryEvent.findFirst({
+      where: {
+        bluePassInquiryId: created.inquiry.id,
+        type: "OPERATOR_COUNTER_OFFERED"
+      },
+      orderBy: { createdAt: "desc" }
+    });
+
+    expect(result.inquiry).toMatchObject({
+      status: "COUNTER_OFFERED"
+    });
+    expect(messages.at(-1)?.content).toContain("Calico Jack sent a counter-offer");
+    expect(messages.at(-1)?.content).toContain("21 July");
+    expect(messages.at(-1)?.content).toContain("accept the counter");
+    expect(messages.at(-1)?.content).not.toContain("2-3 similar alternatives");
+    expect(event?.metadata).toMatchObject({
+      counterText: "Available 21 July instead at USD 48,000 private charter."
+    });
+  }, 20_000);
+
+  it("asks the operator for counter details before notifying the traveller", async () => {
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: `bluepass-counter-details-${randomUUID()}`,
+        name: "BluePass Counter Details Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const conversation = await prisma.conversation.create({
+      data: {
+        tenantId: tenant.id,
+        channel: "WEB_WIDGET"
+      }
+    });
+    const created = await createOrReuseBluePassInquiry({
+      tenantId: tenant.id,
+      conversationId: conversation.id,
+      travellerMessage: "Calico Jack in Komodo for 4 guests on 20 July 2026",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "20 July 2026",
+        guests: 4,
+        travellerName: "Ekap",
+        travellerEmail: "ekap@example.com",
+        travellerPhone: "0876634231987"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorId: "operator_calico_jack",
+        operatorName: "Calico Jack",
+        operatorPhone: "+6281234567004"
+      }
+    });
+    await dispatchBluePassOperatorWhatsApp({ inquiryId: created.inquiry.id });
+
+    const result = await handleBluePassOperatorResponse({
+      inquiryId: created.inquiry.id,
+      action: "counter",
+      providerMessageId: "wamid.button.counter",
+      operatorPhone: "+6281234567004"
+    });
+    const messages = await prisma.message.findMany({
+      where: {
+        tenantId: tenant.id,
+        conversationId: conversation.id,
+        role: "ASSISTANT"
+      }
+    });
+    const event = await prisma.bluePassInquiryEvent.findFirst({
+      where: {
+        bluePassInquiryId: created.inquiry.id,
+        type: "OPERATOR_COUNTER_DETAILS_REQUESTED"
+      }
+    });
+
+    expect(result.inquiry).toMatchObject({
+      status: "OPERATOR_PENDING"
+    });
+    expect(result.operatorFollowUp).toMatchObject({
+      requested: true
+    });
+    expect(messages).toEqual([]);
+    expect(event?.metadata).toMatchObject({
+      providerMessageId: "wamid.button.counter"
+    });
+  }, 20_000);
+
+  it("sends the traveller WhatsApp notification by default when Kai WhatsApp credentials are present", async () => {
+    process.env.META_GRAPH_VERSION = "v20.0";
+    process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token";
+    process.env.WHATSAPP_PHONE_ID_KAI = "1115079071692326";
+
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        messages: [{ id: "wamid.traveller.accept" }]
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: `bluepass-traveller-whatsapp-${randomUUID()}`,
+        name: "BluePass Traveller WhatsApp Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const conversation = await prisma.conversation.create({
+      data: {
+        tenantId: tenant.id,
+        channel: "WEB_WIDGET"
+      }
+    });
+    const created = await createOrReuseBluePassInquiry({
+      tenantId: tenant.id,
+      conversationId: conversation.id,
+      travellerMessage: "Calico Jack in Komodo for 4 guests on 20 July 2026",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "20 July 2026",
+        guests: 4,
+        travellerName: "Ekap",
+        travellerEmail: "ekap@example.com",
+        travellerPhone: "0876634231987"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorId: "operator_calico_jack",
+        operatorName: "Calico Jack",
+        operatorPhone: "+6281234567004"
+      }
+    });
+
+    const result = await handleBluePassOperatorResponse({
+      inquiryId: created.inquiry.id,
+      action: "accept",
+      providerMessageId: "wamid.button.accept"
+    });
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const requestBody = JSON.parse(String(requestInit.body));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://graph.facebook.com/v20.0/1115079071692326/messages",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          Authorization: "Bearer test_access_token"
+        })
+      })
+    );
+    expect(requestBody).toMatchObject({
+      messaging_product: "whatsapp",
+      to: "0876634231987",
+      type: "text"
+    });
+    expect(requestBody.text.body).toContain("Calico Jack accepted");
+    expect(result.travellerNotification).toMatchObject({
+      channel: "whatsapp",
+      sent: true,
+      providerMessageId: "wamid.traveller.accept"
+    });
+  }, 20_000);
+
+  it("resolves text-only operator actions to the newest pending dispatch for that operator", async () => {
+    process.env.WHATSAPP_OPERATOR_INQUIRY_SEND_MODE = "template";
+    process.env.META_GRAPH_VERSION = "v20.0";
+    process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token";
+    process.env.WHATSAPP_PHONE_ID_OPS = "1115079071692326";
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof fetch>(async () =>
+        Response.json({
+          messages: [{ id: `wamid.${randomUUID()}` }]
+        })
+      )
+    );
+
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: `bluepass-text-resolve-${randomUUID()}`,
+        name: "BluePass Text Resolve Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const olderConversation = await prisma.conversation.create({
+      data: {
+        tenantId: tenant.id,
+        channel: "WEB_WIDGET"
+      }
+    });
+    const newerConversation = await prisma.conversation.create({
+      data: {
+        tenantId: tenant.id,
+        channel: "WEB_WIDGET"
+      }
+    });
+    const operatorPhone = "6285337210180";
+    const older = await createOrReuseBluePassInquiry({
+      tenantId: tenant.id,
+      conversationId: olderConversation.id,
+      travellerMessage: "Older Calico Jack inquiry",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "5 July 2026",
+        guests: 2,
+        travellerName: "Old",
+        travellerEmail: "old@example.com",
+        travellerPhone: "085100000001"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorPhone
+      }
+    });
+    await prisma.bluePassOperatorDispatch.create({
+      data: {
+        tenantId: tenant.id,
+        conversationId: older.inquiry.conversationId,
+        bluePassInquiryId: older.inquiry.id,
+        status: "QUEUED",
+        operatorPhone,
+        outboundText: "old queued dispatch"
+      }
+    });
+
+    const newer = await createOrReuseBluePassInquiry({
+      tenantId: tenant.id,
+      conversationId: newerConversation.id,
+      travellerMessage: "Newer Calico Jack inquiry",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "6 July 2026",
+        guests: 4,
+        travellerName: "New",
+        travellerEmail: "new@example.com",
+        travellerPhone: "085100000002"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorPhone
+      }
+    });
+    await dispatchBluePassOperatorWhatsApp({ inquiryId: newer.inquiry.id });
+
+    await handleBluePassOperatorResponse({
+      inquiryId: older.inquiry.id,
+      action: "accept",
+      providerMessageId: "manual.old.accept"
+    });
+
+    await expect(resolveLatestPendingBluePassInquiryIdForOperatorPhone(operatorPhone)).resolves.toBe(newer.inquiry.id);
   }, 20_000);
 });

@@ -17,6 +17,7 @@ import {
 import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
 import { buildBookingFailureManualInquiry } from "@/server/conversation/manual-inquiry-fallback";
 import { handleBluePassMarketplaceMessage } from "@/server/bluepass/bluepass-message-flow";
+import type { BluePassCatalogSnapshotItem } from "@/core/bluepass/catalog";
 import { resolveTenantBusinessPack } from "@/server/business-pack/resolve-tenant-business-pack";
 import { getPmsAdapter } from "@/server/pms/pms-adapter-registry";
 import { getWidgetRequestOrigin } from "@/server/widget/request-origin";
@@ -36,6 +37,7 @@ export async function POST(request: NextRequest) {
       referralCode?: string | null;
       referralRole?: string | null;
     } | null;
+    bluepassCatalog?: BluePassCatalogSnapshotItem[];
   } | null;
 
   if (!body?.key) {
@@ -118,7 +120,8 @@ export async function POST(request: NextRequest) {
       conversationId: conversation.id,
       content,
       priorTravellerMessages,
-      referral: body.referral ?? null
+      referral: body.referral ?? null,
+      catalog: body.bluepassCatalog
     });
 
     const assistantMessage = await createAssistantMessage({
@@ -190,7 +193,13 @@ export async function POST(request: NextRequest) {
         : null,
       manualInquiry: null,
       paymentRequest: null,
-      contactRequest: null
+      contactRequest: bluepassResult.contactRequest
+        ? {
+            conversationId: conversation.id,
+            fields: bluepassResult.contactRequest.fields,
+            status: bluepassResult.contactRequest.status
+          }
+        : null
     });
   }
 
