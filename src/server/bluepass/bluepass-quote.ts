@@ -162,11 +162,15 @@ async function createQuoteEvent(input: { inquiry: BluePassInquiry; metadata: Blu
 }
 
 function parsePrice(text?: string | null) {
-  const match = text?.match(/\b(USD|IDR|EUR|AUD)?\s*\$?\s*(\d{1,3}(?:,\d{3})+|\d{3,8})(?:\.\d{2})?\b/i);
+  const match =
+    text?.match(/\b(?:final\s+price|price|quote)\s*(?:is|:)?\s*(USD|IDR|EUR|AUD)?\s*\$?\s*(\d{1,3}(?:,\d{3})+|\d{3,8})(?:\.\d{2})?\b/i) ??
+    text?.match(/\b(USD|IDR|EUR|AUD)\s*\$?\s*(\d{1,3}(?:,\d{3})+|\d{3,8})(?:\.\d{2})?\b/i) ??
+    text?.match(/\$\s*(\d{1,3}(?:,\d{3})+|\d{3,8})(?:\.\d{2})?\b/i);
   if (!match) return null;
 
-  const currency = (match[1] ?? "USD").toUpperCase();
-  const amount = Number.parseInt(match[2].replace(/,/g, ""), 10);
+  const currency = (match.length > 2 ? match[1] : "USD")?.toUpperCase() || "USD";
+  const amountText = match.length > 2 ? match[2] : match[1];
+  const amount = Number.parseInt(amountText.replace(/,/g, ""), 10);
   if (!Number.isFinite(amount)) return null;
 
   return {

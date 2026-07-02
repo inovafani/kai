@@ -705,6 +705,8 @@ describe("bluepass inquiry repository", () => {
     expect(result.operatorFollowUp).toMatchObject({
       requested: true
     });
+    expect(result.operatorFollowUp?.prompt).toContain("Suggested format:");
+    expect(result.operatorFollowUp?.prompt).not.toContain(`counter:${created.inquiry.id}`);
     expect(messages).toEqual([]);
     expect(event?.metadata).toMatchObject({
       providerMessageId: "wamid.button.counter"

@@ -79,6 +79,42 @@ describe("extractBluePassOperatorResponsesFromWhatsAppWebhook", () => {
     ]);
   });
 
+  it("treats natural counter details as a counter reply without exposing an internal id", () => {
+    const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: "6285337210180",
+                    id: "wamid.operator.natural_counter",
+                    type: "text",
+                    text: {
+                      body: "Available 18 July 2026. Final price USD 3,900 per cabin/night for 4 guests. Includes full board meals. Excludes flights. Condition: 30% deposit."
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(responses).toEqual([
+      {
+        inquiryId: null,
+        action: "counter",
+        providerMessageId: "wamid.operator.natural_counter",
+        operatorPhone: "6285337210180",
+        counterText:
+          "Available 18 July 2026. Final price USD 3,900 per cabin/night for 4 guests. Includes full board meals. Excludes flights. Condition: 30% deposit."
+      }
+    ]);
+  });
+
   it("extracts Meta button payload replies", () => {
     const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
       entry: [

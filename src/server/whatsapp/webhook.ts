@@ -123,8 +123,19 @@ function parseBluePassOperatorResponse(message: WhatsAppWebhookMessage): BluePas
 
   const match = payload.trim().match(operatorResponsePattern);
   if (!match) {
-    const action = operatorTextActionMap[payload.trim().toLowerCase()];
-    if (!action) return null;
+    const trimmedPayload = payload.trim();
+    const action = operatorTextActionMap[trimmedPayload.toLowerCase()];
+    if (!action) {
+      if (!looksLikeCounterDetails(trimmedPayload)) return null;
+
+      return {
+        action: "counter",
+        inquiryId: null,
+        providerMessageId: message.id ?? null,
+        operatorPhone: message.from ?? null,
+        counterText: trimmedPayload
+      };
+    }
 
     return {
       action,
@@ -142,6 +153,14 @@ function parseBluePassOperatorResponse(message: WhatsAppWebhookMessage): BluePas
     operatorPhone: message.from ?? null,
     counterText: match[3]?.trim() || null
   };
+}
+
+function looksLikeCounterDetails(value: string) {
+  const normalized = value.toLowerCase();
+  const hasAvailability = /\b(?:available|unavailable|instead|alternative|can do)\b/.test(normalized);
+  const hasCommercialDetails = /\b(?:price|usd|\$|includes?|excludes?|deposit|condition)\b/.test(normalized);
+
+  return hasAvailability && hasCommercialDetails;
 }
 
 function normalizeWhatsAppStatus(status: WhatsAppWebhookStatus): WhatsAppWebhookMessageStatus | null {

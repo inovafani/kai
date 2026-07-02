@@ -813,7 +813,14 @@ async function requestOperatorCounterDetails(input: {
   operatorPhone?: string | null;
 }) {
   const operatorPhone = input.operatorPhone ?? input.inquiry.operatorPhone;
-  const prompt = `Please reply with counter details for BluePass inquiry ${input.inquiry.id} in this format:\n\ncounter:${input.inquiry.id} <dates, price, inclusions/exclusions, and any changed conditions>`;
+  const prompt = [
+    `Please reply with the counter-offer details for ${input.inquiry.travellerName ?? "this traveller"}'s ${input.inquiry.selectedYachtName ?? "BluePass"} inquiry.`,
+    "",
+    "Suggested format:",
+    "Available 18 July 2026. Final price USD 3,900 per cabin/night. Includes meals, dives, crew, tanks and weights. Excludes flights, park fees, alcohol and tips. Condition: 30% deposit to hold.",
+    "",
+    "BluePass will attach your reply to the latest pending inquiry automatically."
+  ].join("\n");
 
   await createBluePassInquiryEvent({
     inquiry: input.inquiry,

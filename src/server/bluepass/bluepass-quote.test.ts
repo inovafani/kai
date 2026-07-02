@@ -54,6 +54,46 @@ describe("bluepass quote", () => {
     expect(quote?.terms).toContain("30% deposit");
   });
 
+  it("prefers the final USD price over the year in counter details", async () => {
+    const { tenantId, conversationId } = await createTestConversation("counter-year-price");
+    const created = await createOrReuseBluePassInquiry({
+      tenantId,
+      conversationId,
+      travellerMessage: "Calico Jack Komodo for 4 guests on 17 July",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "17 July",
+        guests: 4,
+        travellerName: "Putra",
+        travellerEmail: "putra@example.com",
+        travellerPhone: "6285156246329"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorId: "operator_calico_jack",
+        operatorName: "Calico Jack",
+        operatorPhone: "6285337210180"
+      }
+    });
+
+    await handleBluePassOperatorResponse({
+      inquiryId: created.inquiry.id,
+      action: "counter",
+      counterText:
+        "Available 18 July 2026. Final price USD 3,900 per cabin/night for 4 guests. Includes full board meals, daily dives, crew, tanks, weights, and airport transfers. Excludes flights, park fees, alcohol, tips, and personal expenses. Condition: 30% deposit to hold, balance due 30 days before departure."
+    });
+
+    const quote = await getBluePassQuote({ quoteId: created.inquiry.id });
+
+    expect(quote).toMatchObject({
+      dateWindow: "18 July",
+      currency: "USD",
+      grossPriceCents: 390000,
+      conservationContributionCents: 19500
+    });
+  });
+
   it("creates a needs-price quote when the operator accepts without final price", async () => {
     const { tenantId, conversationId } = await createTestConversation("accept");
     const created = await createOrReuseBluePassInquiry({
