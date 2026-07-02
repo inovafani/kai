@@ -38,6 +38,10 @@ export type BluePassYachtSearchIntent = {
   selectedYachtSlug?: string;
 };
 
+export type BluePassAlternativeYachtInput = BluePassYachtSearchIntent & {
+  declinedYachtSlug?: string | null;
+};
+
 const previewTruth: TruthPolicy = {
   availabilitySource: "preview_catalog",
   priceSource: "preview_catalog",
@@ -162,6 +166,24 @@ export function searchBluePassYachts(intent: BluePassYachtSearchIntent, catalogI
 
 export function findBluePassYachtBySlug(slug?: string | null, catalogInput?: BluePassCatalogSnapshotItem[]) {
   return slug ? resolveBluePassCatalog(catalogInput).find((item) => item.slug === slug) ?? null : null;
+}
+
+export function findBluePassAlternativeYachts(
+  intent: BluePassAlternativeYachtInput,
+  catalogInput?: BluePassCatalogSnapshotItem[]
+) {
+  return searchBluePassYachts(
+    {
+      destination: intent.destination,
+      guests: intent.guests,
+      interests: intent.interests
+    },
+    catalogInput
+  )
+    .filter((item) => item.slug !== intent.declinedYachtSlug)
+    .filter((item) => (intent.destination ? item.region.toLowerCase().includes(intent.destination.toLowerCase()) : true))
+    .filter((item) => (intent.guests ? item.maxGuests >= intent.guests : true))
+    .slice(0, 3);
 }
 
 export function resolveBluePassCatalog(catalogInput?: BluePassCatalogSnapshotItem[]) {

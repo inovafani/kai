@@ -1,5 +1,6 @@
 export const whatsappTemplateNames = {
-  bookingInquiryOperator: "booking_inquiry_operator"
+  bookingInquiryOperator: "booking_inquiry_operator",
+  bluePassInquiryUpdate: "bluepass_inquiry_update"
 } as const;
 
 export type OperatorInquiryTemplateInput = {
@@ -26,6 +27,17 @@ export function buildOperatorInquiryParams(input: OperatorInquiryTemplateInput) 
     input.tripTitle,
     input.notes
   ];
+}
+
+export type TravellerInquiryUpdateTemplateInput = {
+  travellerName: string;
+  tripSummary: string;
+  operatorName: string;
+  status: string;
+};
+
+export function buildTravellerInquiryUpdateParams(input: TravellerInquiryUpdateTemplateInput) {
+  return [input.travellerName, input.tripSummary, input.operatorName, input.status];
 }
 
 export function buildAcceptPayload(bookingId: string) {

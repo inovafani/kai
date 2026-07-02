@@ -1,4 +1,5 @@
 import {
+  findBluePassAlternativeYachts,
   resolveBluePassCatalog,
   searchBluePassYachts,
   type BluePassCatalogSnapshotItem,
@@ -25,6 +26,7 @@ import {
   createOrReuseBluePassInquiry,
   dispatchBluePassOperatorWhatsApp,
   getActiveBluePassInquiryStatus,
+  getLatestBluePassInquiryStatus,
   syncBluePassReferralLedgerEstimate
 } from "./bluepass-inquiry-repository";
 
@@ -49,6 +51,72 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     selectedYachtSlug: selectedYacht?.slug ?? messageIntent.selectedYachtSlug
   });
   const bluepassMatches = searchBluePassYachts(intent, catalog);
+
+  const declinedAlternative = isBluePassInquirySubmissionRequest(input.content)
+    ? await resolveDeclinedInquiryAlternative({
+        tenantId: input.tenantId,
+        conversationId: input.conversationId,
+        catalog
+      })
+    : null;
+
+  if (declinedAlternative) {
+    const created = await createOrReuseBluePassInquiry({
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      travellerMessage: input.content,
+      intent: {
+        destination: declinedAlternative.previous.destination ?? declinedAlternative.yacht.region,
+        tripType: declinedAlternative.previous.tripType ?? undefined,
+        dateWindow: declinedAlternative.previous.dateWindow ?? undefined,
+        guests: declinedAlternative.previous.guests ?? undefined,
+        budget: declinedAlternative.previous.budget ?? undefined,
+        interests: Array.isArray(declinedAlternative.previous.interests)
+          ? declinedAlternative.previous.interests.filter((interest): interest is string => typeof interest === "string")
+          : undefined,
+        travellerName: declinedAlternative.previous.travellerName ?? undefined,
+        travellerEmail: declinedAlternative.previous.travellerEmail ?? undefined,
+        travellerPhone: declinedAlternative.previous.travellerPhone ?? undefined,
+        selectedYachtSlug: declinedAlternative.yacht.slug
+      },
+      selectedYacht: declinedAlternative.yacht,
+      referral: {
+        referralPartnerId: declinedAlternative.previous.referralPartnerId,
+        referralLinkId: declinedAlternative.previous.referralLinkId,
+        referralCode: declinedAlternative.previous.referralCode,
+        referralRole: declinedAlternative.previous.referralRole
+      },
+      alternativeOf: {
+        previousInquiryId: declinedAlternative.previous.id,
+        previousYachtSlug: declinedAlternative.previous.selectedYachtSlug,
+        alternativeYachtSlug: declinedAlternative.yacht.slug,
+        reason: "operator_declined"
+      }
+    });
+    const bluepassLedger = await syncBluePassReferralLedgerEstimate(created.inquiry);
+    const bluepassDispatch = created.inquiry.operatorPhone
+      ? await dispatchBluePassOperatorWhatsApp({ inquiryId: created.inquiry.id })
+      : null;
+    const status = await getActiveBluePassInquiryStatus({
+      tenantId: input.tenantId,
+      conversationId: input.conversationId
+    });
+    const bluepassInquiry = status?.inquiry ?? created.inquiry;
+
+    return {
+      assistantContent: buildBluePassInquiryReadyReply({
+        inquiryId: bluepassInquiry.id,
+        selectedYachtName: bluepassInquiry.selectedYachtName,
+        dispatchQueued: bluepassDispatch?.status === "QUEUED" || bluepassDispatch?.status === "SENT",
+        dispatchFailed: bluepassDispatch?.status === "FAILED"
+      }),
+      bluepassMatches: [],
+      bluepassInquiry,
+      bluepassLedger,
+      bluepassDispatch,
+      paymentRequest: null
+    };
+  }
 
   if (isBluePassInquiryStatusQuestion(input.content)) {
     const status = await getActiveBluePassInquiryStatus({
@@ -98,11 +166,13 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   const missingFields = getMissingBluePassInquiryFields(intent);
 
   if (missingFields.length > 0) {
+    const promptMissingFields = getPromptMissingFields(missingFields);
+
     return {
       assistantContent: buildBluePassMissingFieldsReply({
         destination: intent.destination,
         selectedYacht,
-        missingFields
+        missingFields: promptMissingFields
       }),
       bluepassMatches: [],
       bluepassInquiry: null,
@@ -175,11 +245,80 @@ function resolveSelectedYacht(content: string, catalog: BluePassYachtCatalogItem
 }
 
 function resolveMentionedYachts(content: string, catalog: BluePassYachtCatalogItem[]) {
-  const lowerContent = content.toLowerCase();
+  const normalizedContent = normalizeYachtText(content);
 
-  return catalog.filter(
-    (yacht) => lowerContent.includes(yacht.name.toLowerCase()) || lowerContent.includes(yacht.slug)
+  return catalog
+    .map((yacht) => ({
+      yacht,
+      mentionScore: scoreYachtMention(normalizedContent, yacht)
+    }))
+    .filter((match) => match.mentionScore > 0)
+    .sort((a, b) => b.mentionScore - a.mentionScore || b.yacht.name.length - a.yacht.name.length)
+    .map((match) => match.yacht);
+}
+
+function scoreYachtMention(normalizedContent: string, yacht: BluePassYachtCatalogItem) {
+  if (normalizedContent.includes(normalizeYachtText(yacht.name))) {
+    return 100;
+  }
+
+  if (normalizedContent.includes(normalizeYachtText(yacht.slug))) {
+    return 95;
+  }
+
+  const nameWords = normalizeYachtText(yacht.name).split(" ").filter(Boolean);
+  if (nameWords.length === 0) {
+    return 0;
+  }
+
+  if (nameWords.length === 1) {
+    return 0;
+  }
+
+  const contentWords = normalizedContent.split(" ").filter(Boolean);
+  const matchedWords = nameWords.filter((nameWord) =>
+    contentWords.some((contentWord) => areNearYachtWords(contentWord, nameWord))
   );
+
+  return matchedWords.length === nameWords.length ? 60 + nameWords.length * 5 : 0;
+}
+
+function areNearYachtWords(input: string, expected: string) {
+  if (input === expected) {
+    return true;
+  }
+
+  if (expected.length < 5 || input.length < 5) {
+    return false;
+  }
+
+  return levenshteinDistance(input, expected) <= 2;
+}
+
+function normalizeYachtText(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function levenshteinDistance(a: string, b: string) {
+  const previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+
+  for (let i = 1; i <= a.length; i += 1) {
+    const current = [i];
+    for (let j = 1; j <= b.length; j += 1) {
+      current[j] = Math.min(
+        current[j - 1] + 1,
+        previous[j] + 1,
+        previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)
+      );
+    }
+    previous.splice(0, previous.length, ...current);
+  }
+
+  return previous[b.length];
 }
 
 function buildConciergeResponse(assistantContent: string, bluepassMatches: BluePassYachtCard[] = []) {
@@ -194,10 +333,47 @@ function buildConciergeResponse(assistantContent: string, bluepassMatches: BlueP
   };
 }
 
+async function resolveDeclinedInquiryAlternative(input: {
+  tenantId: string;
+  conversationId: string;
+  catalog: BluePassYachtCatalogItem[];
+}) {
+  const latest = await getLatestBluePassInquiryStatus({
+    tenantId: input.tenantId,
+    conversationId: input.conversationId
+  });
+
+  if (!latest || latest.inquiry.status !== "DECLINED") return null;
+
+  const alternatives = findBluePassAlternativeYachts(
+    {
+      destination: latest.inquiry.destination ?? undefined,
+      guests: latest.inquiry.guests ?? undefined,
+      declinedYachtSlug: latest.inquiry.selectedYachtSlug
+    },
+    input.catalog
+  );
+  const yacht = alternatives[0] ?? null;
+
+  return yacht
+    ? {
+        previous: latest.inquiry,
+        yacht
+      }
+    : null;
+}
+
 function shouldRequestContactForm(missingFields: string[]) {
   const contactFields = new Set(["travellerName", "travellerEmail", "travellerPhone"]);
 
   return missingFields.length > 0 && missingFields.every((field) => contactFields.has(field));
+}
+
+function getPromptMissingFields(missingFields: string[]) {
+  const contactFields = new Set(["travellerName", "travellerEmail", "travellerPhone"]);
+  const tripFields = missingFields.filter((field) => !contactFields.has(field));
+
+  return tripFields.length > 0 ? tripFields : missingFields;
 }
 
 function isBluePassValueQuestion(content: string) {

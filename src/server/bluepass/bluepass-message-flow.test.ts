@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handleBluePassMarketplaceMessage } from "./bluepass-message-flow";
+import { prisma } from "@/lib/prisma";
 
 const originalEnv = { ...process.env };
 const isolatedWhatsAppEnvKeys = [
@@ -92,6 +93,56 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.bluepassDispatch).toBeNull();
     expect(result.assistantContent).toContain("Please share your name, email, and phone");
     expect(result.paymentRequest).toBeNull();
+  });
+
+  it("locks a selected yacht even when the traveller makes a small typo in the yacht name", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "i want to order alila purnnama",
+      priorTravellerMessages: []
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("Alila Purnama");
+    expect(result.assistantContent).not.toContain("Alexa");
+    expect(result.assistantContent).not.toContain("destination");
+    expect(result.assistantContent).toContain("dates");
+    expect(result.assistantContent).toContain("group size");
+  });
+
+  it("does not ask for contact details in text while trip details are still missing", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "i want to order alila purnama",
+      priorTravellerMessages: []
+    });
+
+    expect(result.contactRequest).toBeNull();
+    expect(result.assistantContent).toContain("Alila Purnama");
+    expect(result.assistantContent).toContain("dates");
+    expect(result.assistantContent).toContain("group size");
+    expect(result.assistantContent).not.toContain("name");
+    expect(result.assistantContent).not.toContain("email");
+    expect(result.assistantContent).not.toContain("phone");
+  });
+
+  it("keeps contact collection out of the text prompt for generic incomplete inquiries", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "i want to order a yacht",
+      priorTravellerMessages: []
+    });
+
+    expect(result.contactRequest).toBeNull();
+    expect(result.assistantContent).toContain("destination");
+    expect(result.assistantContent).toContain("date window");
+    expect(result.assistantContent).toContain("guest count");
+    expect(result.assistantContent).not.toContain("name");
+    expect(result.assistantContent).not.toContain("email");
+    expect(result.assistantContent).not.toContain("phone");
   });
 
   it("creates inquiry, ledger estimate, and dispatch when required fields are present", async () => {
@@ -311,6 +362,8 @@ describe("handleBluePassMarketplaceMessage", () => {
       fields: ["name", "email", "phone"]
     });
     expect(result.assistantContent).toContain("Calico Jack");
+    expect(result.assistantContent).toContain("contact details form");
+    expect(result.assistantContent).not.toContain("Could you share your name");
   });
 
   it("creates a custom yacht inquiry only after the traveller confirms sending it", async () => {
@@ -498,4 +551,87 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(status.assistantContent).toContain("pending");
     expect(status.assistantContent).not.toContain("I prepared BluePass inquiry");
   }, 20_000);
+
+  it("dispatches the suggested alternative after a declined operator inquiry when the traveller approves", async () => {
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: `bluepass-alt-flow-${randomUUID()}`,
+        name: "BluePass Alternative Flow Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const conversation = await prisma.conversation.create({
+      data: {
+        tenantId: tenant.id,
+        channel: "WEB_WIDGET"
+      }
+    });
+    const tenantId = tenant.id;
+    const conversationId = conversation.id;
+
+    const firstInquiry = await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: "yes please",
+      priorTravellerMessages: [
+        "can you help me to order calico jack",
+        "for 20th july 2026, 4 people my name is Ekap, email is ekap@gmail.com, and phone is 0876634231987",
+        "komodo"
+      ]
+    });
+    expect(firstInquiry.bluepassInquiry).toMatchObject({
+      selectedYachtSlug: "calico-jack"
+    });
+
+    await import("./bluepass-inquiry-repository").then(({ handleBluePassOperatorResponse }) =>
+      handleBluePassOperatorResponse({
+        inquiryId: firstInquiry.bluepassInquiry!.id,
+        action: "decline",
+        providerMessageId: "wamid.calico.decline"
+      })
+    );
+
+    const alternative = await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: "yes, send inquiry to the alternative",
+      priorTravellerMessages: [
+        "can you help me to order calico jack",
+        "for 20th july 2026, 4 people my name is Ekap, email is ekap@gmail.com, and phone is 0876634231987",
+        "komodo",
+        "yes please"
+      ]
+    });
+
+    expect(alternative.bluepassInquiry).toMatchObject({
+      status: "OPERATOR_PENDING",
+      selectedYachtSlug: "alila-purnama",
+      selectedYachtName: "Alila Purnama",
+      destination: "Komodo",
+      dateWindow: "20 July 2026",
+      guests: 4
+    });
+    expect(alternative.bluepassDispatch).toMatchObject({
+      status: "QUEUED",
+      operatorName: "Alila Purnama",
+      operatorPhone: "+6281234567001"
+    });
+    expect(alternative.assistantContent).toContain("Alila Purnama");
+    expect(alternative.assistantContent).not.toContain("Calico Jack");
+
+    const alternativeCreatedEvent = await prisma.bluePassInquiryEvent.findFirst({
+      where: {
+        bluePassInquiryId: alternative.bluepassInquiry!.id,
+        type: "INQUIRY_CREATED"
+      }
+    });
+    expect(alternativeCreatedEvent?.metadata).toMatchObject({
+      reason: "operator_declined",
+      previousInquiryId: firstInquiry.bluepassInquiry!.id,
+      previousYachtSlug: "calico-jack",
+      alternativeYachtSlug: "alila-purnama"
+    });
+  }, 60_000);
 });

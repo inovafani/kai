@@ -1,4 +1,5 @@
 import type { BluePassInquiry, Prisma } from "@prisma/client";
+import { findBluePassAlternativeYachts } from "@/core/bluepass/catalog";
 import { buildBluePassDispatchText } from "@/core/bluepass/dispatch";
 import type { BluePassInquiryIntent } from "@/core/bluepass/intent";
 import { calculateBluePassLedgerEstimate } from "@/core/bluepass/ledger";
@@ -10,7 +11,11 @@ import {
   buildOperatorInquiryTemplatePayload,
   type WhatsAppTemplateComponent
 } from "@/server/whatsapp/operator-dispatch";
-import { whatsappTemplateNames, type OperatorInquiryTemplateInput } from "@/server/whatsapp/templates";
+import {
+  buildTravellerInquiryUpdateParams,
+  whatsappTemplateNames,
+  type OperatorInquiryTemplateInput
+} from "@/server/whatsapp/templates";
 
 const activeInquiryStatuses = ["DRAFT", "READY_TO_DISPATCH", "OPERATOR_PENDING", "COUNTER_OFFERED"] as const;
 
@@ -37,6 +42,12 @@ export type CreateOrReuseBluePassInquiryInput = {
   intent: BluePassInquiryIntent;
   selectedYacht?: BluePassSelectedYachtInput | null;
   referral?: BluePassReferralInput | null;
+  alternativeOf?: {
+    previousInquiryId: string;
+    previousYachtSlug?: string | null;
+    alternativeYachtSlug: string;
+    reason: "operator_declined";
+  } | null;
   notes?: string | null;
 };
 
@@ -83,7 +94,8 @@ export async function createOrReuseBluePassInquiry(input: CreateOrReuseBluePassI
       inquiry,
       type: "INQUIRY_UPDATED",
       fromStatus: existing.status,
-      toStatus: inquiry.status
+      toStatus: inquiry.status,
+      metadata: buildAlternativeInquiryMetadata(input.alternativeOf)
     });
 
     return {
@@ -105,7 +117,8 @@ export async function createOrReuseBluePassInquiry(input: CreateOrReuseBluePassI
     inquiry,
     type: "INQUIRY_CREATED",
     fromStatus: null,
-    toStatus: inquiry.status
+    toStatus: inquiry.status,
+    metadata: buildAlternativeInquiryMetadata(input.alternativeOf)
   });
 
   return {
@@ -289,6 +302,44 @@ export async function getActiveBluePassInquiryStatus(input: { tenantId: string; 
         orderBy: { createdAt: "asc" }
       },
       dispatches: { orderBy: { createdAt: "desc" } }
+    }
+  });
+
+  return inquiry
+    ? {
+        inquiry,
+        events: inquiry.events,
+        ledger: inquiry.ledger,
+        dispatches: inquiry.dispatches
+      }
+    : null;
+}
+
+function buildAlternativeInquiryMetadata(input?: CreateOrReuseBluePassInquiryInput["alternativeOf"]) {
+  return input
+    ? {
+        reason: input.reason,
+        previousInquiryId: input.previousInquiryId,
+        previousYachtSlug: input.previousYachtSlug ?? null,
+        alternativeYachtSlug: input.alternativeYachtSlug
+      }
+    : undefined;
+}
+
+export async function getLatestBluePassInquiryStatus(input: { tenantId: string; conversationId: string }) {
+  const inquiry = await prisma.bluePassInquiry.findFirst({
+    where: {
+      tenantId: input.tenantId,
+      conversationId: input.conversationId
+    },
+    orderBy: { createdAt: "desc" },
+    include: {
+      events: { orderBy: { createdAt: "desc" }, take: 5 },
+      ledger: {
+        where: { status: "PENDING" },
+        orderBy: { createdAt: "asc" }
+      },
+      dispatches: { orderBy: { createdAt: "desc" }, take: 1 }
     }
   });
 
@@ -564,13 +615,30 @@ function buildOperatorResponseTravellerNotification(input: {
   }
 
   if (input.action === "decline") {
-    return `${yachtName} is not available for ${formatTripSummary(input.inquiry)}. BluePass will compare 2-3 similar alternatives and ask your permission before dispatching the next operator inquiry.`;
+    const alternatives = formatDeclineAlternatives(input.inquiry);
+    return `${yachtName} is not available for ${formatTripSummary(input.inquiry)}.${alternatives} BluePass will ask your permission before dispatching the next operator inquiry.`;
   }
 
   const counterText = input.counterText?.trim();
   const details = counterText ? ` Details: ${counterText}` : " BluePass needs the operator's counter details before this becomes actionable.";
 
   return `${yachtName} sent a counter-offer for ${formatTripSummary(input.inquiry)}.${details} You can accept the counter, negotiate, or compare alternatives with BluePass.`;
+}
+
+function formatDeclineAlternatives(inquiry: BluePassInquiry) {
+  const alternatives = findBluePassAlternativeYachts({
+    destination: inquiry.destination ?? undefined,
+    guests: inquiry.guests ?? undefined,
+    declinedYachtSlug: inquiry.selectedYachtSlug
+  });
+
+  if (alternatives.length === 0) {
+    return " BluePass will compare similar alternatives next.";
+  }
+
+  const names = alternatives.map((alternative) => alternative.name).join(", ");
+  const label = alternatives.length === 1 ? "similar alternative" : "similar alternatives";
+  return ` Suggested ${label}: ${names}.`;
 }
 
 function formatTripSummary(inquiry: BluePassInquiry) {
@@ -584,7 +652,8 @@ function formatTripSummary(inquiry: BluePassInquiry) {
 }
 
 async function sendTravellerWhatsAppNotification(input: { inquiry: BluePassInquiry; content: string }) {
-  if (!shouldSendTravellerWhatsAppNotification()) {
+  const mode = resolveTravellerWhatsAppNotificationMode();
+  if (mode === "disabled") {
     await createBluePassInquiryEvent({
       inquiry: input.inquiry,
       type: "TRAVELLER_WHATSAPP_NOTIFICATION_SKIPPED",
@@ -622,11 +691,34 @@ async function sendTravellerWhatsAppNotification(input: { inquiry: BluePassInqui
   }
 
   try {
-    const result = await sendWhatsAppText({
-      to: input.inquiry.travellerPhone,
-      role: "kai",
-      body: input.content
-    });
+    const result =
+      mode === "template"
+        ? await sendTemplateMessage({
+            to: input.inquiry.travellerPhone,
+            role: "kai",
+            name: resolveTravellerUpdateTemplateName(),
+            languageCode: resolveTravellerUpdateTemplateLanguage(),
+            components: [
+              {
+                type: "body",
+                parameters: buildTravellerInquiryUpdateParams({
+                  travellerName: input.inquiry.travellerName ?? "BluePass traveller",
+                  tripSummary: formatTripSummary(input.inquiry),
+                  operatorName:
+                    input.inquiry.selectedYachtName ?? input.inquiry.operatorName ?? "BluePass operator",
+                  status: formatTravellerTemplateStatus(input.inquiry.status)
+                }).map((text) => ({
+                  type: "text",
+                  text
+                }))
+              }
+            ]
+          })
+        : await sendWhatsAppText({
+            to: input.inquiry.travellerPhone,
+            role: "kai",
+            body: input.content
+          });
 
     await createBluePassInquiryEvent({
       inquiry: input.inquiry,
@@ -634,7 +726,9 @@ async function sendTravellerWhatsAppNotification(input: { inquiry: BluePassInqui
       fromStatus: input.inquiry.status,
       toStatus: input.inquiry.status,
       metadata: {
-        providerMessageId: result.providerMessageId
+        providerMessageId: result.providerMessageId,
+        messageType: mode,
+        templateName: mode === "template" ? resolveTravellerUpdateTemplateName() : null
       }
     });
 
@@ -663,15 +757,32 @@ async function sendTravellerWhatsAppNotification(input: { inquiry: BluePassInqui
   }
 }
 
-function shouldSendTravellerWhatsAppNotification() {
-  const configuredMode = process.env.WHATSAPP_TRAVELLER_NOTIFY_SEND_MODE?.trim();
-  if (configuredMode) return configuredMode === "text";
+function resolveTravellerWhatsAppNotificationMode(): "disabled" | "text" | "template" {
+  const configuredMode = process.env.WHATSAPP_TRAVELLER_NOTIFY_SEND_MODE?.trim().toLowerCase();
+  if (configuredMode === "text" || configuredMode === "template") return configuredMode;
+  if (configuredMode) return "disabled";
 
-  return Boolean(
-    process.env.WHATSAPP_ACCESS_TOKEN?.trim() &&
-      process.env.WHATSAPP_PHONE_ID_KAI?.trim() &&
-      process.env.META_GRAPH_VERSION?.trim()
-  );
+  return process.env.WHATSAPP_ACCESS_TOKEN?.trim() &&
+    process.env.WHATSAPP_PHONE_ID_KAI?.trim() &&
+    process.env.META_GRAPH_VERSION?.trim()
+    ? "text"
+    : "disabled";
+}
+
+function resolveTravellerUpdateTemplateName() {
+  return process.env.WHATSAPP_TRAVELLER_UPDATE_TEMPLATE?.trim() || whatsappTemplateNames.bluePassInquiryUpdate;
+}
+
+function resolveTravellerUpdateTemplateLanguage() {
+  return process.env.WHATSAPP_TRAVELLER_UPDATE_TEMPLATE_LANGUAGE?.trim() || "en";
+}
+
+function formatTravellerTemplateStatus(status: BluePassInquiry["status"]) {
+  if (status === "OPERATOR_ACCEPTED") return "Accepted by operator";
+  if (status === "DECLINED") return "Not available";
+  if (status === "COUNTER_OFFERED") return "Counter-offer received";
+
+  return "Update received";
 }
 
 async function requestOperatorCounterDetails(input: {

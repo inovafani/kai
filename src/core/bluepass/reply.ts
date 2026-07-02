@@ -151,7 +151,7 @@ function buildSelectedYachtMissingFieldsReply(input: {
   ].filter((value): value is string => Boolean(value));
 
   if (contactFields.length > 0) {
-    return `Got it for ${yacht.name}. ${bookingTruth} Could you share your ${formatNaturalList(contactFields)} so the operator can follow up?`;
+    return `Got it for ${yacht.name}. ${bookingTruth} Please fill the contact details form below so the operator can follow up.`;
   }
 
   return `${intro} ${bookingTruth}`;
