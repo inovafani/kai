@@ -6,6 +6,7 @@ import { calculateBluePassLedgerEstimate } from "@/core/bluepass/ledger";
 import { prisma } from "@/lib/prisma";
 import { createAssistantMessage } from "@/server/conversation/conversation-repository";
 import { sendTemplateMessage, sendWhatsAppText } from "@/server/whatsapp/client";
+import { createBluePassQuoteDraftForOperatorResponse, getBluePassQuote } from "./bluepass-quote";
 import {
   buildOperatorInquiryFreeText,
   buildOperatorInquiryTemplatePayload,
@@ -377,11 +378,6 @@ export async function handleBluePassOperatorResponse(input: HandleBluePassOperat
 
   const nextStatus = resolveOperatorResponseStatus(input.action);
   const eventType = resolveOperatorResponseEventType(input.action);
-  const notificationContent = buildOperatorResponseTravellerNotification({
-    inquiry,
-    action: input.action,
-    counterText: input.counterText
-  });
   const updated = await prisma.bluePassInquiry.update({
     where: { id: inquiry.id },
     data: {
@@ -399,6 +395,23 @@ export async function handleBluePassOperatorResponse(input: HandleBluePassOperat
       operatorPhone: input.operatorPhone ?? null,
       counterText: input.counterText ?? null
     }
+  });
+
+  let quoteUrl: string | null = null;
+  if (input.action === "accept" || input.action === "counter") {
+    await createBluePassQuoteDraftForOperatorResponse({
+      inquiry: updated,
+      action: input.action,
+      counterText: input.counterText
+    });
+    quoteUrl = (await getBluePassQuote({ quoteId: updated.id }))?.quoteUrl ?? null;
+  }
+
+  const notificationContent = buildOperatorResponseTravellerNotification({
+    inquiry: updated,
+    action: input.action,
+    counterText: input.counterText,
+    quoteUrl
   });
 
   await createAssistantMessage({
@@ -607,11 +620,13 @@ function buildOperatorResponseTravellerNotification(input: {
   inquiry: BluePassInquiry;
   action: BluePassOperatorResponseAction;
   counterText?: string | null;
+  quoteUrl?: string | null;
 }) {
   const yachtName = input.inquiry.selectedYachtName ?? input.inquiry.operatorName ?? "the operator";
+  const quoteLink = input.quoteUrl ? ` Quote link: ${input.quoteUrl}` : "";
 
   if (input.action === "accept") {
-    return `${yachtName} accepted your BluePass inquiry for ${formatTripSummary(input.inquiry)}. This is still not a confirmed booking yet; BluePass will follow up with the final quote, payment path, and operator confirmation.`;
+    return `${yachtName} accepted your BluePass inquiry for ${formatTripSummary(input.inquiry)}. This is still not a confirmed booking yet; BluePass will follow up with the final price, payment path, and operator confirmation.${quoteLink}`;
   }
 
   if (input.action === "decline") {
@@ -622,7 +637,7 @@ function buildOperatorResponseTravellerNotification(input: {
   const counterText = input.counterText?.trim();
   const details = counterText ? ` Details: ${counterText}` : " BluePass needs the operator's counter details before this becomes actionable.";
 
-  return `${yachtName} sent a counter-offer for ${formatTripSummary(input.inquiry)}.${details} You can accept the counter, negotiate, or compare alternatives with BluePass.`;
+  return `${yachtName} sent a counter-offer for ${formatTripSummary(input.inquiry)}.${details} You can accept the counter, negotiate, or compare alternatives with BluePass.${quoteLink}`;
 }
 
 function formatDeclineAlternatives(inquiry: BluePassInquiry) {
@@ -706,7 +721,7 @@ async function sendTravellerWhatsAppNotification(input: { inquiry: BluePassInqui
                   tripSummary: formatTripSummary(input.inquiry),
                   operatorName:
                     input.inquiry.selectedYachtName ?? input.inquiry.operatorName ?? "BluePass operator",
-                  status: formatTravellerTemplateStatus(input.inquiry.status)
+                  status: formatTravellerTemplateStatus(input.inquiry.status, input.content)
                 }).map((text) => ({
                   type: "text",
                   text
@@ -777,12 +792,19 @@ function resolveTravellerUpdateTemplateLanguage() {
   return process.env.WHATSAPP_TRAVELLER_UPDATE_TEMPLATE_LANGUAGE?.trim() || "en";
 }
 
-function formatTravellerTemplateStatus(status: BluePassInquiry["status"]) {
-  if (status === "OPERATOR_ACCEPTED") return "Accepted by operator";
+function formatTravellerTemplateStatus(status: BluePassInquiry["status"], content?: string) {
+  const quoteUrl = extractQuoteUrl(content);
+  const quoteSuffix = quoteUrl ? `. Quote: ${quoteUrl}` : "";
+
+  if (status === "OPERATOR_ACCEPTED") return `Accepted by operator${quoteSuffix}`;
   if (status === "DECLINED") return "Not available";
-  if (status === "COUNTER_OFFERED") return "Counter-offer received";
+  if (status === "COUNTER_OFFERED") return `Counter-offer received${quoteSuffix}`;
 
   return "Update received";
+}
+
+function extractQuoteUrl(content?: string) {
+  return content?.match(/\bQuote link:\s*(https?:\/\/\S+)/i)?.[1] ?? null;
 }
 
 async function requestOperatorCounterDetails(input: {

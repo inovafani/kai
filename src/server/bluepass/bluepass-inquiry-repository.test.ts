@@ -494,7 +494,7 @@ describe("bluepass inquiry repository", () => {
       sent: true
     });
     expect(messages.at(-1)?.content).toContain("Calico Jack accepted");
-    expect(messages.at(-1)?.content).toContain("final quote");
+    expect(messages.at(-1)?.content).toContain("Quote link: https://bluepass.co/quotes/");
     expect(status).toBeNull();
     const event = await prisma.bluePassInquiryEvent.findFirst({
       where: {
@@ -861,7 +861,7 @@ describe("bluepass inquiry repository", () => {
       "Inov Afani",
       "Komodo / 24 July / 4 guests",
       "Calico Jack",
-      "Accepted by operator"
+      expect.stringContaining("Accepted by operator. Quote: https://bluepass.co/quotes/")
     ]);
     expect(result.travellerNotification).toMatchObject({
       channel: "whatsapp",
