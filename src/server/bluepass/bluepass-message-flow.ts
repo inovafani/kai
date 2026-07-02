@@ -9,7 +9,8 @@ import {
 import {
   extractBluePassInquiryIntent,
   getMissingBluePassInquiryFields,
-  mergeBluePassInquiryIntent
+  mergeBluePassInquiryIntent,
+  type BluePassRequiredInquiryField
 } from "@/core/bluepass/intent";
 import {
   buildBluePassInquiryConfirmationReply,
@@ -363,14 +364,22 @@ async function resolveDeclinedInquiryAlternative(input: {
     : null;
 }
 
-function shouldRequestContactForm(missingFields: string[]) {
-  const contactFields = new Set(["travellerName", "travellerEmail", "travellerPhone"]);
+function shouldRequestContactForm(missingFields: BluePassRequiredInquiryField[]) {
+  const contactFields = new Set<BluePassRequiredInquiryField>([
+    "travellerName",
+    "travellerEmail",
+    "travellerPhone"
+  ]);
 
   return missingFields.length > 0 && missingFields.every((field) => contactFields.has(field));
 }
 
-function getPromptMissingFields(missingFields: string[]) {
-  const contactFields = new Set(["travellerName", "travellerEmail", "travellerPhone"]);
+function getPromptMissingFields(missingFields: BluePassRequiredInquiryField[]) {
+  const contactFields = new Set<BluePassRequiredInquiryField>([
+    "travellerName",
+    "travellerEmail",
+    "travellerPhone"
+  ]);
   const tripFields = missingFields.filter((field) => !contactFields.has(field));
 
   return tripFields.length > 0 ? tripFields : missingFields;
