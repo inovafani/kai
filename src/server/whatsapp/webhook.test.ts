@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   extractBluePassOperatorResponsesFromWhatsAppWebhook,
+  extractWhatsAppInboundTextMessagesFromWebhook,
   extractWhatsAppMessageStatusesFromWebhook
 } from "./webhook";
 
@@ -115,6 +116,271 @@ describe("extractBluePassOperatorResponsesFromWhatsAppWebhook", () => {
     ]);
   });
 
+  it("treats short availability replies as operator accept replies", () => {
+    const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: "6285337210180",
+                    id: "wamid.operator.natural_accept",
+                    type: "text",
+                    text: {
+                      body: "Yes available, we can do it."
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(responses).toEqual([
+      {
+        inquiryId: null,
+        action: "accept",
+        providerMessageId: "wamid.operator.natural_accept",
+        operatorPhone: "6285337210180",
+        counterText: null
+      }
+    ]);
+  });
+
+  it("does not treat traveller-style alternative permission as an operator accept reply", () => {
+    const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: "6285156246329",
+                    id: "wamid.traveller.alt_permission",
+                    type: "text",
+                    text: {
+                      body: "yes send the alternative"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(responses).toEqual([]);
+  });
+
+  it("does not treat traveller yacht selection as an operator reply", () => {
+    const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: "6285156246329",
+                    id: "wamid.traveller.alt_selection",
+                    type: "text",
+                    text: {
+                      body: "try Alila Purnama"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(responses).toEqual([]);
+  });
+
+  it("treats short sold-out replies as operator decline replies", () => {
+    const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: "6285337210180",
+                    id: "wamid.operator.natural_decline",
+                    type: "text",
+                    text: {
+                      body: "20 July full, sorry."
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(responses).toEqual([
+      {
+        inquiryId: null,
+        action: "decline",
+        providerMessageId: "wamid.operator.natural_decline",
+        operatorPhone: "6285337210180",
+        counterText: null
+      }
+    ]);
+  });
+
+  it("treats operator hold and payment details as a payment-ready reply", () => {
+    const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: "6285337210180",
+                    id: "wamid.operator.payment_ready",
+                    type: "text",
+                    text: {
+                      body: "Slot held for 22 July. Payment link: https://pay.example/cj-22. Deposit 30% due today. Booking reference CJ-2207."
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(responses).toEqual([
+      {
+        inquiryId: null,
+        action: "payment_ready",
+        providerMessageId: "wamid.operator.payment_ready",
+        operatorPhone: "6285337210180",
+        counterText:
+          "Slot held for 22 July. Payment link: https://pay.example/cj-22. Deposit 30% due today. Booking reference CJ-2207."
+      }
+    ]);
+  });
+
+  it("treats short operator payment link replies as payment-ready details", () => {
+    const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: "6285337210180",
+                    id: "wamid.operator.short_payment_ready",
+                    type: "text",
+                    text: {
+                      body: "Pay here: https://pay.example/cj-22. Ref CJ-2207. Slot on 22 July."
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(responses).toEqual([
+      {
+        inquiryId: null,
+        action: "payment_ready",
+        providerMessageId: "wamid.operator.short_payment_ready",
+        operatorPhone: "6285337210180",
+        counterText: "Pay here: https://pay.example/cj-22. Ref CJ-2207. Slot on 22 July."
+      }
+    ]);
+  });
+
+  it("treats operator payment received and booking confirmation as a booking-confirmed reply", () => {
+    const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: "6285337210180",
+                    id: "wamid.operator.booking_confirmed",
+                    type: "text",
+                    text: {
+                      body: "Payment received. Booking confirmed for 22 July. Booking reference CJ-2207."
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(responses).toEqual([
+      {
+        inquiryId: null,
+        action: "booking_confirmed",
+        providerMessageId: "wamid.operator.booking_confirmed",
+        operatorPhone: "6285337210180",
+        counterText: "Payment received. Booking confirmed for 22 July. Booking reference CJ-2207."
+      }
+    ]);
+  });
+
+  it("treats short paid booking replies as booking-confirmed details", () => {
+    const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: "6285337210180",
+                    id: "wamid.operator.short_booking_confirmed",
+                    type: "text",
+                    text: {
+                      body: "Payment done, booking ok. Ref CJ-2207."
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(responses).toEqual([
+      {
+        inquiryId: null,
+        action: "booking_confirmed",
+        providerMessageId: "wamid.operator.short_booking_confirmed",
+        operatorPhone: "6285337210180",
+        counterText: "Payment done, booking ok. Ref CJ-2207."
+      }
+    ]);
+  });
+
   it("extracts Meta button payload replies", () => {
     const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
       entry: [
@@ -184,6 +450,68 @@ describe("extractBluePassOperatorResponsesFromWhatsAppWebhook", () => {
         counterText: null
       }
     ]);
+  });
+});
+
+describe("extractWhatsAppInboundTextMessagesFromWebhook", () => {
+  it("extracts ordinary inbound WhatsApp text messages for conversational context", () => {
+    const messages = extractWhatsAppInboundTextMessagesFromWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: "6285156246329",
+                    id: "wamid.traveller.status",
+                    type: "text",
+                    text: {
+                      body: "what is my booking status?"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(messages).toEqual([
+      {
+        from: "6285156246329",
+        providerMessageId: "wamid.traveller.status",
+        body: "what is my booking status?"
+      }
+    ]);
+  });
+
+  it("does not treat empty text messages as conversational context", () => {
+    const messages = extractWhatsAppInboundTextMessagesFromWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: "6285156246329",
+                    id: "wamid.empty",
+                    type: "text",
+                    text: {
+                      body: "   "
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(messages).toEqual([]);
   });
 });
 

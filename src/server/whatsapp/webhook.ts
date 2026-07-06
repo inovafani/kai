@@ -21,6 +21,12 @@ export type WhatsAppWebhookMessageStatus = {
   }>;
 };
 
+export type WhatsAppInboundTextMessage = {
+  from: string;
+  providerMessageId: string | null;
+  body: string;
+};
+
 type WhatsAppWebhookPayload = {
   entry?: Array<{
     changes?: Array<{
@@ -67,12 +73,19 @@ type WhatsAppWebhookStatus = {
   }>;
 };
 
-const operatorResponsePattern = /^(accept|decline|counter):([^\s]+)(?:\s+([\s\S]+))?$/i;
+const operatorResponsePattern =
+  /^(accept|decline|counter|payment_ready|payment-ready|booking_confirmed|booking-confirmed):([^\s]+)(?:\s+([\s\S]+))?$/i;
 const operatorTextActionMap: Record<string, BluePassOperatorResponseAction> = {
   accept: "accept",
   decline: "decline",
   counter: "counter",
-  "counter-offer": "counter"
+  "counter-offer": "counter",
+  "payment ready": "payment_ready",
+  "payment-ready": "payment_ready",
+  "payment_ready": "payment_ready",
+  "booking confirmed": "booking_confirmed",
+  "booking-confirmed": "booking_confirmed",
+  "booking_confirmed": "booking_confirmed"
 };
 
 export function extractBluePassOperatorResponsesFromWhatsAppWebhook(payload: unknown): BluePassOperatorWebhookResponse[] {
@@ -89,6 +102,14 @@ export function extractWhatsAppMessageStatusesFromWebhook(payload: unknown): Wha
   return statuses
     .map((status) => normalizeWhatsAppStatus(status))
     .filter((status): status is WhatsAppWebhookMessageStatus => Boolean(status));
+}
+
+export function extractWhatsAppInboundTextMessagesFromWebhook(payload: unknown): WhatsAppInboundTextMessage[] {
+  const messages = extractWhatsAppMessages(payload);
+
+  return messages
+    .map((message) => normalizeInboundTextMessage(message))
+    .filter((message): message is WhatsAppInboundTextMessage => Boolean(message));
 }
 
 function extractWhatsAppMessages(payload: unknown): WhatsAppWebhookMessage[] {
@@ -126,15 +147,57 @@ function parseBluePassOperatorResponse(message: WhatsAppWebhookMessage): BluePas
     const trimmedPayload = payload.trim();
     const action = operatorTextActionMap[trimmedPayload.toLowerCase()];
     if (!action) {
-      if (!looksLikeCounterDetails(trimmedPayload)) return null;
+      if (looksLikeBookingConfirmationDetails(trimmedPayload)) {
+        return {
+          action: "booking_confirmed",
+          inquiryId: null,
+          providerMessageId: message.id ?? null,
+          operatorPhone: message.from ?? null,
+          counterText: trimmedPayload
+        };
+      }
 
-      return {
-        action: "counter",
-        inquiryId: null,
-        providerMessageId: message.id ?? null,
-        operatorPhone: message.from ?? null,
-        counterText: trimmedPayload
-      };
+      if (looksLikePaymentReadyDetails(trimmedPayload)) {
+        return {
+          action: "payment_ready",
+          inquiryId: null,
+          providerMessageId: message.id ?? null,
+          operatorPhone: message.from ?? null,
+          counterText: trimmedPayload
+        };
+      }
+
+      if (looksLikeCounterDetails(trimmedPayload)) {
+        return {
+          action: "counter",
+          inquiryId: null,
+          providerMessageId: message.id ?? null,
+          operatorPhone: message.from ?? null,
+          counterText: trimmedPayload
+        };
+      }
+
+      if (looksLikeAcceptDetails(trimmedPayload)) {
+        return {
+          action: "accept",
+          inquiryId: null,
+          providerMessageId: message.id ?? null,
+          operatorPhone: message.from ?? null,
+          counterText: null
+        };
+      }
+
+      if (looksLikeDeclineDetails(trimmedPayload)) {
+        return {
+          action: "decline",
+          inquiryId: null,
+          providerMessageId: message.id ?? null,
+          operatorPhone: message.from ?? null,
+          counterText: null
+        };
+      }
+
+      return null;
     }
 
     return {
@@ -147,12 +210,31 @@ function parseBluePassOperatorResponse(message: WhatsAppWebhookMessage): BluePas
   }
 
   return {
-    action: match[1].toLowerCase() as BluePassOperatorResponseAction,
+    action: normalizeOperatorAction(match[1]),
     inquiryId: match[2],
     providerMessageId: message.id ?? null,
     operatorPhone: message.from ?? null,
     counterText: match[3]?.trim() || null
   };
+}
+
+function normalizeInboundTextMessage(message: WhatsAppWebhookMessage): WhatsAppInboundTextMessage | null {
+  const from = message.from?.trim();
+  const body = message.text?.body?.trim();
+  if (!from || !body) return null;
+
+  return {
+    from,
+    providerMessageId: message.id ?? null,
+    body
+  };
+}
+
+function normalizeOperatorAction(value: string): BluePassOperatorResponseAction {
+  const normalized = value.toLowerCase().replace(/-/g, "_");
+  if (normalized === "payment_ready") return "payment_ready";
+  if (normalized === "booking_confirmed") return "booking_confirmed";
+  return normalized as BluePassOperatorResponseAction;
 }
 
 function looksLikeCounterDetails(value: string) {
@@ -161,6 +243,48 @@ function looksLikeCounterDetails(value: string) {
   const hasCommercialDetails = /\b(?:price|usd|\$|includes?|excludes?|deposit|condition)\b/.test(normalized);
 
   return hasAvailability && hasCommercialDetails;
+}
+
+function looksLikeAcceptDetails(value: string) {
+  const normalized = value.toLowerCase();
+  const hasAvailability = /\b(?:available|confirmed availability|can do|we can do|ok available|slot available)\b/.test(
+    normalized
+  );
+  const hasDecline = /\b(?:not available|unavailable|full|sold out|cannot|can't|no slot)\b/.test(normalized);
+
+  return hasAvailability && !hasDecline;
+}
+
+function looksLikeDeclineDetails(value: string) {
+  const normalized = value.toLowerCase();
+
+  return /\b(?:not available|unavailable|full|sold out|fully booked|cannot|can't|no slot|no availability)\b/.test(
+    normalized
+  );
+}
+
+function looksLikePaymentReadyDetails(value: string) {
+  const normalized = value.toLowerCase();
+  const hasHoldOrPayment = /\b(?:slot held|held|hold|slot on|payment link|pay\s?link|pay here|payment url|balance due|payment path)\b/.test(
+    normalized
+  );
+  const hasBookingContext = /\b(?:booking reference|reference|ref|confirm(?:ation)?|payment|pay|deposit|balance)\b/.test(
+    normalized
+  );
+
+  return hasHoldOrPayment && hasBookingContext;
+}
+
+function looksLikeBookingConfirmationDetails(value: string) {
+  const normalized = value.toLowerCase();
+  const hasConfirmation = /\b(?:booking confirmed|confirmed booking|reservation confirmed|confirmed|booking ok|booking okay|booking done)\b/.test(
+    normalized
+  );
+  const hasPaymentOrReference = /\b(?:payment received|payment done|paid|booking reference|reference|ref|confirmation number)\b/.test(
+    normalized
+  );
+
+  return hasConfirmation && hasPaymentOrReference;
 }
 
 function normalizeWhatsAppStatus(status: WhatsAppWebhookStatus): WhatsAppWebhookMessageStatus | null {

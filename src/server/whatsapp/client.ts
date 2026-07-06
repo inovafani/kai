@@ -133,12 +133,16 @@ function resolveMetaGraphVersion() {
 }
 
 function normalizeRecipientPhone(value: string) {
-  const normalized = value.trim().replace(/[^\d]/g, "");
-  if (!normalized) {
+  const digits = value.trim().replace(/[^\d]/g, "");
+  if (!digits) {
     throw new Error("WhatsApp recipient phone number is required.");
   }
 
-  return normalized;
+  if (digits.startsWith("0")) {
+    return `62${digits.slice(1)}`;
+  }
+
+  return digits;
 }
 
 function maskPhoneNumber(value: string) {

@@ -1,8 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createOrReuseBluePassInquiry, handleBluePassOperatorResponse } from "./bluepass-inquiry-repository";
-import { getBluePassQuote } from "./bluepass-quote";
+import { approveBluePassQuote, getBluePassQuote } from "./bluepass-quote";
 import { prisma } from "@/lib/prisma";
+
+const originalEnv = { ...process.env };
+
+beforeEach(() => {
+  delete process.env.META_GRAPH_VERSION;
+  delete process.env.WHATSAPP_ACCESS_TOKEN;
+  delete process.env.WHATSAPP_PHONE_ID_KAI;
+  delete process.env.WHATSAPP_PHONE_ID_OPS;
+});
+
+afterEach(() => {
+  process.env = { ...originalEnv };
+  vi.unstubAllGlobals();
+});
 
 describe("bluepass quote", () => {
   it("creates a ready quote from operator counter details", async () => {
@@ -134,6 +148,179 @@ describe("bluepass quote", () => {
       conservationContributionCents: null
     });
   });
+
+  it("notifies operator and traveller when the traveller approves a quote", async () => {
+    process.env.META_GRAPH_VERSION = "v20.0";
+    process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token";
+    process.env.WHATSAPP_PHONE_ID_KAI = "1115079071692326";
+    process.env.WHATSAPP_PHONE_ID_OPS = "1115079071692326";
+
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        messages: [{ id: `wamid.${randomUUID()}` }]
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { tenantId, conversationId } = await createTestConversation("approval-notify");
+    const created = await createOrReuseBluePassInquiry({
+      tenantId,
+      conversationId,
+      travellerMessage: "Calico Jack Komodo for 2 guests on 20 July",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "20 July",
+        guests: 2,
+        travellerName: "Putro",
+        travellerEmail: "putro@example.com",
+        travellerPhone: "085156246329"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorId: "operator_calico_jack",
+        operatorName: "Calico Jack",
+        operatorPhone: "6285337210180"
+      }
+    });
+
+    await handleBluePassOperatorResponse({
+      inquiryId: created.inquiry.id,
+      action: "counter",
+      counterText:
+        "Available 22 July 2026. Final price USD 3,900 per cabin/night for 2 guests. Includes full board meals, daily dives, crew, tanks, weights, and airport transfers. Excludes flights, park fees, alcohol, tips, and personal expenses. Condition: 30% deposit to hold, balance due 30 days before departure."
+    });
+    fetchMock.mockClear();
+
+    const quote = await approveBluePassQuote({ quoteId: created.inquiry.id });
+    const sentBodies = fetchMock.mock.calls.map((call) => JSON.parse(String((call[1] as RequestInit).body)));
+    const events = await prisma.bluePassInquiryEvent.findMany({
+      where: {
+        bluePassInquiryId: created.inquiry.id,
+        type: {
+          in: [
+            "BLUEPASS_QUOTE_APPROVED",
+            "QUOTE_APPROVAL_OPERATOR_NOTIFICATION_SENT",
+            "QUOTE_APPROVAL_TRAVELLER_NOTIFICATION_SENT"
+          ]
+        }
+      },
+      orderBy: { createdAt: "asc" }
+    });
+
+    expect(quote).toMatchObject({
+      status: "TRAVELLER_APPROVED",
+      selectedYachtName: "Calico Jack",
+      dateWindow: "22 July"
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sentBodies[0]).toMatchObject({
+      to: "6285337210180",
+      type: "text"
+    });
+    expect(sentBodies[0].text.body).toContain("Putro approved the BluePass quote");
+    expect(sentBodies[0].text.body).toContain("Please hold the slot");
+    expect(sentBodies[0].text.body).toContain("payment path");
+    expect(sentBodies[1]).toMatchObject({
+      to: "085156246329",
+      type: "text"
+    });
+    expect(sentBodies[1].text.body).toContain("Your BluePass quote for Calico Jack is approved");
+    expect(sentBodies[1].text.body).toContain("payment path");
+    expect(events.map((event) => event.type)).toEqual([
+      "BLUEPASS_QUOTE_APPROVED",
+      "QUOTE_APPROVAL_OPERATOR_NOTIFICATION_SENT",
+      "QUOTE_APPROVAL_TRAVELLER_NOTIFICATION_SENT"
+    ]);
+  }, 20_000);
+
+  it("surfaces payment-ready and booking-confirmed operational status on the quote", async () => {
+    const { tenantId, conversationId } = await createTestConversation("operational-status");
+    const created = await createOrReuseBluePassInquiry({
+      tenantId,
+      conversationId,
+      travellerMessage: "Calico Jack Komodo for 2 guests on 20 July",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "20 July",
+        guests: 2,
+        travellerName: "Putro",
+        travellerEmail: "putro@example.com",
+        travellerPhone: "085156246329"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorId: "operator_calico_jack",
+        operatorName: "Calico Jack",
+        operatorPhone: "6285337210180"
+      }
+    });
+
+    await handleBluePassOperatorResponse({
+      inquiryId: created.inquiry.id,
+      action: "counter",
+      counterText:
+        "Available 22 July 2026. Final price USD 3,900 per cabin/night for 2 guests. Includes full board meals. Excludes flights. Condition: 30% deposit to hold."
+    });
+    await prisma.bluePassInquiryEvent.create({
+      data: {
+        tenantId,
+        conversationId,
+        bluePassInquiryId: created.inquiry.id,
+        type: "BLUEPASS_QUOTE_APPROVED",
+        fromStatus: "COUNTER_OFFERED",
+        toStatus: "COUNTER_OFFERED",
+        metadata: {
+          quoteId: created.inquiry.id,
+          previousQuoteStatus: "READY_FOR_TRAVELLER",
+          nextQuoteStatus: "TRAVELLER_APPROVED"
+        }
+      }
+    });
+    await prisma.bluePassInquiryEvent.create({
+      data: {
+        tenantId,
+        conversationId,
+        bluePassInquiryId: created.inquiry.id,
+        type: "OPERATOR_PAYMENT_READY",
+        fromStatus: "COUNTER_OFFERED",
+        toStatus: "COUNTER_OFFERED",
+        metadata: {
+          paymentText: "Slot held. Payment link: https://pay.example/cj-22. Booking reference CJ-2207."
+        }
+      }
+    });
+
+    const paymentQuote = await getBluePassQuote({ quoteId: created.inquiry.id });
+    expect(paymentQuote).toMatchObject({
+      status: "TRAVELLER_APPROVED",
+      operationalStatus: "PAYMENT_READY",
+      paymentText: "Slot held. Payment link: https://pay.example/cj-22. Booking reference CJ-2207.",
+      confirmationText: null
+    });
+
+    await prisma.bluePassInquiryEvent.create({
+      data: {
+        tenantId,
+        conversationId,
+        bluePassInquiryId: created.inquiry.id,
+        type: "OPERATOR_BOOKING_CONFIRMED",
+        fromStatus: "COUNTER_OFFERED",
+        toStatus: "CLOSED",
+        metadata: {
+          confirmationText: "Payment received. Booking confirmed for 22 July. Booking reference CJ-2207."
+        }
+      }
+    });
+
+    const confirmedQuote = await getBluePassQuote({ quoteId: created.inquiry.id });
+    expect(confirmedQuote).toMatchObject({
+      operationalStatus: "BOOKING_CONFIRMED",
+      paymentText: "Slot held. Payment link: https://pay.example/cj-22. Booking reference CJ-2207.",
+      confirmationText: "Payment received. Booking confirmed for 22 July. Booking reference CJ-2207."
+    });
+  }, 20_000);
 });
 
 async function createTestConversation(label: string) {

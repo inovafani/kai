@@ -8,6 +8,7 @@ test-results
 playwright-report
 tsconfig.tsbuildinfo
 .next-dev*.log
+kai-dev-*.log
 .env
 .env.*
 !.env.example

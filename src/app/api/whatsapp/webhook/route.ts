@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import {
   handleBluePassOperatorResponse,
+  handleBluePassWhatsAppContextMessage,
   recordBluePassTravellerWhatsAppDeliveryStatus,
   resolveLatestPendingBluePassInquiryIdForOperatorPhone
 } from "@/server/bluepass/bluepass-inquiry-repository";
 import {
   extractBluePassOperatorResponsesFromWhatsAppWebhook,
+  extractWhatsAppInboundTextMessagesFromWebhook,
   extractWhatsAppMessageStatusesFromWebhook
 } from "@/server/whatsapp/webhook";
 
@@ -26,10 +28,13 @@ export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
   const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook(payload);
   const statuses = extractWhatsAppMessageStatusesFromWebhook(payload);
+  const contextMessages = responses.length === 0 ? extractWhatsAppInboundTextMessagesFromWebhook(payload) : [];
   const failures: Array<{ inquiryId: string; reason: string }> = [];
   const statusFailures: Array<{ providerMessageId: string; reason: string }> = [];
+  const contextFailures: Array<{ providerMessageId: string | null; reason: string }> = [];
   let handled = 0;
   let statusesHandled = 0;
+  let contextHandled = 0;
 
   for (const response of responses) {
     try {
@@ -64,6 +69,20 @@ export async function POST(request: Request) {
     }
   }
 
+  for (const message of contextMessages) {
+    try {
+      const result = await handleBluePassWhatsAppContextMessage(message);
+      if (result.handled) {
+        contextHandled += 1;
+      }
+    } catch (error) {
+      contextFailures.push({
+        providerMessageId: message.providerMessageId,
+        reason: error instanceof Error ? error.message : "WhatsApp context message failed."
+      });
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     handled,
@@ -71,6 +90,9 @@ export async function POST(request: Request) {
     failures,
     statusesHandled,
     statusesFailed: statusFailures.length,
-    statusFailures
+    statusFailures,
+    contextHandled,
+    contextFailed: contextFailures.length,
+    contextFailures
   });
 }
