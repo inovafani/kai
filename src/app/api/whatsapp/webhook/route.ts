@@ -5,8 +5,15 @@ import {
   resolveLatestPendingBluePassInquiryIdForOperatorPhone
 } from "@/server/bluepass/bluepass-inquiry-repository";
 import {
+  handleBluePassTravellerWhatsAppMessage,
+  markBluePassWhatsAppHumanTakeover
+} from "@/server/bluepass/bluepass-whatsapp-flow";
+import {
   extractBluePassOperatorResponsesFromWhatsAppWebhook,
-  extractWhatsAppMessageStatusesFromWebhook
+  extractBluePassTravellerMessagesFromWhatsAppWebhook,
+  extractWhatsAppHumanAgentEchoesFromWebhook,
+  extractWhatsAppMessageStatusesFromWebhook,
+  verifyWhatsAppWebhookSignature
 } from "@/server/whatsapp/webhook";
 
 export async function GET(request: Request) {
@@ -23,13 +30,41 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const payload = await request.json().catch(() => null);
-  const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook(payload);
+  const rawBody = await request.text();
+
+  // Enforced only when META_APP_SECRET is configured, so existing deploys
+  // keep working until the secret lands in env.
+  const appSecret = process.env.META_APP_SECRET?.trim();
+  if (appSecret) {
+    const valid = verifyWhatsAppWebhookSignature({
+      rawBody,
+      signatureHeader: request.headers.get("x-hub-signature-256"),
+      appSecret
+    });
+    if (!valid) {
+      return NextResponse.json({ ok: false, error: "Invalid webhook signature." }, { status: 403 });
+    }
+  }
+
+  let payload: unknown = null;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    payload = null;
+  }
+
+  const routing = { kaiPhoneNumberId: process.env.WHATSAPP_PHONE_ID_KAI ?? null };
+  const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook(payload, routing);
+  const travellerMessages = extractBluePassTravellerMessagesFromWhatsAppWebhook(payload, routing);
+  const echoes = extractWhatsAppHumanAgentEchoesFromWebhook(payload);
   const statuses = extractWhatsAppMessageStatusesFromWebhook(payload);
   const failures: Array<{ inquiryId: string; reason: string }> = [];
   const statusFailures: Array<{ providerMessageId: string; reason: string }> = [];
+  const travellerFailures: Array<{ fromPhone: string; reason: string }> = [];
   let handled = 0;
   let statusesHandled = 0;
+  let travellerHandled = 0;
+  let echoesHandled = 0;
 
   for (const response of responses) {
     try {
@@ -52,6 +87,34 @@ export async function POST(request: Request) {
     }
   }
 
+  for (const message of travellerMessages) {
+    try {
+      const result = await handleBluePassTravellerWhatsAppMessage({
+        fromPhone: message.fromPhone,
+        content: message.content
+      });
+      if (result.status === "SEND_FAILED") {
+        throw new Error(result.reason);
+      }
+      travellerHandled += 1;
+    } catch (error) {
+      travellerFailures.push({
+        fromPhone: message.fromPhone,
+        reason: error instanceof Error ? error.message : "Traveller message handling failed."
+      });
+    }
+  }
+
+  for (const echo of echoes) {
+    try {
+      await markBluePassWhatsAppHumanTakeover({ customerPhone: echo.customerPhone });
+      echoesHandled += 1;
+    } catch {
+      // Takeover marking is best-effort; the human's reply already reached
+      // the customer via the phone app.
+    }
+  }
+
   for (const status of statuses) {
     try {
       await recordBluePassTravellerWhatsAppDeliveryStatus(status);
@@ -69,6 +132,10 @@ export async function POST(request: Request) {
     handled,
     failed: failures.length,
     failures,
+    travellerHandled,
+    travellerFailed: travellerFailures.length,
+    travellerFailures,
+    echoesHandled,
     statusesHandled,
     statusesFailed: statusFailures.length,
     statusFailures
