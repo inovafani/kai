@@ -22,6 +22,16 @@ import {
   buildBluePassYachtComparisonReply,
   buildBluePassYachtOverviewReply
 } from "@/core/bluepass/reply";
+import {
+  bluePassTriageSuggestedReplies,
+  buildBluePassOperatorReply,
+  buildBluePassPartnerReply,
+  buildBluePassTriageGreeting,
+  classifyBluePassPersona,
+  shouldSendBluePassTriageGreeting,
+  type BluePassPersonaReply,
+  type BluePassSuggestedReply
+} from "@/core/bluepass/triage";
 import type { BluePassReferralInput } from "./bluepass-inquiry-repository";
 import {
   createOrReuseBluePassInquiry,
@@ -42,6 +52,28 @@ export type BluePassMarketplaceMessageInput = {
 
 export async function handleBluePassMarketplaceMessage(input: BluePassMarketplaceMessageInput) {
   const catalog = resolveBluePassCatalog(input.catalog);
+
+  // Layer 0 — persona triage. Operators and partners get their onboarding
+  // playbooks and never enter the traveller booking flow; persona is
+  // re-derived from the message history every turn (no stored state).
+  const persona = classifyBluePassPersona([...input.priorTravellerMessages, input.content]);
+
+  if (persona === "OPERATOR" || persona === "PARTNER") {
+    const pitched = classifyBluePassPersona(input.priorTravellerMessages) === persona;
+    const personaReply: BluePassPersonaReply =
+      persona === "OPERATOR"
+        ? buildBluePassOperatorReply({ latestMessage: input.content, pitched })
+        : buildBluePassPartnerReply({ latestMessage: input.content, pitched });
+    const personaMatches = personaReply.showCatalog
+      ? searchBluePassYachts(
+          personaReply.catalogDestination ? { destination: personaReply.catalogDestination } : {},
+          catalog
+        ).slice(0, 2)
+      : [];
+
+    return buildConciergeResponse(personaReply.reply, personaMatches);
+  }
+
   const historyIntent = extractBluePassInquiryIntent(input.priorTravellerMessages);
   const messageIntent = extractBluePassInquiryIntent([input.content]);
   const latestMentionedYachts = resolveMentionedYachts(input.content, catalog);
@@ -167,6 +199,25 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   const missingFields = getMissingBluePassInquiryFields(intent);
 
   if (missingFields.length > 0) {
+    // Nothing to act on at all ("hi", "info?") — ask who we're talking to
+    // instead of demanding trip details from someone who may be an
+    // operator or partner.
+    const hasIntentSignal = Boolean(
+      intent.destination ||
+        intent.dateWindow ||
+        intent.guests ||
+        (intent.interests?.length ?? 0) > 0 ||
+        intent.travellerName ||
+        intent.travellerEmail ||
+        selectedYacht
+    );
+
+    if (shouldSendBluePassTriageGreeting({ persona, missingFields, hasIntentSignal })) {
+      // One-tap triage: the three chips re-enter the flow as persona-
+      // classifying phrases, so a tap lands on the right playbook.
+      return buildConciergeResponse(buildBluePassTriageGreeting(), [], [...bluePassTriageSuggestedReplies]);
+    }
+
     const promptMissingFields = getPromptMissingFields(missingFields);
 
     return {
@@ -204,7 +255,13 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
       bluepassInquiry: null,
       bluepassLedger: [],
       bluepassDispatch: null,
-      paymentRequest: null
+      paymentRequest: null,
+      // One-tap: "Send inquiry" matches the submission parser; "Why BluePass?"
+      // matches the value-question parser — both re-enter as real branches.
+      suggestedReplies: [
+        { id: "confirm:send", title: "Send inquiry" },
+        { id: "confirm:why", title: "Why BluePass?" }
+      ] satisfies BluePassSuggestedReply[]
     };
   }
 
@@ -322,7 +379,11 @@ function levenshteinDistance(a: string, b: string) {
   return previous[b.length];
 }
 
-function buildConciergeResponse(assistantContent: string, bluepassMatches: BluePassYachtCard[] = []) {
+function buildConciergeResponse(
+  assistantContent: string,
+  bluepassMatches: BluePassYachtCard[] = [],
+  suggestedReplies: BluePassSuggestedReply[] = []
+) {
   return {
     assistantContent,
     bluepassMatches,
@@ -330,7 +391,8 @@ function buildConciergeResponse(assistantContent: string, bluepassMatches: BlueP
     bluepassLedger: [],
     bluepassDispatch: null,
     paymentRequest: null,
-    contactRequest: null
+    contactRequest: null,
+    suggestedReplies
   };
 }
 

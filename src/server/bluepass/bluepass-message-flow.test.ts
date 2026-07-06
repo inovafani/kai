@@ -635,3 +635,72 @@ describe("handleBluePassMarketplaceMessage", () => {
     });
   }, 60_000);
 });
+
+describe("handleBluePassMarketplaceMessage persona triage", () => {
+  it("triages an operator into the onboarding playbook, never the booking flow", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "Hi, I run a dive resort in Raja Ampat and want to list my boats",
+      priorTravellerMessages: []
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.assistantContent).toContain("82%");
+    expect(result.assistantContent).toContain("never marked up");
+    expect(result.assistantContent).not.toContain("destination");
+  });
+
+  it("keeps the operator persona across follow-up questions", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "How does the 18% break down?",
+      priorTravellerMessages: ["I run a dive resort in Raja Ampat"]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("3%");
+    expect(result.assistantContent).toContain("no listing fees");
+  });
+
+  it("triages a partner and attaches catalog cards for a client destination brief", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "Komodo for my clients",
+      priorTravellerMessages: ["I'm a travel agent and I book for clients"]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("Komodo");
+    expect(result.bluepassMatches.length).toBeGreaterThan(0);
+    expect(result.bluepassMatches.every((match) => match.region === "Komodo")).toBe(true);
+  });
+
+  it("asks the triage question on a bare greeting instead of demanding trip details", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "hello",
+      priorTravellerMessages: []
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("planning a trip");
+    expect(result.assistantContent).toContain("book and refer for clients");
+  });
+
+  it("still runs the traveller flow when the visitor has a romantic partner, not a business", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "My partner and I want to dive Komodo next month",
+      priorTravellerMessages: []
+    });
+
+    expect(result.assistantContent).not.toContain("82%");
+    expect(result.assistantContent).not.toContain("tracked link");
+  });
+});

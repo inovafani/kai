@@ -133,6 +133,9 @@ model Conversation {
   channel     String
   travellerId String?
   leadId      String?
+  // E.164 digits (no "+") — set for WhatsApp-channel conversations so the
+  // webhook can find the thread for an inbound sender.
+  whatsappPhone String?
   createdAt   DateTime                @default(now())
   updatedAt   DateTime                @updatedAt
 
@@ -140,6 +143,8 @@ model Conversation {
   messages        Message[]
   bookingState    ConversationBookingState?
   manualInquiries ManualInquiry[]
+
+  @@unique([tenantId, whatsappPhone])
 }
 
 model Message {
