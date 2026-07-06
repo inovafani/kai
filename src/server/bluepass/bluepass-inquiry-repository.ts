@@ -959,3 +959,90 @@ function buildOperatorInquiryTemplateInput(input: {
 function formatReferralSource(code: string, role?: string | null) {
   return role ? `${role.toLowerCase()} / ${code}` : code;
 }
+
+// ─── Operator / partner persona leads ────────────────────────────────────────
+// Onboarding leads captured by the triage playbooks live in the same
+// BluePassInquiry table (no schema change) with tripType marking the
+// vertical. One lead row per conversation; later details merge in.
+
+export type BluePassPersonaLeadInput = {
+  tenantId: string;
+  conversationId: string;
+  persona: "OPERATOR" | "PARTNER";
+  travellerMessage: string;
+  lead: {
+    company?: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+    region?: string;
+  };
+};
+
+const personaLeadTripTypes = ["OPERATOR_LEAD", "PARTNER_LEAD"] as const;
+
+export async function upsertBluePassPersonaLead(input: BluePassPersonaLeadInput) {
+  const tripType = input.persona === "OPERATOR" ? "OPERATOR_LEAD" : "PARTNER_LEAD";
+  const notes = [
+    input.lead.company ? `Company: ${input.lead.company}` : null,
+    input.lead.region ? `Region: ${input.lead.region}` : null
+  ]
+    .filter(Boolean)
+    .join(" | ");
+
+  const existing = await prisma.bluePassInquiry.findFirst({
+    where: {
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      tripType: { in: [...personaLeadTripTypes] }
+    },
+    orderBy: { createdAt: "desc" }
+  });
+
+  if (existing) {
+    const inquiry = await prisma.bluePassInquiry.update({
+      where: { id: existing.id },
+      data: {
+        tripType,
+        travellerName: input.lead.name ?? existing.travellerName,
+        travellerEmail: input.lead.email ?? existing.travellerEmail,
+        travellerPhone: input.lead.phone ?? existing.travellerPhone,
+        destination: input.lead.region ?? existing.destination,
+        notes: notes || existing.notes,
+        travellerMessage: input.travellerMessage
+      }
+    });
+
+    await createBluePassInquiryEvent({
+      inquiry,
+      type: "PERSONA_LEAD_UPDATED",
+      metadata: { persona: input.persona }
+    });
+
+    return inquiry;
+  }
+
+  const inquiry = await prisma.bluePassInquiry.create({
+    data: {
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      status: "DRAFT",
+      sourceChannel: "WEB_WIDGET",
+      tripType,
+      travellerName: input.lead.name ?? null,
+      travellerEmail: input.lead.email ?? null,
+      travellerPhone: input.lead.phone ?? null,
+      destination: input.lead.region ?? null,
+      notes: notes || null,
+      travellerMessage: input.travellerMessage
+    }
+  });
+
+  await createBluePassInquiryEvent({
+    inquiry,
+    type: "PERSONA_LEAD_CREATED",
+    metadata: { persona: input.persona }
+  });
+
+  return inquiry;
+}

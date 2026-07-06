@@ -22,6 +22,17 @@ import {
   buildBluePassYachtComparisonReply,
   buildBluePassYachtOverviewReply
 } from "@/core/bluepass/reply";
+import {
+  buildBluePassLeadCapturedReply,
+  buildBluePassOperatorReply,
+  buildBluePassPartnerReply,
+  buildBluePassTriageGreeting,
+  classifyBluePassPersona,
+  shouldSendBluePassTriageGreeting,
+  type BluePassPersonaReply
+} from "@/core/bluepass/triage";
+import { extractBluePassLead, leadHasReachableChannel, mergeBluePassLead } from "@/core/bluepass/lead";
+import { upsertBluePassPersonaLead } from "./bluepass-inquiry-repository";
 import type { BluePassReferralInput } from "./bluepass-inquiry-repository";
 import {
   createOrReuseBluePassInquiry,
@@ -42,6 +53,53 @@ export type BluePassMarketplaceMessageInput = {
 
 export async function handleBluePassMarketplaceMessage(input: BluePassMarketplaceMessageInput) {
   const catalog = resolveBluePassCatalog(input.catalog);
+
+  // Layer 0 — persona triage. Operators and partners get their onboarding
+  // playbooks and never enter the traveller booking flow; persona is
+  // re-derived from the message history every turn (no stored state).
+  const persona = classifyBluePassPersona([...input.priorTravellerMessages, input.content]);
+
+  if (persona === "OPERATOR" || persona === "PARTNER") {
+    // Terminal node: the moment the latest message hands over a reachable
+    // channel (email/phone), capture the lead and acknowledge — never
+    // re-ask for what was just given. Persistence is best-effort so the
+    // conversation survives a database hiccup.
+    const latestLead = extractBluePassLead([input.content]);
+
+    if (leadHasReachableChannel(latestLead)) {
+      const lead = mergeBluePassLead(extractBluePassLead(input.priorTravellerMessages), latestLead);
+      const savedLead = await upsertBluePassPersonaLead({
+        tenantId: input.tenantId,
+        conversationId: input.conversationId,
+        persona,
+        travellerMessage: input.content,
+        lead
+      }).catch((error) => {
+        console.warn("[bluepass] persona lead persistence failed", error);
+        return null;
+      });
+
+      return {
+        ...buildConciergeResponse(buildBluePassLeadCapturedReply({ persona, lead })),
+        bluepassInquiry: savedLead
+      };
+    }
+
+    const pitched = classifyBluePassPersona(input.priorTravellerMessages) === persona;
+    const personaReply: BluePassPersonaReply =
+      persona === "OPERATOR"
+        ? buildBluePassOperatorReply({ latestMessage: input.content, pitched })
+        : buildBluePassPartnerReply({ latestMessage: input.content, pitched });
+    const personaMatches = personaReply.showCatalog
+      ? searchBluePassYachts(
+          personaReply.catalogDestination ? { destination: personaReply.catalogDestination } : {},
+          catalog
+        ).slice(0, 2)
+      : [];
+
+    return buildConciergeResponse(personaReply.reply, personaMatches);
+  }
+
   const historyIntent = extractBluePassInquiryIntent(input.priorTravellerMessages);
   const messageIntent = extractBluePassInquiryIntent([input.content]);
   const latestMentionedYachts = resolveMentionedYachts(input.content, catalog);
@@ -167,6 +225,23 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   const missingFields = getMissingBluePassInquiryFields(intent);
 
   if (missingFields.length > 0) {
+    // Nothing to act on at all ("hi", "info?") — ask who we're talking to
+    // instead of demanding trip details from someone who may be an
+    // operator or partner.
+    const hasIntentSignal = Boolean(
+      intent.destination ||
+        intent.dateWindow ||
+        intent.guests ||
+        (intent.interests?.length ?? 0) > 0 ||
+        intent.travellerName ||
+        intent.travellerEmail ||
+        selectedYacht
+    );
+
+    if (shouldSendBluePassTriageGreeting({ persona, missingFields, hasIntentSignal })) {
+      return buildConciergeResponse(buildBluePassTriageGreeting());
+    }
+
     const promptMissingFields = getPromptMissingFields(missingFields);
 
     return {

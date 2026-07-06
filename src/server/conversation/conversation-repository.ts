@@ -121,6 +121,46 @@ export async function createWidgetConversation(input: { tenantId: string }) {
   });
 }
 
+export async function findOrCreateWhatsAppConversation(input: { tenantId: string; whatsappPhone: string }) {
+  const existing = await prisma.conversation.findFirst({
+    where: {
+      tenantId: input.tenantId,
+      whatsappPhone: input.whatsappPhone
+    }
+  });
+  if (existing) return existing;
+
+  return prisma.conversation.create({
+    data: {
+      tenantId: input.tenantId,
+      channel: "WHATSAPP",
+      controlMode: "AI",
+      whatsappPhone: input.whatsappPhone
+    }
+  });
+}
+
+/**
+ * Flip control of a WhatsApp thread (e.g. a human answered from the Business
+ * phone app, so the concierge must go quiet). Creates the conversation when
+ * the human replied before any inbound reached us.
+ */
+export async function setWhatsAppConversationControlMode(input: {
+  tenantId: string;
+  whatsappPhone: string;
+  controlMode: "AI" | "HUMAN" | "PAUSED";
+}) {
+  const conversation = await findOrCreateWhatsAppConversation({
+    tenantId: input.tenantId,
+    whatsappPhone: input.whatsappPhone
+  });
+
+  return prisma.conversation.update({
+    where: { id: conversation.id },
+    data: { controlMode: input.controlMode }
+  });
+}
+
 export async function findTenantConversation(input: { tenantId: string; conversationId: string }) {
   return prisma.conversation.findFirst({
     where: {

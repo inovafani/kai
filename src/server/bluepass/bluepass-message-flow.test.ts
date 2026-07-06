@@ -635,3 +635,125 @@ describe("handleBluePassMarketplaceMessage", () => {
     });
   }, 60_000);
 });
+
+describe("handleBluePassMarketplaceMessage persona triage", () => {
+  it("triages an operator into the onboarding playbook, never the booking flow", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "Hi, I run a dive resort in Raja Ampat and want to list my boats",
+      priorTravellerMessages: []
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.assistantContent).toContain("82%");
+    expect(result.assistantContent).toContain("never marked up");
+    expect(result.assistantContent).not.toContain("destination");
+  });
+
+  it("keeps the operator persona across follow-up questions", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "How does the 18% break down?",
+      priorTravellerMessages: ["I run a dive resort in Raja Ampat"]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("3%");
+    expect(result.assistantContent).toContain("no listing fees");
+  });
+
+  it("triages a partner and attaches catalog cards for a client destination brief", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "Komodo for my clients",
+      priorTravellerMessages: ["I'm a travel agent and I book for clients"]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("Komodo");
+    expect(result.bluepassMatches.length).toBeGreaterThan(0);
+    expect(result.bluepassMatches.every((match) => match.region === "Komodo")).toBe(true);
+  });
+
+  it("asks the triage question on a bare greeting instead of demanding trip details", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "hello",
+      priorTravellerMessages: []
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("planning a trip");
+    expect(result.assistantContent).toContain("book and refer for clients");
+  });
+
+  it("still runs the traveller flow when the visitor has a romantic partner, not a business", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "My partner and I want to dive Komodo next month",
+      priorTravellerMessages: []
+    });
+
+    expect(result.assistantContent).not.toContain("82%");
+    expect(result.assistantContent).not.toContain("tracked link");
+  });
+});
+
+describe("handleBluePassMarketplaceMessage persona lead capture", () => {
+  it("captures an operator lead the moment a reachable channel lands", async () => {
+    const tenantId = `tenant_${randomUUID()}`;
+    const conversationId = `conversation_${randomUUID()}`;
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: "We're Coral Cove Divers, based in Sorong. Email is ops@coralcove.com",
+      priorTravellerMessages: ["I run a dive resort in Raja Ampat", "How does the 18% break down?"]
+    });
+
+    expect(result.assistantContent).toContain("Coral Cove Divers");
+    expect(result.assistantContent).toContain("ops@coralcove.com");
+    expect(result.assistantContent).toContain("claim link");
+    expect(result.bluepassInquiry).toMatchObject({
+      tripType: "OPERATOR_LEAD",
+      travellerEmail: "ops@coralcove.com"
+    });
+
+    const leadEvent = await prisma.bluePassInquiryEvent.findFirst({
+      where: { bluePassInquiryId: result.bluepassInquiry!.id, type: "PERSONA_LEAD_CREATED" }
+    });
+    expect(leadEvent?.metadata).toMatchObject({ persona: "OPERATOR" });
+  }, 60_000);
+
+  it("merges later details into the same lead instead of creating a second one", async () => {
+    const tenantId = `tenant_${randomUUID()}`;
+    const conversationId = `conversation_${randomUUID()}`;
+    const priorMessages = ["I'm a travel agent", "Our email is bookings@divetravel.com.au"];
+
+    await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: priorMessages[1],
+      priorTravellerMessages: [priorMessages[0]]
+    });
+    const second = await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: "WhatsApp is +61 400 111 222",
+      priorTravellerMessages: priorMessages
+    });
+
+    expect(second.bluepassInquiry).toMatchObject({ tripType: "PARTNER_LEAD" });
+    const leads = await prisma.bluePassInquiry.findMany({
+      where: { tenantId, conversationId }
+    });
+    expect(leads).toHaveLength(1);
+    expect(leads[0].travellerEmail).toBe("bookings@divetravel.com.au");
+    expect(leads[0].travellerPhone).toContain("+61");
+  }, 60_000);
+});
