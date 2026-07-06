@@ -149,6 +149,20 @@ export function buildBluePassTriageGreeting() {
 }
 
 /**
+ * The triage greeting's three options as one-tap chips (WhatsApp interactive
+ * reply buttons, web widget chips). Each title is <=20 chars (Meta's limit)
+ * AND is a phrase classifyBluePassPersona matches, so a tapped chip re-enters
+ * the flow and lands on the right persona without extra routing.
+ */
+export type BluePassSuggestedReply = { id: string; title: string };
+
+export const bluePassTriageSuggestedReplies: ReadonlyArray<BluePassSuggestedReply> = [
+  { id: "triage:traveller", title: "Planning a trip" },
+  { id: "triage:operator", title: "I run trips" },
+  { id: "triage:partner", title: "I refer clients" }
+];
+
+/**
  * True when the conversation gives Kai nothing to act on yet — no persona,
  * no trip intent, no question the marketplace flow already answers — so
  * the triage greeting is the most useful reply.

@@ -1,4 +1,5 @@
 import type { BluePassYachtCard } from "@/core/bluepass/catalog";
+import type { BluePassSuggestedReply } from "@/core/bluepass/triage";
 import {
   createAssistantMessage,
   createTravellerMessage,
@@ -6,7 +7,7 @@ import {
   listRecentTravellerMessageContents,
   setWhatsAppConversationControlMode
 } from "@/server/conversation/conversation-repository";
-import { sendWhatsAppText } from "@/server/whatsapp/client";
+import { sendWhatsAppInteractiveButtons, sendWhatsAppText } from "@/server/whatsapp/client";
 import { handleBluePassMarketplaceMessage } from "./bluepass-message-flow";
 
 export type BluePassTravellerWhatsAppResult =
@@ -60,6 +61,7 @@ export async function handleBluePassTravellerWhatsAppMessage(input: {
   });
 
   const body = buildWhatsAppReplyBody(reply.assistantContent, reply.bluepassMatches);
+  const suggestedReplies = resolveSuggestedReplies(reply);
 
   await createAssistantMessage({
     tenantId,
@@ -68,7 +70,14 @@ export async function handleBluePassTravellerWhatsAppMessage(input: {
   });
 
   try {
-    const sent = await sendWhatsAppText({ to: whatsappPhone, body, role: "kai" });
+    // One-tap: when Kai offers next steps, send them as interactive reply
+    // buttons (valid here — the reply always answers an inbound message, so
+    // we're inside the 24h window). sendWhatsAppInteractiveButtons falls back
+    // to a plain text send when there are no usable buttons.
+    const sent =
+      suggestedReplies.length > 0
+        ? await sendWhatsAppInteractiveButtons({ to: whatsappPhone, body, role: "kai", buttons: suggestedReplies })
+        : await sendWhatsAppText({ to: whatsappPhone, body, role: "kai" });
     return {
       status: "REPLIED",
       conversationId: conversation.id,
@@ -114,6 +123,23 @@ export function buildWhatsAppReplyBody(assistantContent: string, matches: BluePa
     .map((match) => `${match.name} — ${match.region} · ${match.priceSignal}${match.productUrl ? `\n${match.productUrl}` : ""}`);
 
   return `${assistantContent}\n\n${lines.join("\n")}`;
+}
+
+/**
+ * Pull Kai's suggested next steps off a marketplace reply (only some branches
+ * carry them). Read defensively — the reply is a union whose members differ —
+ * and cap at Meta's 3-button limit.
+ */
+function resolveSuggestedReplies(reply: unknown): BluePassSuggestedReply[] {
+  const suggested = (reply as { suggestedReplies?: BluePassSuggestedReply[] }).suggestedReplies;
+  if (!Array.isArray(suggested)) return [];
+
+  return suggested
+    .filter(
+      (item): item is BluePassSuggestedReply =>
+        Boolean(item) && typeof item.id === "string" && typeof item.title === "string" && item.title.trim().length > 0
+    )
+    .slice(0, 3);
 }
 
 function normalizePhone(value: string) {

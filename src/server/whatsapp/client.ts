@@ -37,6 +37,38 @@ type WhatsAppTextApiPayload = {
   };
 };
 
+type WhatsAppInteractiveButton = {
+  type: "reply";
+  reply: { id: string; title: string };
+};
+
+type WhatsAppInteractiveApiPayload = {
+  messaging_product: "whatsapp";
+  to: string;
+  type: "interactive";
+  interactive: {
+    type: "button";
+    body: { text: string };
+    action: { buttons: WhatsAppInteractiveButton[] };
+  };
+};
+
+export type WhatsAppSuggestedReply = {
+  id: string;
+  title: string;
+};
+
+export type WhatsAppInteractiveMessage = {
+  to: string;
+  role?: WhatsAppSenderRole;
+  body: string;
+  buttons: WhatsAppSuggestedReply[];
+};
+
+const whatsAppInteractiveMaxButtons = 3;
+const whatsAppButtonTitleMaxLength = 20;
+const whatsAppInteractiveBodyMaxLength = 1024;
+
 type WhatsAppSendApiResponse = {
   messages?: Array<{ id?: string }>;
 };
@@ -95,6 +127,44 @@ export async function sendWhatsAppText(message: WhatsAppTextMessage): Promise<Wh
   });
 }
 
+/**
+ * Send interactive reply buttons (max 3) — a one-tap alternative to typing.
+ * Free-form session message: valid ONLY inside the 24h customer-service
+ * window (fine for replies to an inbound message). Titles are truncated to
+ * Meta's 20-char limit; button ids ride back on tap as
+ * interactive.button_reply.id. Falls back to a plain text send when no
+ * usable buttons are supplied, so callers never have to branch.
+ */
+export async function sendWhatsAppInteractiveButtons(
+  message: WhatsAppInteractiveMessage
+): Promise<WhatsAppSendResult> {
+  const buttons = message.buttons
+    .filter((button) => button.title.trim().length > 0)
+    .slice(0, whatsAppInteractiveMaxButtons)
+    .map((button) => ({
+      type: "reply" as const,
+      reply: {
+        id: button.id.slice(0, 256),
+        title: button.title.trim().slice(0, whatsAppButtonTitleMaxLength)
+      }
+    }));
+
+  if (buttons.length === 0) {
+    return sendWhatsAppText({ to: message.to, role: message.role, body: message.body });
+  }
+
+  return postWhatsAppMessage(message.role ?? "kai", {
+    messaging_product: "whatsapp",
+    to: normalizeRecipientPhone(message.to),
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: { text: message.body.slice(0, whatsAppInteractiveBodyMaxLength) },
+      action: { buttons }
+    }
+  });
+}
+
 export function resolveWhatsAppPhoneId(role: WhatsAppSenderRole) {
   const kaiPhoneId = presentEnvValue("WHATSAPP_PHONE_ID_KAI");
 
@@ -149,7 +219,7 @@ function maskPhoneNumber(value: string) {
 
 async function postWhatsAppMessage(
   role: WhatsAppSenderRole,
-  payload: WhatsAppTemplateApiPayload | WhatsAppTextApiPayload
+  payload: WhatsAppTemplateApiPayload | WhatsAppTextApiPayload | WhatsAppInteractiveApiPayload
 ): Promise<WhatsAppSendResult> {
   const phoneId = resolveWhatsAppPhoneId(role);
   const graphVersion = resolveMetaGraphVersion();
