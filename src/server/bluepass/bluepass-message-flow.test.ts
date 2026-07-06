@@ -704,3 +704,56 @@ describe("handleBluePassMarketplaceMessage persona triage", () => {
     expect(result.assistantContent).not.toContain("tracked link");
   });
 });
+
+describe("handleBluePassMarketplaceMessage persona lead capture", () => {
+  it("captures an operator lead the moment a reachable channel lands", async () => {
+    const tenantId = `tenant_${randomUUID()}`;
+    const conversationId = `conversation_${randomUUID()}`;
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: "We're Coral Cove Divers, based in Sorong. Email is ops@coralcove.com",
+      priorTravellerMessages: ["I run a dive resort in Raja Ampat", "How does the 18% break down?"]
+    });
+
+    expect(result.assistantContent).toContain("Coral Cove Divers");
+    expect(result.assistantContent).toContain("ops@coralcove.com");
+    expect(result.assistantContent).toContain("claim link");
+    expect(result.bluepassInquiry).toMatchObject({
+      tripType: "OPERATOR_LEAD",
+      travellerEmail: "ops@coralcove.com"
+    });
+
+    const leadEvent = await prisma.bluePassInquiryEvent.findFirst({
+      where: { bluePassInquiryId: result.bluepassInquiry!.id, type: "PERSONA_LEAD_CREATED" }
+    });
+    expect(leadEvent?.metadata).toMatchObject({ persona: "OPERATOR" });
+  }, 60_000);
+
+  it("merges later details into the same lead instead of creating a second one", async () => {
+    const tenantId = `tenant_${randomUUID()}`;
+    const conversationId = `conversation_${randomUUID()}`;
+    const priorMessages = ["I'm a travel agent", "Our email is bookings@divetravel.com.au"];
+
+    await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: priorMessages[1],
+      priorTravellerMessages: [priorMessages[0]]
+    });
+    const second = await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: "WhatsApp is +61 400 111 222",
+      priorTravellerMessages: priorMessages
+    });
+
+    expect(second.bluepassInquiry).toMatchObject({ tripType: "PARTNER_LEAD" });
+    const leads = await prisma.bluePassInquiry.findMany({
+      where: { tenantId, conversationId }
+    });
+    expect(leads).toHaveLength(1);
+    expect(leads[0].travellerEmail).toBe("bookings@divetravel.com.au");
+    expect(leads[0].travellerPhone).toContain("+61");
+  }, 60_000);
+});

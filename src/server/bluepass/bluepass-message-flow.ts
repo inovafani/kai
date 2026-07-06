@@ -23,6 +23,7 @@ import {
   buildBluePassYachtOverviewReply
 } from "@/core/bluepass/reply";
 import {
+  buildBluePassLeadCapturedReply,
   buildBluePassOperatorReply,
   buildBluePassPartnerReply,
   buildBluePassTriageGreeting,
@@ -30,6 +31,8 @@ import {
   shouldSendBluePassTriageGreeting,
   type BluePassPersonaReply
 } from "@/core/bluepass/triage";
+import { extractBluePassLead, leadHasReachableChannel, mergeBluePassLead } from "@/core/bluepass/lead";
+import { upsertBluePassPersonaLead } from "./bluepass-inquiry-repository";
 import type { BluePassReferralInput } from "./bluepass-inquiry-repository";
 import {
   createOrReuseBluePassInquiry,
@@ -57,6 +60,31 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   const persona = classifyBluePassPersona([...input.priorTravellerMessages, input.content]);
 
   if (persona === "OPERATOR" || persona === "PARTNER") {
+    // Terminal node: the moment the latest message hands over a reachable
+    // channel (email/phone), capture the lead and acknowledge — never
+    // re-ask for what was just given. Persistence is best-effort so the
+    // conversation survives a database hiccup.
+    const latestLead = extractBluePassLead([input.content]);
+
+    if (leadHasReachableChannel(latestLead)) {
+      const lead = mergeBluePassLead(extractBluePassLead(input.priorTravellerMessages), latestLead);
+      const savedLead = await upsertBluePassPersonaLead({
+        tenantId: input.tenantId,
+        conversationId: input.conversationId,
+        persona,
+        travellerMessage: input.content,
+        lead
+      }).catch((error) => {
+        console.warn("[bluepass] persona lead persistence failed", error);
+        return null;
+      });
+
+      return {
+        ...buildConciergeResponse(buildBluePassLeadCapturedReply({ persona, lead })),
+        bluepassInquiry: savedLead
+      };
+    }
+
     const pitched = classifyBluePassPersona(input.priorTravellerMessages) === persona;
     const personaReply: BluePassPersonaReply =
       persona === "OPERATOR"

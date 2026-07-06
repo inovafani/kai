@@ -1,4 +1,5 @@
 import type { BluePassRequiredInquiryField } from "./intent";
+import type { BluePassLead } from "./lead";
 
 /**
  * BluePass first-touch triage.
@@ -159,6 +160,34 @@ export function shouldSendBluePassTriageGreeting(input: {
   hasIntentSignal: boolean;
 }) {
   return input.persona === "UNKNOWN" && !input.hasIntentSignal && input.missingFields.length > 0;
+}
+
+// ─── Lead captured (terminal node of both playbooks) ─────────────────────────
+
+/**
+ * The moment an operator or partner hands over a reachable channel, Kai
+ * acknowledges exactly what it captured (so mistakes surface) and says what
+ * happens next. This outranks every keyword branch — never re-ask for what
+ * was just given.
+ */
+export function buildBluePassLeadCapturedReply(input: {
+  persona: Extract<BluePassPersona, "OPERATOR" | "PARTNER">;
+  lead: BluePassLead;
+}): string {
+  const captured = [
+    input.lead.company ?? null,
+    input.lead.region ?? null,
+    input.lead.email ?? null,
+    input.lead.phone ? `WhatsApp ${input.lead.phone}` : null
+  ].filter((value): value is string => Boolean(value));
+
+  const echo = captured.length > 0 ? `I've got you down as ${captured.join(", ")} - shout if any of that's off. ` : "";
+
+  if (input.persona === "OPERATOR") {
+    return `Perfect. ${echo}The team will verify the business and send your claim link to that address, usually same day. If your page is already pre-built, claiming it is one click - no password, and it's yours to run.`;
+  }
+
+  return `Perfect. ${echo}The team will send your partner claim link there, usually same day - one click, no password, and your tracked link is live. Founding-cohort terms get locked at that point too.`;
 }
 
 // ─── Operator playbook ────────────────────────────────────────────────────────

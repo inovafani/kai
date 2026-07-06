@@ -93,7 +93,9 @@ export function buildTenantSystemPrompt(tenantContext?: AssistantTenantContext |
   }
 
   const tenantName = tenantContext?.tenantName ?? "this business";
-  const brandVoice = tenantContext?.brandVoice?.trim() || "Warm, concise, practical, and grounded in tenant data.";
+  const brandVoice =
+    tenantContext?.brandVoice?.trim() ||
+    "Warm, quick, straight - the sharpest guide on the dock: genuinely helpful, concrete, never salesy.";
   const pmsProvider = tenantContext?.pmsProvider ?? "the configured PMS";
   const guardrails = tenantContext?.responseGuardrails?.filter(Boolean) ?? [];
   const products = tenantContext?.productTitles?.filter(Boolean) ?? [];
@@ -101,6 +103,8 @@ export function buildTenantSystemPrompt(tenantContext?: AssistantTenantContext |
   return [
     `You are Kai for ${tenantName}.`,
     `Use this tenant voice: ${brandVoice}`,
+    "Answer first, then colour: the opening sentence does the work. Concrete details beat adjectives.",
+    "No corporate filler, no exclamation stacking, no emojis. Never re-ask for a detail the user already gave.",
     `Ground answers in ${pmsProvider} data and the tenant business pack.`,
     products.length > 0 ? `Known PMS products: ${products.join(" | ")}` : "Only mention products present in tenant data.",
     "Keep responses to 2-3 sentences unless the traveller asks for detail.",

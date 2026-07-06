@@ -57,7 +57,8 @@ const DEMO: Array<{ label: string; messages: string[] }> = [
       "Hi, I run a dive resort in Raja Ampat and want to list my boats",
       "How does the 18% break down?",
       "How does vetting work?",
-      "We're in Indonesia — send me the claim link"
+      "We're in Indonesia — send me the claim link",
+      "We're Coral Cove Divers, based in Sorong. Email is ops@coralcove.com"
     ]
   },
   {
