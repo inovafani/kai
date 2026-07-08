@@ -63,6 +63,40 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).not.toContain("Please share your name");
   });
 
+  it("answers Komodo browsing requests with recommendations instead of asking for contact details", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "liveaboards in komodo",
+      priorTravellerMessages: []
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.assistantContent).toContain("Komodo");
+    expect(result.assistantContent).toContain("Calico Jack");
+    expect(result.assistantContent).toContain("Alila Purnama");
+    expect(result.assistantContent).not.toContain("name");
+    expect(result.assistantContent).not.toContain("email");
+    expect(result.assistantContent).not.toContain("phone");
+  });
+
+  it("keeps recommendation follow-ups in concierge mode instead of contact collection", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "do you have recommendation for me",
+      priorTravellerMessages: ["liveaboards in komodo"]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("Komodo");
+    expect(result.assistantContent).toContain("BluePass");
+    expect(result.assistantContent).not.toContain("name");
+    expect(result.assistantContent).not.toContain("email");
+    expect(result.assistantContent).not.toContain("phone");
+  });
+
   it("compares two yachts without showing inquiry actions", async () => {
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
@@ -80,7 +114,7 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).not.toContain("I prepared BluePass inquiry");
   });
 
-  it("returns preview matches and asks for missing inquiry fields", async () => {
+  it("returns preview matches for discovery requests without asking for contact details", async () => {
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
       conversationId: `conversation_${randomUUID()}`,
@@ -88,11 +122,35 @@ describe("handleBluePassMarketplaceMessage", () => {
       priorTravellerMessages: []
     });
 
-    expect(result.bluepassMatches).toEqual([]);
+    expect(result.bluepassMatches.map((match) => match.name)).toContain("Alila Purnama");
+    expect(result.bluepassMatches.map((match) => match.name)).toContain("Calico Jack");
     expect(result.bluepassInquiry).toBeNull();
     expect(result.bluepassDispatch).toBeNull();
-    expect(result.assistantContent).toContain("Please share your name, email, and phone");
+    expect(result.assistantContent).toContain("Good BluePass liveaboard options");
+    expect(result.assistantContent).not.toContain("Please share your name");
+    expect(result.assistantContent).not.toContain("email");
+    expect(result.assistantContent).not.toContain("phone");
     expect(result.paymentRequest).toBeNull();
+  });
+
+  it("uses the WhatsApp sender phone instead of asking the traveller to repeat it", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "i want to order calico jack in komodo on 16 July for 2 guests",
+      priorTravellerMessages: [],
+      travellerPhone: "6285156246329"
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("Calico Jack");
+    expect(result.assistantContent).toContain("name");
+    expect(result.assistantContent).toContain("email");
+    expect(result.assistantContent).not.toContain("phone");
+    expect(result.contactRequest).toMatchObject({
+      status: "CONTACT_DETAILS_REQUIRED",
+      fields: ["name", "email"]
+    });
   });
 
   it("locks a selected yacht even when the traveller makes a small typo in the yacht name", async () => {

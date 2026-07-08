@@ -86,6 +86,29 @@ export function buildBluePassYachtOverviewReply(yacht: BluePassYachtCard) {
   return `${yacht.name} is a ${yacht.tier} BluePass preview yacht in ${yacht.region}, fitting up to ${yacht.maxGuests} guests across ${yacht.cabins} cabins. Price signal: ${yacht.priceSignal}.${charter}${productLink} I can help compare it with similar options, explain who it suits, or prepare an operator inquiry if you want to check real availability.`;
 }
 
+export function buildBluePassRecommendationReply(input: {
+  destination?: string;
+  matches: BluePassYachtSummary[];
+}) {
+  const destination = input.destination ? ` in ${input.destination}` : "";
+  const matches = input.matches.slice(0, 3);
+
+  if (matches.length === 0) {
+    return `I can help shortlist BluePass liveaboards${destination}. Tell me your travel style, dates, and group size, and I will narrow the options before preparing any operator inquiry.`;
+  }
+
+  const rows = matches
+    .map((yacht, index) => {
+      const capacity = `${yacht.cabins} cabins, up to ${yacht.maxGuests} guests`;
+      const link = yacht.productUrl ? ` Details: ${yacht.productUrl}` : "";
+
+      return `${index + 1}. ${yacht.name} - ${yacht.tier} in ${yacht.region}, ${capacity}. Price signal: ${yacht.priceSignal}.${link}`;
+    })
+    .join("\n");
+
+  return `Good BluePass liveaboard options${destination}:\n${rows}\n\nI can compare these, explain who each yacht suits, or narrow them by dates, group size, diving versus cruising style, and budget before preparing an operator inquiry.`;
+}
+
 export function buildBluePassValueReply() {
   return "BluePass helps travellers choose from vetted ocean operators while keeping booking truth honest: catalog prices are signals until an operator confirms availability and the final quote. The BluePass promise is that trips support the ocean too - 5% is allocated toward conservation, clean-ups, and coastal community impact. Kai can explain options, compare yachts, collect the right inquiry details, and then hand the request to the operator instead of pretending a booking is confirmed.";
 }
@@ -151,7 +174,11 @@ function buildSelectedYachtMissingFieldsReply(input: {
   ].filter((value): value is string => Boolean(value));
 
   if (contactFields.length > 0) {
-    return `Got it for ${yacht.name}. ${bookingTruth} Please fill the contact details form below so the operator can follow up.`;
+    if (input.missingFields.includes("travellerPhone")) {
+      return `Got it for ${yacht.name}. ${bookingTruth} Please fill the contact details form below so the operator can follow up.`;
+    }
+
+    return `Got it for ${yacht.name}. ${bookingTruth} Please share your ${formatNaturalList(contactFields)} when you want me to prepare the operator inquiry. I already have this WhatsApp number for follow-up.`;
   }
 
   return `${intro} ${bookingTruth}`;

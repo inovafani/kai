@@ -112,7 +112,8 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(input: WhatsApp
     tenantId: tenant.id,
     conversationId: conversation.id,
     content: input.body,
-    priorTravellerMessages
+    priorTravellerMessages,
+    travellerPhone
   });
   const assistantContent = await composeBluePassMarketplaceWhatsAppReply({
     tenantId: tenant.id,

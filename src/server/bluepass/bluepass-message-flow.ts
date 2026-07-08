@@ -17,6 +17,7 @@ import {
   buildBluePassInquiryReadyReply,
   buildBluePassInquiryStatusReply,
   buildBluePassMissingFieldsReply,
+  buildBluePassRecommendationReply,
   buildBluePassSeasonReply,
   buildBluePassValueReply,
   buildBluePassYachtComparisonReply,
@@ -38,6 +39,7 @@ export type BluePassMarketplaceMessageInput = {
   priorTravellerMessages: string[];
   referral?: BluePassReferralInput | null;
   catalog?: BluePassCatalogSnapshotItem[];
+  travellerPhone?: string | null;
 };
 
 export async function handleBluePassMarketplaceMessage(input: BluePassMarketplaceMessageInput) {
@@ -49,7 +51,8 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   const intent = mergeBluePassInquiryIntent(historyIntent, {
     ...messageIntent,
     destination: messageIntent.destination ?? (selectedYacht ? selectedYacht.region : undefined),
-    selectedYachtSlug: selectedYacht?.slug ?? messageIntent.selectedYachtSlug
+    selectedYachtSlug: selectedYacht?.slug ?? messageIntent.selectedYachtSlug,
+    travellerPhone: messageIntent.travellerPhone ?? input.travellerPhone ?? undefined
   });
   const bluepassMatches = searchBluePassYachts(intent, catalog);
 
@@ -164,6 +167,26 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     return buildConciergeResponse(buildBluePassYachtOverviewReply(overviewMatch), [overviewMatch]);
   }
 
+  if (isBluePassRecommendationRequest(input.content) && !isBluePassInquirySubmissionRequest(input.content)) {
+    const recommendationMatches = searchBluePassYachts(
+      {
+        destination: intent.destination,
+        guests: intent.guests,
+        interests: intent.interests,
+        selectedYachtSlug: selectedYacht?.slug
+      },
+      catalog
+    );
+
+    return buildConciergeResponse(
+      buildBluePassRecommendationReply({
+        destination: intent.destination,
+        matches: recommendationMatches
+      }),
+      recommendationMatches
+    );
+  }
+
   const missingFields = getMissingBluePassInquiryFields(intent);
 
   if (missingFields.length > 0) {
@@ -183,7 +206,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
       contactRequest: shouldRequestContactForm(missingFields)
         ? {
             status: "CONTACT_DETAILS_REQUIRED" as const,
-            fields: ["name", "email", "phone"] as const
+            fields: getContactRequestFields(missingFields)
           }
         : null
     };
@@ -374,6 +397,16 @@ function shouldRequestContactForm(missingFields: BluePassRequiredInquiryField[])
   return missingFields.length > 0 && missingFields.every((field) => contactFields.has(field));
 }
 
+function getContactRequestFields(missingFields: BluePassRequiredInquiryField[]) {
+  const fields = [
+    missingFields.includes("travellerName") ? "name" : null,
+    missingFields.includes("travellerEmail") ? "email" : null,
+    missingFields.includes("travellerPhone") ? "phone" : null
+  ].filter((field): field is "name" | "email" | "phone" => Boolean(field));
+
+  return fields as readonly ("name" | "email" | "phone")[];
+}
+
 function getPromptMissingFields(missingFields: BluePassRequiredInquiryField[]) {
   const contactFields = new Set<BluePassRequiredInquiryField>([
     "travellerName",
@@ -428,6 +461,27 @@ function isBluePassYachtInformationRequest(content: string) {
     /\b(?:book|booking|reserve|hold|quote|operator|whatsapp|proceed)\b/.test(normalized);
 
   return asksForInformation && !asksForCommercialAction;
+}
+
+function isBluePassRecommendationRequest(content: string) {
+  const normalized = content.toLowerCase();
+  const explicitBookingIntent =
+    /\b(?:order|book|booking|reserve|hold)\b/.test(normalized) ||
+    /\b(?:send|submit|create|prepare)\s+(?:this\s+|the\s+|an?\s+)?(?:operator\s+)?inquir(?:y|ies)\b/.test(
+      normalized
+    );
+
+  if (explicitBookingIntent) return false;
+
+  return (
+    /\b(?:recommend|recommendation|recommendations|suggest|option|options|alternative|alternatives)\b/.test(
+      normalized
+    ) ||
+    /\b(?:liveaboards?|yachts?|boats?|trips?)\b/.test(normalized) ||
+    /\b(?:show me|what are|which)\b.*\b(?:komodo|raja\s+ampat|liveaboards?|yachts?|boats?|trips?)\b/.test(
+      normalized
+    )
+  );
 }
 
 function isBluePassInquirySubmissionRequest(content: string) {

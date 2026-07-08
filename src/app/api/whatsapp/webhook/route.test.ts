@@ -1695,7 +1695,6 @@ describe("/api/whatsapp/webhook", () => {
     process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = tenantSlug;
     const phoneSuffix = randomUUID().replace(/\D/g, "").padEnd(9, "7").slice(0, 9);
     const inboundPhone = `6285${phoneSuffix}`;
-    const localTravellerPhone = `085${phoneSuffix}`;
 
     let replyCount = 0;
     const fetchMock = vi.fn<typeof fetch>(async () => {
@@ -1763,10 +1762,7 @@ describe("/api/whatsapp/webhook", () => {
       new Request("http://localhost/api/whatsapp/webhook", {
         method: "POST",
         body: JSON.stringify(
-          basePayload(
-            `My name is Ara, email is ara@example.com, and WhatsApp number is ${localTravellerPhone}`,
-            "wamid.traveller.contact"
-          )
+          basePayload("My name is Ara, email is ara@example.com", "wamid.traveller.contact")
         )
       })
     );
@@ -1814,7 +1810,7 @@ describe("/api/whatsapp/webhook", () => {
       guests: 2,
       travellerName: "Ara",
       travellerEmail: "ara@example.com",
-      travellerPhone: localTravellerPhone
+      travellerPhone: inboundPhone
     });
     expect(inquiry.dispatches[0]).toMatchObject({
       status: "QUEUED",
