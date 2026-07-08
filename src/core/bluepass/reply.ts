@@ -89,8 +89,12 @@ export function buildBluePassYachtOverviewReply(yacht: BluePassYachtCard) {
 export function buildBluePassRecommendationReply(input: {
   destination?: string;
   matches: BluePassYachtSummary[];
+  excludedYachtNames?: string[];
 }) {
   const destination = input.destination ? ` in ${input.destination}` : "";
+  const excluded = input.excludedYachtNames?.length
+    ? ` besides ${formatNaturalList(input.excludedYachtNames)}`
+    : "";
   const matches = input.matches.slice(0, 3);
 
   if (matches.length === 0) {
@@ -106,14 +110,18 @@ export function buildBluePassRecommendationReply(input: {
     })
     .join("\n");
 
-  return `Good BluePass liveaboard options${destination}:\n${rows}\n\nI can compare these, explain who each yacht suits, or narrow them by dates, group size, diving versus cruising style, and budget before preparing an operator inquiry.`;
+  return `Good BluePass liveaboard options${destination}${excluded}:\n${rows}\n\nI can compare these, explain who each yacht suits, or narrow them by dates, group size, diving versus cruising style, and budget before preparing an operator inquiry.`;
 }
 
 export function buildBluePassValueReply() {
   return "BluePass helps travellers choose from vetted ocean operators while keeping booking truth honest: catalog prices are signals until an operator confirms availability and the final quote. The BluePass promise is that trips support the ocean too - 5% is allocated toward conservation, clean-ups, and coastal community impact. Kai can explain options, compare yachts, collect the right inquiry details, and then hand the request to the operator instead of pretending a booking is confirmed.";
 }
 
-export function buildBluePassSmallTalkReply() {
+export function buildBluePassSmallTalkReply(input?: { gratitude?: boolean }) {
+  if (input?.gratitude) {
+    return "Anytime. I can keep helping with this inquiry, compare other BluePass options, or start a fresh one when you are ready.";
+  }
+
   return "Hey, I am here. I can talk through BluePass, compare liveaboards, recommend Komodo or Raja Ampat options, or help continue an inquiry when you are ready.";
 }
 

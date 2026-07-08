@@ -27,7 +27,21 @@ export async function handleBluePassWhatsAppInboundMessage(
   input: WhatsAppInboundTextMessage
 ): Promise<BluePassWhatsAppInboundResult> {
   const context = await findLatestBluePassParticipantContext(input.from);
-  if (context?.participant === "operator" || shouldRouteTravellerMessageToContext(input.body, context?.inquiry.status)) {
+
+  if (isNewChatRequest(input.body)) {
+    return handleBluePassTravellerMarketplaceWhatsAppMessage(input, {
+      resetConversation: true,
+      overrideAssistantContent:
+        "Fresh chat started. I can help compare BluePass liveaboards, recommend Komodo or Raja Ampat options, or prepare a new operator inquiry when you are ready."
+    });
+  }
+
+  const shouldRouteToContext =
+    context?.participant === "operator"
+      ? shouldRouteOperatorMessageToContext(input.body)
+      : shouldRouteTravellerMessageToContext(input.body, context?.inquiry.status);
+
+  if (shouldRouteToContext) {
     const contextResult = await handleBluePassWhatsAppContextMessage(input);
     if (contextResult.handled) {
       return {
@@ -41,9 +55,32 @@ export async function handleBluePassWhatsAppInboundMessage(
   return handleBluePassTravellerMarketplaceWhatsAppMessage(input);
 }
 
+function isNewChatRequest(body: string) {
+  const normalized = normalizeMessage(body);
+
+  return /^(?:new chat|fresh chat|start over|restart|reset|reset chat|clear chat|mulai baru|chat baru|ulang dari awal)$/.test(
+    normalized
+  );
+}
+
+function shouldRouteOperatorMessageToContext(body: string) {
+  const normalized = normalizeMessage(body);
+  if (!normalized) return false;
+  if (isNewChatRequest(normalized)) return false;
+
+  return [
+    /\b(?:accept|accepted|available|availability|confirmed|confirm|ok to proceed)\b/,
+    /\b(?:decline|declined|unavailable|not available|full|sold out|cannot|can't|cant)\b/,
+    /\b(?:counter|counteroffer|counter-offer|alternative date|different date)\b/,
+    /\b(?:price|rate|quote|final price|cost|usd|idr|deposit|payment|invoice|payment link)\b/,
+    /\b(?:hold|held|slot|booking confirmation|confirmed booking|reservation)\b/
+  ].some((pattern) => pattern.test(normalized));
+}
+
 function shouldRouteTravellerMessageToContext(body: string, inquiryStatus?: string | null) {
   const normalized = normalizeMessage(body);
   if (!normalized) return false;
+  if (isNewChatRequest(normalized)) return false;
 
   if (inquiryStatus === "DECLINED" && /\b(?:yes|yep|yeah|ok|okay|sure|please|go ahead|proceed|send|submit|try)\b/.test(normalized)) {
     return true;
@@ -61,7 +98,10 @@ function normalizeMessage(body: string) {
   return body.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-async function handleBluePassTravellerMarketplaceWhatsAppMessage(input: WhatsAppInboundTextMessage) {
+async function handleBluePassTravellerMarketplaceWhatsAppMessage(
+  input: WhatsAppInboundTextMessage,
+  options: { resetConversation?: boolean; overrideAssistantContent?: string } = {}
+) {
   const tenant = await prisma.tenant.findFirst({
     where: {
       slug: process.env.WHATSAPP_BLUEPASS_TENANT_SLUG?.trim() || defaultBluePassTenantSlug,
@@ -78,14 +118,16 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(input: WhatsApp
   }
 
   const travellerPhone = normalizeWhatsAppSender(input.from);
-  const existingConversation = await prisma.conversation.findFirst({
-    where: {
-      tenantId: tenant.id,
-      channel: "WHATSAPP",
-      travellerId: travellerPhone
-    },
-    orderBy: { updatedAt: "desc" }
-  });
+  const existingConversation = options.resetConversation
+    ? null
+    : await prisma.conversation.findFirst({
+        where: {
+          tenantId: tenant.id,
+          channel: "WHATSAPP",
+          travellerId: travellerPhone
+        },
+        orderBy: { updatedAt: "desc" }
+      });
   const conversation =
     existingConversation ??
     (await prisma.conversation.create({
@@ -97,10 +139,12 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(input: WhatsApp
       }
     }));
 
-  const priorTravellerMessages = await listRecentTravellerMessageContents({
-    tenantId: tenant.id,
-    conversationId: conversation.id
-  });
+  const priorTravellerMessages = options.resetConversation
+    ? []
+    : await listRecentTravellerMessageContents({
+        tenantId: tenant.id,
+        conversationId: conversation.id
+      });
 
   await createTravellerMessage({
     tenantId: tenant.id,
@@ -108,25 +152,29 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(input: WhatsApp
     content: input.body
   });
 
-  const result = await handleBluePassMarketplaceMessage({
-    tenantId: tenant.id,
-    conversationId: conversation.id,
-    content: input.body,
-    priorTravellerMessages,
-    travellerPhone
-  });
-  const assistantContent = await composeBluePassMarketplaceWhatsAppReply({
-    tenantId: tenant.id,
-    conversationId: conversation.id,
-    deterministicReply: result.assistantContent,
-    latestMessage: input.body,
-    requiredFacts: buildMarketplaceRequiredFacts(result),
-    productTitles: [
-      result.bluepassInquiry?.selectedYachtName,
-      result.bluepassInquiry?.operatorName,
-      ...result.bluepassMatches.map((match) => match.name)
-    ].filter((value): value is string => Boolean(value))
-  });
+  const result = options.overrideAssistantContent
+    ? null
+    : await handleBluePassMarketplaceMessage({
+        tenantId: tenant.id,
+        conversationId: conversation.id,
+        content: input.body,
+        priorTravellerMessages,
+        travellerPhone
+      });
+  const assistantContent =
+    options.overrideAssistantContent ??
+    (await composeBluePassMarketplaceWhatsAppReply({
+      tenantId: tenant.id,
+      conversationId: conversation.id,
+      deterministicReply: result!.assistantContent,
+      latestMessage: input.body,
+      requiredFacts: buildMarketplaceRequiredFacts(result!),
+      productTitles: [
+        result!.bluepassInquiry?.selectedYachtName,
+        result!.bluepassInquiry?.operatorName,
+        ...result!.bluepassMatches.map((match) => match.name)
+      ].filter((value): value is string => Boolean(value))
+    }));
 
   await createAssistantMessage({
     tenantId: tenant.id,
@@ -140,7 +188,7 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(input: WhatsApp
     body: assistantContent
   });
 
-  if (result.bluepassInquiry) {
+  if (result?.bluepassInquiry) {
     await prisma.bluePassInquiryEvent.create({
       data: {
         tenantId: tenant.id,

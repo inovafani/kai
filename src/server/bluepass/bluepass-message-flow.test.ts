@@ -113,6 +113,55 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).not.toContain("phone");
   });
 
+  it("answers gratitude without repeating the latest inquiry confirmation", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "ok thanks bro",
+      travellerPhone: "6285156246329",
+      priorTravellerMessages: [
+        "i want to order calico jack",
+        "my name is Inov, email is inoveka@gmail.com, i want 19th july for 2 people",
+        "yes please send inquiry"
+      ]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.assistantContent).toContain("Anytime");
+    expect(result.assistantContent).not.toContain("I can prepare a BluePass operator inquiry");
+    expect(result.assistantContent).not.toContain("Please share your");
+  });
+
+  it("recommends alternatives instead of repeating the selected yacht when the traveller asks for anything else", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "can i order anything else? like do you have recommendations?",
+      priorTravellerMessages: ["can you give me recommendation in komodo?", "i want to order calico jack"]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("Komodo");
+    expect(result.assistantContent).toContain("Alila Purnama");
+    expect(result.assistantContent).not.toContain("Calico Jack is a");
+    expect(result.assistantContent).not.toContain("Please share your name");
+  });
+
+  it("excludes the named yacht when the traveller asks for something rather than it", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "is there anything else rather than calico?",
+      priorTravellerMessages: ["liveaboards in komodo", "i want to order calico jack"]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("besides Calico Jack");
+    expect(result.assistantContent).toContain("Alila Purnama");
+    expect(result.assistantContent).not.toContain("Calico Jack is a");
+  });
+
   it("compares two yachts without showing inquiry actions", async () => {
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,

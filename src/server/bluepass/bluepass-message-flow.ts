@@ -154,7 +154,11 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   }
 
   if (isBluePassSmallTalkRequest(input.content)) {
-    return buildConciergeResponse(buildBluePassSmallTalkReply());
+    return buildConciergeResponse(
+      buildBluePassSmallTalkReply({
+        gratitude: isBluePassGratitudeRequest(input.content)
+      })
+    );
   }
 
   const seasonDestination = resolveSeasonDestination(input.content);
@@ -166,30 +170,36 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     return buildConciergeResponse(buildBluePassYachtComparisonReply(latestMentionedYachts));
   }
 
-  if (selectedYacht && isBluePassYachtInformationRequest(input.content)) {
-    const overviewMatch = bluepassMatches.find((match) => match.slug === selectedYacht.slug) ?? bluepassMatches[0];
-
-    return buildConciergeResponse(buildBluePassYachtOverviewReply(overviewMatch), [overviewMatch]);
-  }
-
   if (isBluePassRecommendationRequest(input.content) && !isBluePassInquirySubmissionRequest(input.content)) {
+    const excludedYachts = resolveRecommendationExcludedYachts({
+      content: input.content,
+      selectedYacht,
+      latestMentionedYachts
+    });
+    const excludedYachtSlugs = new Set(excludedYachts.map((yacht) => yacht.slug));
     const recommendationMatches = searchBluePassYachts(
       {
         destination: intent.destination,
         guests: intent.guests,
-        interests: intent.interests,
-        selectedYachtSlug: selectedYacht?.slug
+        interests: intent.interests
       },
       catalog
-    );
+    ).filter((match) => !excludedYachtSlugs.has(match.slug));
 
     return buildConciergeResponse(
       buildBluePassRecommendationReply({
         destination: intent.destination,
-        matches: recommendationMatches
+        matches: recommendationMatches,
+        excludedYachtNames: excludedYachts.map((yacht) => yacht.name)
       }),
       recommendationMatches
     );
+  }
+
+  if (selectedYacht && isBluePassYachtInformationRequest(input.content)) {
+    const overviewMatch = bluepassMatches.find((match) => match.slug === selectedYacht.slug) ?? bluepassMatches[0];
+
+    return buildConciergeResponse(buildBluePassYachtOverviewReply(overviewMatch), [overviewMatch]);
   }
 
   const missingFields = getMissingBluePassInquiryFields(intent);
@@ -444,11 +454,18 @@ function isBluePassSmallTalkRequest(content: string) {
   if (hasCommercialIntent) return false;
 
   return (
+    isBluePassGratitudeRequest(content) ||
     /^(?:yo|yow|hey|hi|hello|halo|hai|wassup|what's up|whats up|sup|bro|sis)(?:\s+(?:kai|there|bro|sis|what's up|whats up|wassup))?$/.test(
       normalized
     ) ||
     /\b(?:how are you|how's it going|hows it going|can you help me|help me|what can you do)\b/.test(normalized)
   );
+}
+
+function isBluePassGratitudeRequest(content: string) {
+  const normalized = content.toLowerCase().replace(/[^\w\s']/g, " ").replace(/\s+/g, " ").trim();
+
+  return /\b(?:thanks|thank you|thx|makasih|terima kasih)\b/.test(normalized);
 }
 
 function isBluePassInquiryStatusQuestion(content: string) {
@@ -480,30 +497,56 @@ function isBluePassYachtInformationRequest(content: string) {
   const asksForCommercialAction =
     /\b(?:send|create|prepare|make|start|submit)\s+(?:an?\s+)?inquir(?:y|ies)\b/.test(normalized) ||
     /\b(?:check|confirm)\s+(?:live\s+)?availability\b/.test(normalized) ||
-    /\b(?:book|booking|reserve|hold|quote|operator|whatsapp|proceed)\b/.test(normalized);
+    /\b(?:order|book|booking|reserve|hold|quote|operator|whatsapp|proceed)\b/.test(normalized);
 
   return asksForInformation && !asksForCommercialAction;
 }
 
 function isBluePassRecommendationRequest(content: string) {
   const normalized = content.toLowerCase();
+  const asksForRecommendationOrAlternative =
+    /\b(?:recommend|recommendation|recommendations|suggest|option|options|alternative|alternatives)\b/.test(
+      normalized
+    ) ||
+    /\b(?:anything else|something else|another|other than|rather than|besides|instead of)\b/.test(normalized);
+  const asksForBrowsing =
+    /\b(?:liveaboards?|yachts?|boats?|trips?)\b/.test(normalized) ||
+    /\b(?:show me|what are|which)\b.*\b(?:komodo|raja\s+ampat|liveaboards?|yachts?|boats?|trips?)\b/.test(
+      normalized
+    );
   const explicitBookingIntent =
     /\b(?:order|book|booking|reserve|hold)\b/.test(normalized) ||
     /\b(?:send|submit|create|prepare)\s+(?:this\s+|the\s+|an?\s+)?(?:operator\s+)?inquir(?:y|ies)\b/.test(
       normalized
     );
 
-  if (explicitBookingIntent) return false;
+  if (explicitBookingIntent && !asksForRecommendationOrAlternative) return false;
 
-  return (
-    /\b(?:recommend|recommendation|recommendations|suggest|option|options|alternative|alternatives)\b/.test(
-      normalized
-    ) ||
-    /\b(?:liveaboards?|yachts?|boats?|trips?)\b/.test(normalized) ||
-    /\b(?:show me|what are|which)\b.*\b(?:komodo|raja\s+ampat|liveaboards?|yachts?|boats?|trips?)\b/.test(
-      normalized
-    )
+  return asksForRecommendationOrAlternative || asksForBrowsing;
+}
+
+function resolveRecommendationExcludedYachts(input: {
+  content: string;
+  selectedYacht: BluePassYachtCatalogItem | null;
+  latestMentionedYachts: BluePassYachtCatalogItem[];
+}) {
+  const normalized = input.content.toLowerCase();
+  const asksForOtherOptions = /\b(?:anything else|something else|another|other than|rather than|besides|instead of)\b/.test(
+    normalized
   );
+
+  if (!asksForOtherOptions) return [];
+
+  const excluded = new Map<string, BluePassYachtCatalogItem>();
+  for (const yacht of input.latestMentionedYachts) {
+    excluded.set(yacht.slug, yacht);
+  }
+
+  if (input.selectedYacht) {
+    excluded.set(input.selectedYacht.slug, input.selectedYacht);
+  }
+
+  return Array.from(excluded.values());
 }
 
 function isBluePassInquirySubmissionRequest(content: string) {
