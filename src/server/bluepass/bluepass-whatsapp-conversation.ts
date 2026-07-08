@@ -1,13 +1,19 @@
+import { composeAssistantReply } from "@/core/llm/assistant-reply-composer";
 import { prisma } from "@/lib/prisma";
 import {
   createAssistantMessage,
   createTravellerMessage,
+  listRecentConversationMessages,
   listRecentTravellerMessageContents
 } from "@/server/conversation/conversation-repository";
+import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
 import type { WhatsAppInboundTextMessage } from "@/server/whatsapp/webhook";
 import { sendWhatsAppText } from "@/server/whatsapp/client";
 import { handleBluePassMarketplaceMessage } from "./bluepass-message-flow";
-import { handleBluePassWhatsAppContextMessage } from "./bluepass-inquiry-repository";
+import {
+  findLatestBluePassParticipantContext,
+  handleBluePassWhatsAppContextMessage
+} from "./bluepass-inquiry-repository";
 
 type BluePassWhatsAppInboundResult = {
   handled: boolean;
@@ -20,7 +26,8 @@ const defaultBluePassTenantSlug = "bluepass";
 export async function handleBluePassWhatsAppInboundMessage(
   input: WhatsAppInboundTextMessage
 ): Promise<BluePassWhatsAppInboundResult> {
-  if (!shouldRouteToMarketplace(input.body)) {
+  const context = await findLatestBluePassParticipantContext(input.from);
+  if (context?.participant === "operator" || shouldRouteTravellerMessageToContext(input.body, context?.inquiry.status)) {
     const contextResult = await handleBluePassWhatsAppContextMessage(input);
     if (contextResult.handled) {
       return {
@@ -34,29 +41,24 @@ export async function handleBluePassWhatsAppInboundMessage(
   return handleBluePassTravellerMarketplaceWhatsAppMessage(input);
 }
 
-function shouldRouteToMarketplace(body: string) {
-  const normalized = body.toLowerCase().replace(/\s+/g, " ").trim();
+function shouldRouteTravellerMessageToContext(body: string, inquiryStatus?: string | null) {
+  const normalized = normalizeMessage(body);
   if (!normalized) return false;
 
-  const hasDateLikeDetail =
-    /\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\b/.test(
-      normalized
-    ) ||
-    /\b(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+\d{1,2}\b/.test(
-      normalized
-    );
-  const hasGuestDetail = /\b\d+\s*(?:guest|guests|person|persons|people|pax)\b/.test(normalized);
-  const hasContactDetail =
-    /\bmy\s+name\s+is\b/.test(normalized) ||
-    /\bemail\s+is\b/.test(normalized) ||
-    /\bwhatsapp\s+(?:number\s+)?is\b/.test(normalized);
+  if (inquiryStatus === "DECLINED" && /\b(?:yes|yep|yeah|ok|okay|sure|please|go ahead|proceed|send|submit|try)\b/.test(normalized)) {
+    return true;
+  }
 
   return [
-    /\b(i want|i need|can you help me|help me|please help).{0,80}\b(book|booking|order|reserve|inquiry|trip|liveaboard|yacht)\b/,
-    /\b(book|booking|order|reserve)\b.{0,80}\b(yacht|liveaboard|trip|komodo|raja ampat|calico jack|alila purnama|alilikai|samsara)\b/,
-    /\b(recommend|recommendation|recommendations|suggest|option|options|alternative|alternatives)\b.{0,80}\b(for me|komodo|raja ampat|yacht|liveaboard|trip|diving|sailing|cruising)\b/,
-    /\b(?:another|more|other)\s+(?:recommendation|recommendations|option|options|alternative|alternatives|yacht|yachts)\b/
-  ].some((pattern) => pattern.test(normalized)) || (hasDateLikeDetail && hasGuestDetail) || hasContactDetail;
+    /\b(?:status|update|operator replied|operator response|any news|what happened)\b/,
+    /\b(?:confirmed yet|booking confirmed|is my booking confirmed|already confirmed)\b/,
+    /\b(?:payment|pay|deposit|invoice|payment link|quote link|quote status)\b/,
+    /\b(?:my inquiry|latest inquiry|current inquiry|existing inquiry)\b/
+  ].some((pattern) => pattern.test(normalized));
+}
+
+function normalizeMessage(body: string) {
+  return body.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
 async function handleBluePassTravellerMarketplaceWhatsAppMessage(input: WhatsAppInboundTextMessage) {
@@ -112,17 +114,29 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(input: WhatsApp
     content: input.body,
     priorTravellerMessages
   });
+  const assistantContent = await composeBluePassMarketplaceWhatsAppReply({
+    tenantId: tenant.id,
+    conversationId: conversation.id,
+    deterministicReply: result.assistantContent,
+    latestMessage: input.body,
+    requiredFacts: buildMarketplaceRequiredFacts(result),
+    productTitles: [
+      result.bluepassInquiry?.selectedYachtName,
+      result.bluepassInquiry?.operatorName,
+      ...result.bluepassMatches.map((match) => match.name)
+    ].filter((value): value is string => Boolean(value))
+  });
 
   await createAssistantMessage({
     tenantId: tenant.id,
     conversationId: conversation.id,
-    content: result.assistantContent
+    content: assistantContent
   });
 
   const sendResult = await sendWhatsAppText({
     to: input.from,
     role: "kai",
-    body: result.assistantContent
+    body: assistantContent
   });
 
   if (result.bluepassInquiry) {
@@ -147,8 +161,56 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(input: WhatsApp
   return {
     handled: true as const,
     sent: true as const,
-    reply: result.assistantContent
+    reply: assistantContent
   };
+}
+
+async function composeBluePassMarketplaceWhatsAppReply(input: {
+  tenantId: string;
+  conversationId: string;
+  deterministicReply: string;
+  latestMessage: string;
+  requiredFacts: string[];
+  productTitles: string[];
+}) {
+  const llmClient = createAssistantLlmClient(process.env);
+  const history = await listRecentConversationMessages({
+    tenantId: input.tenantId,
+    conversationId: input.conversationId
+  });
+  const result = await composeAssistantReply({
+    deterministicReply: input.deterministicReply,
+    requiredFacts: input.requiredFacts,
+    latestUserMessage: input.latestMessage,
+    conversationHistory: history,
+    llmClient,
+    tenantContext: {
+      tenantName: "BluePass",
+      brandVoice:
+        "Warm, natural marine travel concierge. Helpful like a human travel advisor, but concise and honest about operator confirmation.",
+      pmsProvider: "BluePass marketplace catalog and operator network",
+      responseGuardrails: [
+        "Do not confirm live availability, final price, payment, or booking before operator confirmation.",
+        "Do not invent operator responses, prices, dates, payment links, or live availability.",
+        "If the traveller asks general questions, answer helpfully before asking for booking details."
+      ],
+      productTitles: input.productTitles
+    }
+  });
+
+  return result.reply;
+}
+
+function buildMarketplaceRequiredFacts(result: Awaited<ReturnType<typeof handleBluePassMarketplaceMessage>>) {
+  const inquiry = result.bluepassInquiry;
+  if (!inquiry) return [];
+
+  return [
+    inquiry.selectedYachtName,
+    inquiry.destination,
+    inquiry.dateWindow,
+    inquiry.guests ? `${inquiry.guests}` : null
+  ].filter((value): value is string => Boolean(value));
 }
 
 function normalizeWhatsAppSender(value: string) {

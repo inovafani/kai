@@ -1121,6 +1121,194 @@ describe("/api/whatsapp/webhook", () => {
     expect(messages.map((message) => message.role)).toEqual(["TRAVELLER", "ASSISTANT"]);
   }, 20_000);
 
+  it("routes general BluePass questions to concierge knowledge instead of latest inquiry status", async () => {
+    process.env.META_GRAPH_VERSION = "v20.0";
+    process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token";
+    process.env.WHATSAPP_PHONE_ID_KAI = "1115079071692326";
+
+    const tenantSlug = `bluepass-whatsapp-general-question-${randomUUID()}`;
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = tenantSlug;
+    const inboundPhone = "6285156246329";
+
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        messages: [{ id: "wamid.general.question.reply" }]
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: tenantSlug,
+        name: "BluePass WhatsApp General Question Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE",
+        config: {
+          create: {
+            supportedChannels: ["WEB_WIDGET", "WHATSAPP"],
+            enabledFeatures: ["widget_config", "bluepass_marketplace", "operator_whatsapp_dispatch"],
+            requiredSlots: {},
+            bookingMode: "MANUAL_INQUIRY",
+            bookingWriteEnabled: false,
+            pmsProvider: "MOCK",
+            escalationRules: [],
+            responseGuardrails: [
+              "Do not confirm availability, final price, payment, or booking before operator confirmation."
+            ]
+          }
+        }
+      }
+    });
+    const whatsappConversation = await prisma.conversation.create({
+      data: {
+        tenantId: tenant.id,
+        channel: "WHATSAPP",
+        travellerId: inboundPhone
+      }
+    });
+    await createOrReuseBluePassInquiry({
+      tenantId: tenant.id,
+      conversationId: whatsappConversation.id,
+      travellerMessage: "Alila Purnama in Komodo for 2 guests on 13 July 2026",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "13 July 2026",
+        guests: 2,
+        travellerName: "Putro",
+        travellerEmail: "putro@example.com",
+        travellerPhone: "085156246329"
+      },
+      selectedYacht: {
+        slug: "alila-purnama",
+        name: "Alila Purnama",
+        operatorId: "operator_alila_purnama",
+        operatorName: "Alila Purnama",
+        operatorPhone: "6285337210180"
+      }
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/whatsapp/webhook", {
+        method: "POST",
+        body: JSON.stringify({
+          entry: [
+            {
+              changes: [
+                {
+                  value: {
+                    messages: [
+                      {
+                        from: inboundPhone,
+                        id: "wamid.traveller.general.question",
+                        type: "text",
+                        text: {
+                          body: "what is bluepass?"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      })
+    );
+    const requestBody = JSON.parse(String((fetchMock.mock.calls.at(-1)?.[1] as RequestInit).body));
+
+    expect(response.status).toBe(200);
+    expect(requestBody.text.body).toContain("BluePass helps travellers");
+    expect(requestBody.text.body).not.toContain("Current status");
+    expect(requestBody.text.body).not.toContain("Operator Pending");
+  }, 20_000);
+
+  it("uses the LLM rewrite layer for traveller WhatsApp marketplace questions", async () => {
+    process.env.ENABLE_LLM = "true";
+    process.env.LLM_PROVIDER = "openai";
+    process.env.OPENAI_API_KEY = "sk-test";
+    process.env.META_GRAPH_VERSION = "v20.0";
+    process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token";
+    process.env.WHATSAPP_PHONE_ID_KAI = "1115079071692326";
+
+    const tenantSlug = `bluepass-whatsapp-marketplace-llm-${randomUUID()}`;
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = tenantSlug;
+    const inboundPhone = "6285156246329";
+
+    const fetchMock = vi.fn<typeof fetch>(async (url) => {
+      if (String(url).includes("api.openai.com")) {
+        return Response.json({
+          output_text:
+            "BluePass is your ocean-travel concierge for vetted liveaboards and marine trips. I can explain destinations, compare yachts, and prepare operator inquiries without pretending availability or payment is confirmed."
+        });
+      }
+
+      return Response.json({
+        messages: [{ id: "wamid.marketplace.llm.reply" }]
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await prisma.tenant.create({
+      data: {
+        slug: tenantSlug,
+        name: "BluePass WhatsApp Marketplace LLM Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE",
+        config: {
+          create: {
+            supportedChannels: ["WEB_WIDGET", "WHATSAPP"],
+            enabledFeatures: ["widget_config", "bluepass_marketplace", "operator_whatsapp_dispatch"],
+            requiredSlots: {},
+            bookingMode: "MANUAL_INQUIRY",
+            bookingWriteEnabled: false,
+            pmsProvider: "MOCK",
+            escalationRules: [],
+            responseGuardrails: [
+              "Do not confirm availability, final price, payment, or booking before operator confirmation."
+            ]
+          }
+        }
+      }
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/whatsapp/webhook", {
+        method: "POST",
+        body: JSON.stringify({
+          entry: [
+            {
+              changes: [
+                {
+                  value: {
+                    messages: [
+                      {
+                        from: inboundPhone,
+                        id: "wamid.traveller.marketplace.llm",
+                        type: "text",
+                        text: {
+                          body: "what is bluepass?"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      })
+    );
+    const whatsAppRequest = fetchMock.mock.calls.find((call) => String(call[0]).includes("graph.facebook.com"));
+    const whatsAppBody = JSON.parse(String((whatsAppRequest?.[1] as RequestInit).body));
+
+    expect(response.status).toBe(200);
+    expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("api.openai.com"))).toBe(true);
+    expect(whatsAppBody.text.body).toContain("ocean-travel concierge");
+    expect(whatsAppBody.text.body).not.toContain("Current status");
+  }, 20_000);
+
   it("keeps traveller recommendation follow-ups in marketplace instead of latest inquiry status", async () => {
     process.env.META_GRAPH_VERSION = "v20.0";
     process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token";

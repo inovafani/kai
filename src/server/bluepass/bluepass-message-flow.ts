@@ -389,6 +389,7 @@ function isBluePassValueQuestion(content: string) {
   const normalized = content.toLowerCase();
 
   return (
+    /\b(?:what is|what's|tell me about|explain)\s+bluepass\b/.test(normalized) ||
     /\b(?:why|how)\s+(?:should\s+i\s+)?(?:use|book\s+with|choose)\s+bluepass\b/.test(normalized) ||
     /\b(?:why|how)\s+bluepass\b/.test(normalized) ||
     /\b(?:booking direct|book direct|direct booking|same price|conservation|give back|5%)\b/.test(normalized)

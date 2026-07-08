@@ -949,7 +949,7 @@ function resolveDeclinedAlternativeSelection(input: { inquiry: BluePassInquiry; 
   };
 }
 
-async function findLatestBluePassParticipantContext(from: string) {
+export async function findLatestBluePassParticipantContext(from: string) {
   const candidates = buildParticipantPhoneCandidates(from);
   if (candidates.length === 0) return null;
 
