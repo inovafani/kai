@@ -19,6 +19,7 @@ import {
   buildBluePassMissingFieldsReply,
   buildBluePassRecommendationReply,
   buildBluePassSeasonReply,
+  buildBluePassSmallTalkReply,
   buildBluePassValueReply,
   buildBluePassYachtComparisonReply,
   buildBluePassYachtOverviewReply
@@ -150,6 +151,10 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
 
   if (isBluePassValueQuestion(input.content)) {
     return buildConciergeResponse(buildBluePassValueReply());
+  }
+
+  if (isBluePassSmallTalkRequest(input.content)) {
+    return buildConciergeResponse(buildBluePassSmallTalkReply());
   }
 
   const seasonDestination = resolveSeasonDestination(input.content);
@@ -426,6 +431,23 @@ function isBluePassValueQuestion(content: string) {
     /\b(?:why|how)\s+(?:should\s+i\s+)?(?:use|book\s+with|choose)\s+bluepass\b/.test(normalized) ||
     /\b(?:why|how)\s+bluepass\b/.test(normalized) ||
     /\b(?:booking direct|book direct|direct booking|same price|conservation|give back|5%)\b/.test(normalized)
+  );
+}
+
+function isBluePassSmallTalkRequest(content: string) {
+  const normalized = content.toLowerCase().replace(/[^\w\s']/g, " ").replace(/\s+/g, " ").trim();
+  const hasCommercialIntent =
+    /\b(?:order|book|booking|reserve|hold|inquiry|operator|quote|availability|liveaboards?|yachts?|boats?|komodo|raja\s+ampat)\b/.test(
+      normalized
+    );
+
+  if (hasCommercialIntent) return false;
+
+  return (
+    /^(?:yo|yow|hey|hi|hello|halo|hai|wassup|what's up|whats up|sup|bro|sis)(?:\s+(?:kai|there|bro|sis|what's up|whats up|wassup))?$/.test(
+      normalized
+    ) ||
+    /\b(?:how are you|how's it going|hows it going|can you help me|help me|what can you do)\b/.test(normalized)
   );
 }
 

@@ -113,6 +113,10 @@ export function buildBluePassValueReply() {
   return "BluePass helps travellers choose from vetted ocean operators while keeping booking truth honest: catalog prices are signals until an operator confirms availability and the final quote. The BluePass promise is that trips support the ocean too - 5% is allocated toward conservation, clean-ups, and coastal community impact. Kai can explain options, compare yachts, collect the right inquiry details, and then hand the request to the operator instead of pretending a booking is confirmed.";
 }
 
+export function buildBluePassSmallTalkReply() {
+  return "Hey, I am here. I can talk through BluePass, compare liveaboards, recommend Komodo or Raja Ampat options, or help continue an inquiry when you are ready.";
+}
+
 export function buildBluePassSeasonReply(destination: string) {
   if (/raja\s+ampat/i.test(destination)) {
     return "Raja Ampat is usually strongest from October to April, when liveaboard conditions are more reliable and the routes around Misool, Dampier Strait, and Wayag make more sense. It is remote, reef-forward, and best planned with enough lead time because operator schedules and cabins still need confirmation.";

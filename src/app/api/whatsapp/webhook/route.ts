@@ -10,6 +10,7 @@ import {
   extractWhatsAppInboundTextMessagesFromWebhook,
   extractWhatsAppMessageStatusesFromWebhook
 } from "@/server/whatsapp/webhook";
+import { sendWhatsAppTypingIndicator } from "@/server/whatsapp/client";
 
 export async function GET(request: Request) {
   const url = new URL(request.url);
@@ -71,6 +72,11 @@ export async function POST(request: Request) {
 
   for (const message of contextMessages) {
     try {
+      await sendWhatsAppTypingIndicator({
+        role: "kai",
+        messageId: message.providerMessageId ?? ""
+      }).catch(() => undefined);
+
       const result = await handleBluePassWhatsAppInboundMessage(message);
       if (result.handled) {
         contextHandled += 1;

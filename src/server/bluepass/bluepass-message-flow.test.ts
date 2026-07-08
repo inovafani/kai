@@ -97,6 +97,22 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).not.toContain("phone");
   });
 
+  it("answers casual WhatsApp small talk instead of entering inquiry collection", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "yo wassup",
+      priorTravellerMessages: ["liveaboards in komodo"]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.assistantContent).toContain("I am here");
+    expect(result.assistantContent).not.toContain("Please share your name");
+    expect(result.assistantContent).not.toContain("email");
+    expect(result.assistantContent).not.toContain("phone");
+  });
+
   it("compares two yachts without showing inquiry actions", async () => {
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,

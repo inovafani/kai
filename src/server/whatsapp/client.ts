@@ -16,6 +16,11 @@ export type WhatsAppTextMessage = {
   body: string;
 };
 
+export type WhatsAppTypingIndicatorMessage = {
+  role?: WhatsAppSenderRole;
+  messageId: string;
+};
+
 type WhatsAppTemplateApiPayload = {
   messaging_product: "whatsapp";
   to: string;
@@ -34,6 +39,15 @@ type WhatsAppTextApiPayload = {
   text: {
     preview_url: false;
     body: string;
+  };
+};
+
+type WhatsAppTypingIndicatorApiPayload = {
+  messaging_product: "whatsapp";
+  status: "read";
+  message_id: string;
+  typing_indicator: {
+    type: "text";
   };
 };
 
@@ -91,6 +105,20 @@ export async function sendWhatsAppText(message: WhatsAppTextMessage): Promise<Wh
     text: {
       preview_url: false,
       body: message.body
+    }
+  });
+}
+
+export async function sendWhatsAppTypingIndicator(message: WhatsAppTypingIndicatorMessage): Promise<void> {
+  const messageId = message.messageId.trim();
+  if (!messageId) return;
+
+  await postWhatsAppMessage(message.role ?? "kai", {
+    messaging_product: "whatsapp",
+    status: "read",
+    message_id: messageId,
+    typing_indicator: {
+      type: "text"
     }
   });
 }
@@ -153,7 +181,7 @@ function maskPhoneNumber(value: string) {
 
 async function postWhatsAppMessage(
   role: WhatsAppSenderRole,
-  payload: WhatsAppTemplateApiPayload | WhatsAppTextApiPayload
+  payload: WhatsAppTemplateApiPayload | WhatsAppTextApiPayload | WhatsAppTypingIndicatorApiPayload
 ): Promise<WhatsAppSendResult> {
   const phoneId = resolveWhatsAppPhoneId(role);
   const graphVersion = resolveMetaGraphVersion();
@@ -192,9 +220,9 @@ async function postWhatsAppMessage(
       console.warn("whatsapp.send.failed", {
         role,
         status: response.status,
-        to: maskPhoneNumber(payload.to),
-        type: payload.type,
-        templateName: payload.type === "template" ? payload.template.name : undefined
+        to: "to" in payload ? maskPhoneNumber(payload.to) : undefined,
+        type: "type" in payload ? payload.type : "typing_indicator",
+        templateName: "type" in payload && payload.type === "template" ? payload.template.name : undefined
       });
       throw new Error(message);
     }

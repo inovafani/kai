@@ -37,6 +37,19 @@ afterEach(() => {
   process.env = { ...originalEnv };
 });
 
+function getWhatsAppTextBodies(fetchMock: { mock: { calls: Parameters<typeof fetch>[] } }) {
+  return fetchMock.mock.calls
+    .filter((call) => String(call[0]).includes("graph.facebook.com"))
+    .map((call) => JSON.parse(String((call[1] as RequestInit).body)))
+    .filter((body) => body.type === "text" && body.text?.body)
+    .map((body) => String(body.text.body));
+}
+
+function getLastWhatsAppTextBody(fetchMock: { mock: { calls: Parameters<typeof fetch>[] } }) {
+  const bodies = getWhatsAppTextBodies(fetchMock);
+  return bodies.at(-1) ?? "";
+}
+
 describe("/api/whatsapp/webhook", () => {
   it("verifies the Meta webhook challenge with the configured token", async () => {
     process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN = "verify_secret";
@@ -1116,8 +1129,13 @@ describe("/api/whatsapp/webhook", () => {
       contextFailed: 0
     });
     expect(requestBody.text.body).toContain("Komodo");
+    expect(requestBody.text.body).toContain("Calico Jack");
+    expect(requestBody.text.body).toContain("Alila Purnama");
     expect(requestBody.text.body).not.toContain("Current status");
     expect(requestBody.text.body).not.toContain("Operator Pending");
+    expect(requestBody.text.body).not.toContain("Please share your name");
+    expect(requestBody.text.body).not.toContain("email");
+    expect(requestBody.text.body).not.toContain("phone");
     expect(messages.map((message) => message.role)).toEqual(["TRAVELLER", "ASSISTANT"]);
   }, 20_000);
 
@@ -1300,13 +1318,12 @@ describe("/api/whatsapp/webhook", () => {
         })
       })
     );
-    const whatsAppRequest = fetchMock.mock.calls.find((call) => String(call[0]).includes("graph.facebook.com"));
-    const whatsAppBody = JSON.parse(String((whatsAppRequest?.[1] as RequestInit).body));
+    const whatsAppBody = getLastWhatsAppTextBody(fetchMock);
 
     expect(response.status).toBe(200);
     expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("api.openai.com"))).toBe(true);
-    expect(whatsAppBody.text.body).toContain("ocean-travel concierge");
-    expect(whatsAppBody.text.body).not.toContain("Current status");
+    expect(whatsAppBody).toContain("ocean-travel concierge");
+    expect(whatsAppBody).not.toContain("Current status");
   }, 20_000);
 
   it("keeps traveller recommendation follow-ups in marketplace instead of latest inquiry status", async () => {
@@ -1419,9 +1436,7 @@ describe("/api/whatsapp/webhook", () => {
       })
     );
 
-    const whatsAppBodies = fetchMock.mock.calls
-      .filter((call: Parameters<typeof fetch>) => Boolean((call[1] as RequestInit | undefined)?.body))
-      .map((call: Parameters<typeof fetch>) => JSON.parse(String((call[1] as RequestInit).body)).text.body as string);
+    const whatsAppBodies = getWhatsAppTextBodies(fetchMock);
     const messages = await prisma.message.findMany({
       where: { conversationId: whatsappConversation.id },
       orderBy: { createdAt: "asc" }
@@ -1917,8 +1932,7 @@ describe("/api/whatsapp/webhook", () => {
       })
     );
     const body = await response.json();
-    const whatsAppRequest = fetchMock.mock.calls.find((call) => String(call[0]).includes("graph.facebook.com"));
-    const whatsAppBody = JSON.parse(String((whatsAppRequest?.[1] as RequestInit).body));
+    const whatsAppBody = getLastWhatsAppTextBody(fetchMock);
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({
@@ -1927,9 +1941,9 @@ describe("/api/whatsapp/webhook", () => {
       contextFailed: 0
     });
     expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("api.openai.com"))).toBe(true);
-    expect(whatsAppBody.text.body).toContain("Calico Jack");
-    expect(whatsAppBody.text.body).toContain("Komodo / 20 July 2026 / 2 guests");
-    expect(whatsAppBody.text.body).toContain("operator pending");
+    expect(whatsAppBody).toContain("Calico Jack");
+    expect(whatsAppBody).toContain("Komodo / 20 July 2026 / 2 guests");
+    expect(whatsAppBody).toContain("operator pending");
   }, 30_000);
 
   it("uses the LLM rewrite layer for traveller WhatsApp context questions without confirming bookings", async () => {
@@ -2024,8 +2038,7 @@ describe("/api/whatsapp/webhook", () => {
       })
     );
     const body = await response.json();
-    const whatsAppRequest = fetchMock.mock.calls.find((call) => String(call[0]).includes("graph.facebook.com"));
-    const whatsAppBody = JSON.parse(String((whatsAppRequest?.[1] as RequestInit).body));
+    const whatsAppBody = getLastWhatsAppTextBody(fetchMock);
 
     expect(response.status).toBe(200);
     expect(body).toMatchObject({
@@ -2034,8 +2047,8 @@ describe("/api/whatsapp/webhook", () => {
       contextFailed: 0
     });
     expect(fetchMock.mock.calls.some((call) => String(call[0]).includes("api.openai.com"))).toBe(true);
-    expect(whatsAppBody.text.body).toContain("Calico Jack");
-    expect(whatsAppBody.text.body).toContain("Komodo / 21 July 2026 / 2 guests");
-    expect(whatsAppBody.text.body).toContain("not a confirmed booking");
+    expect(whatsAppBody).toContain("Calico Jack");
+    expect(whatsAppBody).toContain("Komodo / 21 July 2026 / 2 guests");
+    expect(whatsAppBody).toContain("not a confirmed booking");
   }, 30_000);
 });
