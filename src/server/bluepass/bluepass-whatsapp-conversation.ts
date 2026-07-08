@@ -38,11 +38,25 @@ function shouldRouteToMarketplace(body: string) {
   const normalized = body.toLowerCase().replace(/\s+/g, " ").trim();
   if (!normalized) return false;
 
+  const hasDateLikeDetail =
+    /\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\b/.test(
+      normalized
+    ) ||
+    /\b(?:jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+\d{1,2}\b/.test(
+      normalized
+    );
+  const hasGuestDetail = /\b\d+\s*(?:guest|guests|person|persons|people|pax)\b/.test(normalized);
+  const hasContactDetail =
+    /\bmy\s+name\s+is\b/.test(normalized) ||
+    /\bemail\s+is\b/.test(normalized) ||
+    /\bwhatsapp\s+(?:number\s+)?is\b/.test(normalized);
+
   return [
     /\b(i want|i need|can you help me|help me|please help).{0,80}\b(book|booking|order|reserve|inquiry|trip|liveaboard|yacht)\b/,
     /\b(book|booking|order|reserve)\b.{0,80}\b(yacht|liveaboard|trip|komodo|raja ampat|calico jack|alila purnama|alilikai|samsara)\b/,
-    /\b(recommend|recommendation|suggest|option|options|alternative|alternatives)\b.{0,80}\b(for me|komodo|raja ampat|yacht|liveaboard|trip|diving|sailing|cruising)\b/
-  ].some((pattern) => pattern.test(normalized));
+    /\b(recommend|recommendation|recommendations|suggest|option|options|alternative|alternatives)\b.{0,80}\b(for me|komodo|raja ampat|yacht|liveaboard|trip|diving|sailing|cruising)\b/,
+    /\b(?:another|more|other)\s+(?:recommendation|recommendations|option|options|alternative|alternatives|yacht|yachts)\b/
+  ].some((pattern) => pattern.test(normalized)) || (hasDateLikeDetail && hasGuestDetail) || hasContactDetail;
 }
 
 async function handleBluePassTravellerMarketplaceWhatsAppMessage(input: WhatsAppInboundTextMessage) {

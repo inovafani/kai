@@ -1121,6 +1121,139 @@ describe("/api/whatsapp/webhook", () => {
     expect(messages.map((message) => message.role)).toEqual(["TRAVELLER", "ASSISTANT"]);
   }, 20_000);
 
+  it("keeps traveller recommendation follow-ups in marketplace instead of latest inquiry status", async () => {
+    process.env.META_GRAPH_VERSION = "v20.0";
+    process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token";
+    process.env.WHATSAPP_PHONE_ID_KAI = "1115079071692326";
+
+    const tenantSlug = `bluepass-whatsapp-recommendation-followup-${randomUUID()}`;
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = tenantSlug;
+    const inboundPhone = "6285156246329";
+
+    let replyCount = 0;
+    const fetchMock = vi.fn<typeof fetch>(async () => {
+      replyCount += 1;
+
+      return Response.json({
+        messages: [{ id: `wamid.recommendation.followup.${replyCount}` }]
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: tenantSlug,
+        name: "BluePass WhatsApp Recommendation Follow-up Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE",
+        config: {
+          create: {
+            supportedChannels: ["WEB_WIDGET", "WHATSAPP"],
+            enabledFeatures: ["widget_config", "bluepass_marketplace", "operator_whatsapp_dispatch"],
+            requiredSlots: {},
+            bookingMode: "MANUAL_INQUIRY",
+            bookingWriteEnabled: false,
+            pmsProvider: "MOCK",
+            escalationRules: [],
+            responseGuardrails: [
+              "Do not confirm availability, final price, payment, or booking before operator confirmation."
+            ]
+          }
+        }
+      }
+    });
+    const whatsappConversation = await prisma.conversation.create({
+      data: {
+        tenantId: tenant.id,
+        channel: "WHATSAPP",
+        travellerId: inboundPhone
+      }
+    });
+    await createOrReuseBluePassInquiry({
+      tenantId: tenant.id,
+      conversationId: whatsappConversation.id,
+      travellerMessage: "Alila Purnama in Komodo for 2 guests on 13 July 2026",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "13 July 2026",
+        guests: 2,
+        travellerName: "Putro",
+        travellerEmail: "putro@example.com",
+        travellerPhone: "085156246329"
+      },
+      selectedYacht: {
+        slug: "alila-purnama",
+        name: "Alila Purnama",
+        operatorId: "operator_alila_purnama",
+        operatorName: "Alila Purnama",
+        operatorPhone: "6285337210180"
+      }
+    });
+
+    const basePayload = (body: string, id: string) => ({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: inboundPhone,
+                    id,
+                    type: "text",
+                    text: { body }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    await POST(
+      new Request("http://localhost/api/whatsapp/webhook", {
+        method: "POST",
+        body: JSON.stringify(basePayload("do you have recommendation for me in komodo?", "wamid.recommendation.start"))
+      })
+    );
+    await POST(
+      new Request("http://localhost/api/whatsapp/webhook", {
+        method: "POST",
+        body: JSON.stringify(basePayload("maybe 17th july and 4 people", "wamid.recommendation.details"))
+      })
+    );
+    await POST(
+      new Request("http://localhost/api/whatsapp/webhook", {
+        method: "POST",
+        body: JSON.stringify(basePayload("can you give me another recommendations?", "wamid.recommendation.more"))
+      })
+    );
+
+    const whatsAppBodies = fetchMock.mock.calls
+      .filter((call: Parameters<typeof fetch>) => Boolean((call[1] as RequestInit | undefined)?.body))
+      .map((call: Parameters<typeof fetch>) => JSON.parse(String((call[1] as RequestInit).body)).text.body as string);
+    const messages = await prisma.message.findMany({
+      where: { conversationId: whatsappConversation.id },
+      orderBy: { createdAt: "asc" }
+    });
+
+    expect(whatsAppBodies).toHaveLength(3);
+    expect(whatsAppBodies[1]).not.toContain("Current status");
+    expect(whatsAppBodies[1]).not.toContain("Operator Pending");
+    expect(whatsAppBodies[2]).not.toContain("Current status");
+    expect(whatsAppBodies[2]).not.toContain("Operator Pending");
+    expect(messages.map((message) => message.role)).toEqual([
+      "TRAVELLER",
+      "ASSISTANT",
+      "TRAVELLER",
+      "ASSISTANT",
+      "TRAVELLER",
+      "ASSISTANT"
+    ]);
+  }, 30_000);
+
   it("dispatches the next alternative when a traveller approves alternatives over WhatsApp after a decline", async () => {
     process.env.META_GRAPH_VERSION = "v20.0";
     process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token";
