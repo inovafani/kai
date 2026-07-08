@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import {
   handleBluePassOperatorResponse,
-  handleBluePassWhatsAppContextMessage,
   recordBluePassTravellerWhatsAppDeliveryStatus,
   resolveLatestPendingBluePassInquiryIdForOperatorPhone
 } from "@/server/bluepass/bluepass-inquiry-repository";
+import { handleBluePassWhatsAppInboundMessage } from "@/server/bluepass/bluepass-whatsapp-conversation";
 import {
   extractBluePassOperatorResponsesFromWhatsAppWebhook,
   extractWhatsAppInboundTextMessagesFromWebhook,
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
 
   for (const message of contextMessages) {
     try {
-      const result = await handleBluePassWhatsAppContextMessage(message);
+      const result = await handleBluePassWhatsAppInboundMessage(message);
       if (result.handled) {
         contextHandled += 1;
       }

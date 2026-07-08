@@ -181,6 +181,10 @@ function capSentences(reply: string, latestUserMessage?: string | null) {
     return reply;
   }
 
+  if (/https?:\/\//i.test(reply)) {
+    return reply;
+  }
+
   const parts = sentenceParts(reply).map((part) => part.trim()).filter(Boolean);
   return parts.length > 3 ? parts.slice(0, 3).join(" ") : reply;
 }
