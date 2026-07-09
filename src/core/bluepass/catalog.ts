@@ -92,6 +92,113 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     interests: ["dive", "phinisi", "private", "cabin"]
   },
   {
+    slug: "anne-bonny",
+    name: "Anne Bonny",
+    region: "Komodo",
+    tier: "Explorer",
+    maxGuests: 8,
+    cabins: 3,
+    priceSignal: "from USD 1,483 private charter signal",
+    charterPriceSignal: "from USD 4,450 private charter",
+    operatorId: "operator_anne_bonny",
+    operatorName: "Anne Bonny",
+    operatorPhone: "+6281234567005",
+    productUrl: "https://bluepass.co/yachts/anne-bonny",
+    interests: ["dive", "phinisi", "private", "explorer"],
+    about:
+      "Anne Bonny is a 30-metre liveaboard with 3 cabins for up to 8 guests, focused on accessible private charter adventures in Komodo with seasonal Raja Ampat itineraries."
+  },
+  {
+    slug: "celestia",
+    name: "Celestia",
+    region: "Komodo",
+    tier: "Premium",
+    maxGuests: 14,
+    cabins: 7,
+    priceSignal: "from USD 1,643 per cabin",
+    charterPriceSignal: null,
+    operatorId: "operator_celestia",
+    operatorName: "Celestia",
+    operatorPhone: "+6281234567006",
+    productUrl: "https://bluepass.co/yachts/celestia",
+    interests: ["dive", "phinisi", "luxury", "cabin"]
+  },
+  {
+    slug: "dunia-baru",
+    name: "Dunia Baru",
+    region: "Komodo",
+    tier: "Legend",
+    maxGuests: 14,
+    cabins: 7,
+    priceSignal: "from USD 2,857 per cabin",
+    charterPriceSignal: "from USD 20,000 private charter",
+    operatorId: "operator_dunia_baru",
+    operatorName: "Dunia Baru",
+    operatorPhone: "+6281234567007",
+    productUrl: "https://bluepass.co/yachts/dunia-baru",
+    interests: ["dive", "luxury", "phinisi", "private"]
+  },
+  {
+    slug: "jakare",
+    name: "Jakare",
+    region: "Komodo",
+    tier: "Explorer",
+    maxGuests: 14,
+    cabins: 5,
+    priceSignal: "from USD 980 per cabin",
+    charterPriceSignal: "from USD 4,900 private charter",
+    operatorId: "operator_jakare",
+    operatorName: "Jakare",
+    operatorPhone: "+6281234567008",
+    productUrl: "https://bluepass.co/yachts/jakare",
+    interests: ["dive", "phinisi", "explorer", "cabin"]
+  },
+  {
+    slug: "katharina",
+    name: "Katharina",
+    region: "Komodo",
+    tier: "Premium",
+    maxGuests: 12,
+    cabins: 6,
+    priceSignal: "from USD 887 per cabin",
+    charterPriceSignal: "from USD 4,250 private charter",
+    operatorId: "operator_katharina",
+    operatorName: "Katharina",
+    operatorPhone: "+6281234567009",
+    productUrl: "https://bluepass.co/yachts/katharina",
+    interests: ["dive", "phinisi", "cabin"]
+  },
+  {
+    slug: "mischief",
+    name: "Mischief",
+    region: "Komodo",
+    tier: "Premium",
+    maxGuests: 6,
+    cabins: 3,
+    priceSignal: "from USD 2,667 per cabin",
+    charterPriceSignal: "from USD 8,000 private charter",
+    operatorId: "operator_mischief",
+    operatorName: "Mischief",
+    operatorPhone: "+6281234567010",
+    productUrl: "https://bluepass.co/yachts/mischief",
+    interests: ["private", "luxury", "phinisi"]
+  },
+  {
+    slug: "mutiara-laut",
+    name: "Mutiara Laut",
+    region: "Komodo",
+    tier: "Premium",
+    maxGuests: 10,
+    cabins: 5,
+    priceSignal: "from USD 1,929 per cabin",
+    charterPriceSignal: "from USD 13,500 private charter",
+    operatorId: "operator_mutiara_laut",
+    operatorName: "Mutiara Laut",
+    operatorPhone: "+6281234567011",
+    productUrl: "https://bluepass.co/yachts/mutiara-laut",
+    interests: ["dive", "phinisi", "private"]
+  },
+  {
     slug: "aliikai",
     name: "Aliikai",
     region: "Raja Ampat",
@@ -104,6 +211,51 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorName: "Aliikai Expeditions",
     operatorPhone: "+6281234567002",
     interests: ["dive", "phinisi", "cabin"]
+  },
+  {
+    slug: "carpe-diem",
+    name: "Carpe Diem",
+    region: "Raja Ampat",
+    tier: "Explorer",
+    maxGuests: 12,
+    cabins: 6,
+    priceSignal: "from USD 885 per cabin",
+    charterPriceSignal: "from USD 8,580 private charter",
+    operatorId: "operator_carpe_diem",
+    operatorName: "Carpe Diem",
+    operatorPhone: "+6281234567012",
+    productUrl: "https://bluepass.co/yachts/carpe-diem",
+    interests: ["dive", "phinisi", "explorer", "cabin"]
+  },
+  {
+    slug: "fenides",
+    name: "Fenides",
+    region: "Raja Ampat",
+    tier: "Premium",
+    maxGuests: 11,
+    cabins: 5,
+    priceSignal: "from USD 815 per cabin",
+    charterPriceSignal: "from USD 8,580 private charter",
+    operatorId: "operator_fenides",
+    operatorName: "Fenides",
+    operatorPhone: "+6281234567013",
+    productUrl: "https://bluepass.co/yachts/fenides",
+    interests: ["dive", "phinisi", "cabin"]
+  },
+  {
+    slug: "majik",
+    name: "Majik",
+    region: "Raja Ampat",
+    tier: "Explorer",
+    maxGuests: 8,
+    cabins: 4,
+    priceSignal: "from USD 1,425 per cabin",
+    charterPriceSignal: "from USD 5,700 private charter",
+    operatorId: "operator_majik",
+    operatorName: "Majik",
+    operatorPhone: "+6281234567014",
+    productUrl: "https://bluepass.co/yachts/majik",
+    interests: ["dive", "private", "explorer"]
   },
   {
     slug: "amandira",
@@ -121,9 +273,13 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
   }
 ];
 
-export function searchBluePassYachts(intent: BluePassYachtSearchIntent, catalogInput?: BluePassCatalogSnapshotItem[]) {
+export function searchBluePassYachts(
+  intent: BluePassYachtSearchIntent,
+  catalogInput?: BluePassCatalogSnapshotItem[],
+  limit = 3
+) {
   return resolveBluePassCatalog(catalogInput)
-    .map((item) => {
+    .map((item, catalogIndex) => {
       const reasons: string[] = [];
       let score = 0;
 
@@ -157,11 +313,13 @@ export function searchBluePassYachts(intent: BluePassYachtSearchIntent, catalogI
         ...item,
         reasons,
         score,
-        truth: previewTruth
-      } satisfies BluePassYachtCard;
+        truth: previewTruth,
+        catalogIndex
+      } satisfies BluePassYachtCard & { catalogIndex: number };
     })
-    .sort((a, b) => b.score - a.score || b.maxGuests - a.maxGuests)
-    .slice(0, 3);
+    .sort((a, b) => b.score - a.score || a.catalogIndex - b.catalogIndex || b.maxGuests - a.maxGuests)
+    .slice(0, limit)
+    .map(({ catalogIndex: _catalogIndex, ...item }) => item);
 }
 
 export function findBluePassYachtBySlug(slug?: string | null, catalogInput?: BluePassCatalogSnapshotItem[]) {

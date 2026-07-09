@@ -45,6 +45,25 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).not.toContain("guest count");
   });
 
+  it("treats travel inspiration as concierge chat instead of forcing inquiry fields", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "i want healing but im confuse where to go",
+      priorTravellerMessages: []
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.contactRequest).toBeNull();
+    expect(result.replyMode).toBe("CONCIERGE");
+    expect(result.bluepassMatches.length).toBeGreaterThanOrEqual(2);
+    expect(result.assistantContent).toContain("Raja Ampat");
+    expect(result.assistantContent).toContain("Komodo");
+    expect(result.assistantContent).not.toContain("Please share your name");
+    expect(result.assistantContent).not.toContain("prepare the inquiry");
+  });
+
   it("keeps a registered operator in operator mode even when they ask about commission", async () => {
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
@@ -338,6 +357,52 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).toContain("besides Calico Jack");
     expect(result.assistantContent).toContain("Alila Purnama");
     expect(result.assistantContent).not.toContain("Calico Jack is a");
+  });
+
+  it("does not repeat the first Komodo shortlist when the traveller asks beyond those options", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "anything besides those 3?",
+      priorTravellerMessages: ["liveaboards in komodo"]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("Komodo");
+    expect(result.assistantContent).toMatch(/Anne Bonny|Celestia|Dunia Baru|Jakare|Katharina|Mischief|Mutiara Laut/);
+    expect(result.assistantContent).not.toContain("Alila Purnama -");
+    expect(result.assistantContent).not.toContain("Calico Jack -");
+    expect(result.assistantContent).not.toContain("Alexa -");
+    expect(result.assistantContent).not.toContain("Please share your name");
+  });
+
+  it("switches destinations when the traveller asks for somewhere else instead of Komodo", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "somewhere else instead of komodo, do you have any?",
+      priorTravellerMessages: ["liveaboards in komodo"]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("Raja Ampat");
+    expect(result.assistantContent).toMatch(/Aliikai|Amandira|Carpe Diem|Fenides|Majik/);
+    expect(result.assistantContent).not.toContain("options in Komodo");
+    expect(result.assistantContent).not.toContain("Please share your name");
+  });
+
+  it("uses the yacht named in the latest message instead of stale history", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "Tell me about Anne Bonny",
+      priorTravellerMessages: ["liveaboards in komodo", "tell me about alila purnama"]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("Anne Bonny");
+    expect(result.assistantContent).not.toContain("Alila Purnama is a");
+    expect(result.assistantContent).not.toContain("Please share your name");
   });
 
   it("compares two yachts without showing inquiry actions", async () => {

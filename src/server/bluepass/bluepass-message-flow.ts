@@ -128,7 +128,8 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   const historyIntent = extractBluePassInquiryIntent(input.priorTravellerMessages);
   const messageIntent = extractBluePassInquiryIntent([input.content]);
   const latestMentionedYachts = resolveMentionedYachts(input.content, catalog);
-  const selectedYacht = resolveSelectedYacht([input.content, ...input.priorTravellerMessages].join("\n"), catalog);
+  const historyMentionedYachts = resolveMentionedYachts(input.priorTravellerMessages.join("\n"), catalog);
+  const selectedYacht = latestMentionedYachts[0] ?? historyMentionedYachts[0] ?? null;
   const intent = mergeBluePassInquiryIntent(historyIntent, {
     ...messageIntent,
     destination: messageIntent.destination ?? (selectedYacht ? selectedYacht.region : undefined),
@@ -189,6 +190,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     const bluepassInquiry = status?.inquiry ?? created.inquiry;
 
     return {
+      replyMode: "ACTION" as const,
       assistantContent: buildBluePassInquiryReadyReply({
         inquiryId: bluepassInquiry.id,
         selectedYachtName: bluepassInquiry.selectedYachtName,
@@ -216,6 +218,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     }
 
     return {
+      replyMode: "ACTION" as const,
       assistantContent: buildBluePassInquiryStatusReply({
         inquiryId: status.inquiry.id,
         selectedYachtName: status.inquiry.selectedYachtName,
@@ -251,24 +254,43 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   }
 
   if (isBluePassRecommendationRequest(input.content) && !isBluePassInquirySubmissionRequest(input.content)) {
+    const recommendationDestination = resolveRecommendationDestination({
+      content: input.content,
+      intentDestination: intent.destination,
+      priorTravellerMessages: input.priorTravellerMessages
+    });
     const excludedYachts = resolveRecommendationExcludedYachts({
       content: input.content,
       selectedYacht,
-      latestMentionedYachts
+      latestMentionedYachts,
+      historyMentionedYachts
     });
     const excludedYachtSlugs = new Set(excludedYachts.map((yacht) => yacht.slug));
+    if (isBluePassOtherOptionsRequest(input.content) && excludedYachtSlugs.size === 0 && recommendationDestination) {
+      for (const yacht of searchBluePassYachts({ destination: recommendationDestination }, catalog, 3)) {
+        excludedYachtSlugs.add(yacht.slug);
+        excludedYachts.push(yacht);
+      }
+    }
+
     const recommendationMatches = searchBluePassYachts(
       {
-        destination: intent.destination,
+        destination: recommendationDestination,
         guests: intent.guests,
         interests: intent.interests
       },
-      catalog
-    ).filter((match) => !excludedYachtSlugs.has(match.slug));
+      catalog,
+      12
+    )
+      .filter((match) =>
+        recommendationDestination ? match.region.toLowerCase().includes(recommendationDestination.toLowerCase()) : true
+      )
+      .filter((match) => !excludedYachtSlugs.has(match.slug))
+      .slice(0, 3);
 
     return buildConciergeResponse(
       buildBluePassRecommendationReply({
-        destination: intent.destination,
+        destination: recommendationDestination,
         matches: recommendationMatches,
         excludedYachtNames: excludedYachts.map((yacht) => yacht.name)
       }),
@@ -276,8 +298,22 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     );
   }
 
+  if (isBluePassTravelInspirationRequest(input.content) && !isBluePassInquirySubmissionRequest(input.content)) {
+    const inspirationMatches = buildBluePassInspirationMatches(catalog);
+
+    return buildConciergeResponse(
+      buildBluePassRecommendationReply({
+        matches: inspirationMatches
+      }),
+      inspirationMatches
+    );
+  }
+
   if (selectedYacht && isBluePassYachtInformationRequest(input.content)) {
-    const overviewMatch = bluepassMatches.find((match) => match.slug === selectedYacht.slug) ?? bluepassMatches[0];
+    const overviewMatch =
+      searchBluePassYachts({ selectedYachtSlug: selectedYacht.slug }, catalog, 1)[0] ??
+      bluepassMatches.find((match) => match.slug === selectedYacht.slug) ??
+      bluepassMatches[0];
 
     return buildConciergeResponse(buildBluePassYachtOverviewReply(overviewMatch), [overviewMatch]);
   }
@@ -288,6 +324,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     const promptMissingFields = getPromptMissingFields(missingFields);
 
     return {
+      replyMode: "ACTION" as const,
       assistantContent: buildBluePassMissingFieldsReply({
         destination: intent.destination,
         selectedYacht,
@@ -309,6 +346,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
 
   if (!isBluePassInquirySubmissionRequest(input.content)) {
     return {
+      replyMode: "ACTION" as const,
       assistantContent: buildBluePassInquiryConfirmationReply({
         selectedYachtName: selectedYacht?.name,
         destination: intent.destination,
@@ -345,6 +383,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   const bluepassInquiry = status?.inquiry ?? created.inquiry;
 
   return {
+    replyMode: "ACTION" as const,
     assistantContent: buildBluePassInquiryReadyReply({
       inquiryId: bluepassInquiry.id,
       selectedYachtName: bluepassInquiry.selectedYachtName,
@@ -357,10 +396,6 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     bluepassDispatch,
     paymentRequest: null
   };
-}
-
-function resolveSelectedYacht(content: string, catalog: BluePassYachtCatalogItem[]) {
-  return resolveMentionedYachts(content, catalog)[0] ?? null;
 }
 
 function resolveMentionedYachts(content: string, catalog: BluePassYachtCatalogItem[]) {
@@ -442,6 +477,7 @@ function levenshteinDistance(a: string, b: string) {
 
 function buildConciergeResponse(assistantContent: string, bluepassMatches: BluePassYachtCard[] = []) {
   return {
+    replyMode: "CONCIERGE" as const,
     assistantContent,
     bluepassMatches,
     bluepassInquiry: null,
@@ -450,6 +486,18 @@ function buildConciergeResponse(assistantContent: string, bluepassMatches: BlueP
     paymentRequest: null,
     contactRequest: null
   };
+}
+
+function buildBluePassInspirationMatches(catalog: BluePassYachtCatalogItem[]) {
+  const komodoMatches = searchBluePassYachts({ destination: "Komodo" }, catalog, 2);
+  const rajaAmpatMatches = searchBluePassYachts({ destination: "Raja Ampat" }, catalog, 2);
+  const merged = new Map<string, BluePassYachtCard>();
+
+  for (const yacht of [...rajaAmpatMatches, ...komodoMatches]) {
+    merged.set(yacht.slug, yacht);
+  }
+
+  return Array.from(merged.values()).slice(0, 4);
 }
 
 function resolvePersonaLead(input: {
@@ -624,15 +672,61 @@ function isBluePassRecommendationRequest(content: string) {
   return asksForRecommendationOrAlternative || asksForBrowsing;
 }
 
+function isBluePassTravelInspirationRequest(content: string) {
+  const normalized = content.toLowerCase();
+
+  return (
+    /\b(?:where\s+(?:to|should)\s+(?:go|i go)|where\s+can\s+i\s+go|confus(?:e|ed)|not sure|no idea|inspire|inspiration)\b/.test(
+      normalized
+    ) ||
+    /\b(?:healing|relax|relaxing|chill|honeymoon|romantic|solo|couple|family|friends|retreat|escape)\b/.test(
+      normalized
+    ) ||
+    /\b(?:what\s+(?:trip|destination|place)\s+(?:fits|suits)\s+me|help\s+me\s+choose)\b/.test(normalized)
+  );
+}
+
+function resolveRecommendationDestination(input: {
+  content: string;
+  intentDestination?: string;
+  priorTravellerMessages: string[];
+}) {
+  const normalized = input.content.toLowerCase();
+  const asksForDifferentDestination =
+    /\b(?:somewhere else|another destination|other destination|outside)\b/.test(normalized) ||
+    /\b(?:instead of|rather than|besides)\s+(?:komodo|raja\s+ampat)\b/.test(normalized);
+
+  if (/\braja\s+ampat\b/.test(normalized)) {
+    return asksForDifferentDestination ? "Komodo" : "Raja Ampat";
+  }
+
+  if (/\bkomodo\b/.test(normalized)) {
+    return asksForDifferentDestination ? "Raja Ampat" : "Komodo";
+  }
+
+  if (asksForDifferentDestination) {
+    const priorText = input.priorTravellerMessages.join("\n").toLowerCase();
+    if (input.intentDestination === "Komodo" || /\bkomodo\b/.test(priorText)) return "Raja Ampat";
+    if (input.intentDestination === "Raja Ampat" || /\braja\s+ampat\b/.test(priorText)) return "Komodo";
+  }
+
+  return input.intentDestination;
+}
+
+function isBluePassOtherOptionsRequest(content: string) {
+  return /\b(?:anything else|something else|another|other than|rather than|besides|instead of|those\s+\d+|the other ones)\b/i.test(
+    content
+  );
+}
+
 function resolveRecommendationExcludedYachts(input: {
   content: string;
   selectedYacht: BluePassYachtCatalogItem | null;
   latestMentionedYachts: BluePassYachtCatalogItem[];
+  historyMentionedYachts: BluePassYachtCatalogItem[];
 }) {
   const normalized = input.content.toLowerCase();
-  const asksForOtherOptions = /\b(?:anything else|something else|another|other than|rather than|besides|instead of)\b/.test(
-    normalized
-  );
+  const asksForOtherOptions = isBluePassOtherOptionsRequest(normalized);
 
   if (!asksForOtherOptions) return [];
 
@@ -643,6 +737,10 @@ function resolveRecommendationExcludedYachts(input: {
 
   if (input.selectedYacht) {
     excluded.set(input.selectedYacht.slug, input.selectedYacht);
+  }
+
+  for (const yacht of input.historyMentionedYachts) {
+    excluded.set(yacht.slug, yacht);
   }
 
   return Array.from(excluded.values());

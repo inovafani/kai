@@ -1,4 +1,3 @@
-import { composeAssistantReply } from "@/core/llm/assistant-reply-composer";
 import {
   buildBluePassResetConversationReply,
   isBluePassResetConversationRequest,
@@ -23,6 +22,7 @@ import {
   resolveBluePassOperatorDirectoryIdentityByPhone,
   resolveBluePassPartnerDirectoryIdentityByPhone
 } from "./bluepass-operator-directory";
+import { composeBluePassMarketplaceAssistantReply } from "./bluepass-marketplace-reply-composer";
 
 type BluePassWhatsAppInboundResult = {
   handled: boolean;
@@ -190,12 +190,7 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
       conversationId: conversation.id,
       deterministicReply: result!.assistantContent,
       latestMessage: input.body,
-      requiredFacts: buildMarketplaceRequiredFacts(result!),
-      productTitles: [
-        result!.bluepassInquiry?.selectedYachtName,
-        result!.bluepassInquiry?.operatorName,
-        ...result!.bluepassMatches.map((match) => match.name)
-      ].filter((value): value is string => Boolean(value))
+      marketplaceResult: result!
     }));
 
   await createAssistantMessage({
@@ -241,95 +236,26 @@ async function composeBluePassMarketplaceWhatsAppReply(input: {
   conversationId: string;
   deterministicReply: string;
   latestMessage: string;
-  requiredFacts: string[];
-  productTitles: string[];
+  marketplaceResult: Awaited<ReturnType<typeof handleBluePassMarketplaceMessage>>;
 }) {
   const llmClient = createAssistantLlmClient(process.env);
   const history = await listRecentConversationMessages({
     tenantId: input.tenantId,
     conversationId: input.conversationId
   });
-  const result = await composeAssistantReply({
+
+  const result = await composeBluePassMarketplaceAssistantReply({
     deterministicReply: input.deterministicReply,
-    requiredFacts: input.requiredFacts,
-    latestUserMessage: input.latestMessage,
+    latestMessage: input.latestMessage,
     conversationHistory: history,
     llmClient,
-    tenantContext: {
-      tenantName: "BluePass",
-      brandVoice:
-        "Warm, natural marine travel concierge. Helpful like a human travel advisor, but concise and honest about operator confirmation.",
-      pmsProvider: "BluePass marketplace catalog and operator network",
-      responseGuardrails: [
-        "Do not confirm live availability, final price, payment, or booking before operator confirmation.",
-        "Do not invent operator responses, prices, dates, payment links, or live availability.",
-        "If the traveller asks general questions, answer helpfully before asking for booking details."
-      ],
-      productTitles: input.productTitles
-    }
+    marketplaceResult: input.marketplaceResult
   });
 
   return result.reply;
 }
 
-function buildMarketplaceRequiredFacts(result: Awaited<ReturnType<typeof handleBluePassMarketplaceMessage>>) {
-  const inquiry = result.bluepassInquiry;
-  const facts = [
-    inquiry?.selectedYachtName,
-    inquiry?.destination,
-    inquiry?.dateWindow,
-    inquiry?.guests ? `${inquiry.guests}` : null,
-    ...result.bluepassMatches.map((match) => match.name),
-    ...extractBluePassDeterministicFacts(result.assistantContent)
-  ].filter((value): value is string => Boolean(value));
-
-  return Array.from(new Set(facts));
-}
-
 function normalizeWhatsAppSender(value: string) {
   const digits = value.trim().replace(/[^\d]/g, "");
   return digits.startsWith("0") ? `62${digits.slice(1)}` : digits;
-}
-
-function extractBluePassDeterministicFacts(reply: string) {
-  const facts: string[] = [];
-
-  for (const match of reply.matchAll(/^\s*\d+\.\s+([A-Z][^-:\n]+?)\s+-/gm)) {
-    facts.push(match[1].trim());
-  }
-
-  for (const pattern of [
-    /\bfor\s+([A-Z][A-Za-z0-9' ]+?)\s+in\s+(?:Komodo|Raja Ampat)\b/g,
-    /\bGreat choice\s+-\s+([A-Z][A-Za-z0-9' ]+?)\s+is\b/g,
-    /^([A-Z][A-Za-z0-9' ]+?)\s+is\s+(?:a|an)\s+/gm
-  ]) {
-    for (const match of reply.matchAll(pattern)) {
-      facts.push(match[1].trim());
-    }
-  }
-
-  for (const match of reply.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)) {
-    facts.push(match[0]);
-  }
-
-  for (const match of reply.matchAll(/\b(?:\+?62|0)\d{8,14}\b/g)) {
-    facts.push(match[0]);
-  }
-
-  const contactMatch = reply.match(/\bContact details:\s*([^,\n.]+),/i);
-  if (contactMatch) {
-    facts.push(contactMatch[1].trim());
-  }
-
-  const tripMatch = reply.match(/\btrip details as\s+([^.\n]+)\./i);
-  if (tripMatch) {
-    const tripDetails = tripMatch[1];
-    const dateMatch = tripDetails.match(/\b\d{1,2}\s+[A-Z][a-z]+(?:\s+\d{4})?\b/);
-    const guestMatch = tripDetails.match(/\b\d{1,3}\s+guests?\b/i);
-
-    if (dateMatch) facts.push(dateMatch[0]);
-    if (guestMatch) facts.push(guestMatch[0]);
-  }
-
-  return facts;
 }

@@ -17,6 +17,7 @@ import {
 import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
 import { buildBookingFailureManualInquiry } from "@/server/conversation/manual-inquiry-fallback";
 import { handleBluePassMarketplaceMessage } from "@/server/bluepass/bluepass-message-flow";
+import { composeBluePassMarketplaceAssistantReply } from "@/server/bluepass/bluepass-marketplace-reply-composer";
 import type { BluePassCatalogSnapshotItem } from "@/core/bluepass/catalog";
 import { resolveTenantBusinessPack } from "@/server/business-pack/resolve-tenant-business-pack";
 import { getPmsAdapter } from "@/server/pms/pms-adapter-registry";
@@ -123,11 +124,22 @@ export async function POST(request: NextRequest) {
       referral: body.referral ?? null,
       catalog: body.bluepassCatalog
     });
+    const priorConversationMessages = await listRecentConversationMessages({
+      tenantId: resolved.tenant.id,
+      conversationId: conversation.id
+    });
+    const composedBluePassReply = await composeBluePassMarketplaceAssistantReply({
+      deterministicReply: bluepassResult.assistantContent,
+      latestMessage: content,
+      conversationHistory: priorConversationMessages,
+      llmClient: createAssistantLlmClient(process.env),
+      marketplaceResult: bluepassResult
+    });
 
     const assistantMessage = await createAssistantMessage({
       tenantId: resolved.tenant.id,
       conversationId: conversation.id,
-      content: bluepassResult.assistantContent
+      content: composedBluePassReply.reply
     });
 
     return NextResponse.json({
