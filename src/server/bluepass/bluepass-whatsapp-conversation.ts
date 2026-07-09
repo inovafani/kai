@@ -1,4 +1,9 @@
 import { composeAssistantReply } from "@/core/llm/assistant-reply-composer";
+import {
+  buildBluePassResetConversationReply,
+  isBluePassResetConversationRequest,
+  normalizeBluePassConversationText
+} from "@/core/bluepass/conversation-intent";
 import { prisma } from "@/lib/prisma";
 import {
   createAssistantMessage,
@@ -14,6 +19,10 @@ import {
   findLatestBluePassParticipantContext,
   handleBluePassWhatsAppContextMessage
 } from "./bluepass-inquiry-repository";
+import {
+  resolveBluePassOperatorDirectoryIdentityByPhone,
+  resolveBluePassPartnerDirectoryIdentityByPhone
+} from "./bluepass-operator-directory";
 
 type BluePassWhatsAppInboundResult = {
   handled: boolean;
@@ -27,12 +36,22 @@ export async function handleBluePassWhatsAppInboundMessage(
   input: WhatsAppInboundTextMessage
 ): Promise<BluePassWhatsAppInboundResult> {
   const context = await findLatestBluePassParticipantContext(input.from);
+  const directoryIdentity = await resolveBluePassOperatorDirectoryIdentityByPhone(input.from);
+  const partnerDirectoryIdentity = directoryIdentity
+    ? null
+    : await resolveBluePassPartnerDirectoryIdentityByPhone(input.from);
+  const identityPersona = directoryIdentity?.persona ?? partnerDirectoryIdentity?.persona ?? null;
+  const identityName = directoryIdentity?.operatorName ?? partnerDirectoryIdentity?.partnerName ?? null;
 
-  if (isNewChatRequest(input.body)) {
+  if (isBluePassResetConversationRequest(input.body)) {
     return handleBluePassTravellerMarketplaceWhatsAppMessage(input, {
       resetConversation: true,
-      overrideAssistantContent:
-        "Fresh chat started. I can help compare BluePass liveaboards, recommend Komodo or Raja Ampat options, or prepare a new operator inquiry when you are ready."
+      identityPersona,
+      identityName,
+      overrideAssistantContent: buildBluePassResetConversationReply({
+        persona: identityPersona,
+        identityName
+      })
     });
   }
 
@@ -52,23 +71,19 @@ export async function handleBluePassWhatsAppInboundMessage(
     }
   }
 
-  return handleBluePassTravellerMarketplaceWhatsAppMessage(input);
-}
-
-function isNewChatRequest(body: string) {
-  const normalized = normalizeMessage(body);
-
-  return /^(?:new chat|fresh chat|start over|restart|reset|reset chat|clear chat|mulai baru|chat baru|ulang dari awal)$/.test(
-    normalized
-  );
+  return handleBluePassTravellerMarketplaceWhatsAppMessage(input, {
+    identityPersona,
+    identityName
+  });
 }
 
 function shouldRouteOperatorMessageToContext(body: string) {
   const normalized = normalizeMessage(body);
   if (!normalized) return false;
-  if (isNewChatRequest(normalized)) return false;
+  if (isBluePassResetConversationRequest(normalized)) return false;
 
   return [
+    /\b(?:what should i send|what do i send|how should i reply|how should i respond|what now|next step|help with this inquiry)\b/,
     /\b(?:accept|accepted|available|availability|confirmed|confirm|ok to proceed)\b/,
     /\b(?:decline|declined|unavailable|not available|full|sold out|cannot|can't|cant)\b/,
     /\b(?:counter|counteroffer|counter-offer|alternative date|different date)\b/,
@@ -80,7 +95,7 @@ function shouldRouteOperatorMessageToContext(body: string) {
 function shouldRouteTravellerMessageToContext(body: string, inquiryStatus?: string | null) {
   const normalized = normalizeMessage(body);
   if (!normalized) return false;
-  if (isNewChatRequest(normalized)) return false;
+  if (isBluePassResetConversationRequest(normalized)) return false;
 
   if (inquiryStatus === "DECLINED" && /\b(?:yes|yep|yeah|ok|okay|sure|please|go ahead|proceed|send|submit|try)\b/.test(normalized)) {
     return true;
@@ -95,12 +110,17 @@ function shouldRouteTravellerMessageToContext(body: string, inquiryStatus?: stri
 }
 
 function normalizeMessage(body: string) {
-  return body.toLowerCase().replace(/\s+/g, " ").trim();
+  return normalizeBluePassConversationText(body);
 }
 
 async function handleBluePassTravellerMarketplaceWhatsAppMessage(
   input: WhatsAppInboundTextMessage,
-  options: { resetConversation?: boolean; overrideAssistantContent?: string } = {}
+  options: {
+    resetConversation?: boolean;
+    overrideAssistantContent?: string;
+    identityPersona?: "OPERATOR" | "PARTNER" | "TRAVELLER" | "UNKNOWN" | null;
+    identityName?: string | null;
+  } = {}
 ) {
   const tenant = await prisma.tenant.findFirst({
     where: {
@@ -159,7 +179,9 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
         conversationId: conversation.id,
         content: input.body,
         priorTravellerMessages,
-        travellerPhone
+        travellerPhone,
+        identityPersona: options.identityPersona,
+        identityName: options.identityName
       });
   const assistantContent =
     options.overrideAssistantContent ??
@@ -252,17 +274,62 @@ async function composeBluePassMarketplaceWhatsAppReply(input: {
 
 function buildMarketplaceRequiredFacts(result: Awaited<ReturnType<typeof handleBluePassMarketplaceMessage>>) {
   const inquiry = result.bluepassInquiry;
-  if (!inquiry) return [];
-
-  return [
-    inquiry.selectedYachtName,
-    inquiry.destination,
-    inquiry.dateWindow,
-    inquiry.guests ? `${inquiry.guests}` : null
+  const facts = [
+    inquiry?.selectedYachtName,
+    inquiry?.destination,
+    inquiry?.dateWindow,
+    inquiry?.guests ? `${inquiry.guests}` : null,
+    ...result.bluepassMatches.map((match) => match.name),
+    ...extractBluePassDeterministicFacts(result.assistantContent)
   ].filter((value): value is string => Boolean(value));
+
+  return Array.from(new Set(facts));
 }
 
 function normalizeWhatsAppSender(value: string) {
   const digits = value.trim().replace(/[^\d]/g, "");
   return digits.startsWith("0") ? `62${digits.slice(1)}` : digits;
+}
+
+function extractBluePassDeterministicFacts(reply: string) {
+  const facts: string[] = [];
+
+  for (const match of reply.matchAll(/^\s*\d+\.\s+([A-Z][^-:\n]+?)\s+-/gm)) {
+    facts.push(match[1].trim());
+  }
+
+  for (const pattern of [
+    /\bfor\s+([A-Z][A-Za-z0-9' ]+?)\s+in\s+(?:Komodo|Raja Ampat)\b/g,
+    /\bGreat choice\s+-\s+([A-Z][A-Za-z0-9' ]+?)\s+is\b/g,
+    /^([A-Z][A-Za-z0-9' ]+?)\s+is\s+(?:a|an)\s+/gm
+  ]) {
+    for (const match of reply.matchAll(pattern)) {
+      facts.push(match[1].trim());
+    }
+  }
+
+  for (const match of reply.matchAll(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi)) {
+    facts.push(match[0]);
+  }
+
+  for (const match of reply.matchAll(/\b(?:\+?62|0)\d{8,14}\b/g)) {
+    facts.push(match[0]);
+  }
+
+  const contactMatch = reply.match(/\bContact details:\s*([^,\n.]+),/i);
+  if (contactMatch) {
+    facts.push(contactMatch[1].trim());
+  }
+
+  const tripMatch = reply.match(/\btrip details as\s+([^.\n]+)\./i);
+  if (tripMatch) {
+    const tripDetails = tripMatch[1];
+    const dateMatch = tripDetails.match(/\b\d{1,2}\s+[A-Z][a-z]+(?:\s+\d{4})?\b/);
+    const guestMatch = tripDetails.match(/\b\d{1,3}\s+guests?\b/i);
+
+    if (dateMatch) facts.push(dateMatch[0]);
+    if (guestMatch) facts.push(guestMatch[0]);
+  }
+
+  return facts;
 }

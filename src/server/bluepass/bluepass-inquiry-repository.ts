@@ -3,6 +3,7 @@ import { findBluePassAlternativeYachts, type BluePassYachtCard } from "@/core/bl
 import { buildBluePassDispatchText } from "@/core/bluepass/dispatch";
 import type { BluePassInquiryIntent } from "@/core/bluepass/intent";
 import { calculateBluePassLedgerEstimate } from "@/core/bluepass/ledger";
+import type { BluePassPersonaLead } from "@/core/bluepass/lead";
 import { composeAssistantReply } from "@/core/llm/assistant-reply-composer";
 import { prisma } from "@/lib/prisma";
 import {
@@ -80,6 +81,14 @@ export type RecordBluePassTravellerWhatsAppDeliveryStatusInput = {
     message: string | null;
     details: string | null;
   }>;
+};
+
+export type UpsertBluePassPersonaLeadInput = {
+  tenantId: string;
+  conversationId: string;
+  persona: BluePassPersonaLead["persona"];
+  lead: BluePassPersonaLead;
+  sourceMessage: string;
 };
 
 export type HandleBluePassWhatsAppContextMessageInput = {
@@ -327,6 +336,60 @@ export async function getActiveBluePassInquiryStatus(input: { tenantId: string; 
         dispatches: inquiry.dispatches
       }
     : null;
+}
+
+export async function upsertBluePassPersonaLead(input: UpsertBluePassPersonaLeadInput) {
+  const tripType = input.persona === "OPERATOR" ? "OPERATOR_LEAD" : "PARTNER_LEAD";
+  const existing = await prisma.bluePassInquiry.findFirst({
+    where: {
+      tenantId: input.tenantId,
+      conversationId: input.conversationId,
+      tripType,
+      status: "DRAFT"
+    },
+    orderBy: { createdAt: "desc" }
+  });
+  const data = {
+    sourceChannel: "WHATSAPP",
+    status: "DRAFT" as const,
+    travellerName: input.lead.name ?? existing?.travellerName,
+    travellerEmail: input.lead.email ?? existing?.travellerEmail,
+    travellerPhone: input.lead.phone ?? existing?.travellerPhone,
+    travellerMessage: input.sourceMessage,
+    tripType,
+    notes: `${input.persona.toLowerCase()} lead captured by Kai`
+  };
+
+  const inquiry = existing
+    ? await prisma.bluePassInquiry.update({
+        where: { id: existing.id },
+        data
+      })
+    : await prisma.bluePassInquiry.create({
+        data: {
+          tenantId: input.tenantId,
+          conversationId: input.conversationId,
+          ...data
+        }
+      });
+
+  await createBluePassInquiryEvent({
+    inquiry,
+    type: existing ? "PERSONA_LEAD_UPDATED" : "PERSONA_LEAD_CREATED",
+    fromStatus: existing?.status ?? null,
+    toStatus: inquiry.status,
+    metadata: {
+      persona: input.persona,
+      lead: {
+        name: input.lead.name ?? null,
+        email: input.lead.email ?? null,
+        phone: input.lead.phone ?? null
+      },
+      source: "bluepass_persona_triage"
+    }
+  });
+
+  return inquiry;
 }
 
 function buildAlternativeInquiryMetadata(input?: CreateOrReuseBluePassInquiryInput["alternativeOf"]) {

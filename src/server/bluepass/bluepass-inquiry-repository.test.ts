@@ -1102,7 +1102,7 @@ describe("bluepass inquiry repository", () => {
     );
     expect(requestBody).toMatchObject({
       messaging_product: "whatsapp",
-      to: "0876634231987",
+      to: "62876634231987",
       type: "text"
     });
     expect(requestBody.text.body).toContain("Calico Jack accepted");
@@ -1174,7 +1174,7 @@ describe("bluepass inquiry repository", () => {
 
     expect(requestBody).toMatchObject({
       messaging_product: "whatsapp",
-      to: "085156246329",
+      to: "6285156246329",
       type: "template",
       template: {
         name: "bluepass_inquiry_update",
@@ -1279,7 +1279,7 @@ describe("bluepass inquiry repository", () => {
     expect(textRequest.type).toBe("text");
     expect(templateRequest).toMatchObject({
       messaging_product: "whatsapp",
-      to: "085156246329",
+      to: "6285156246329",
       type: "template",
       template: {
         name: "bluepass_inquiry_update",
@@ -1393,7 +1393,7 @@ describe("bluepass inquiry repository", () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(requestBody).toMatchObject({
-      to: "085156246329",
+      to: "6285156246329",
       type: "text"
     });
     expect(requestBody.text.body).toContain("Calico Jack has held your BluePass trip");
@@ -1493,7 +1493,7 @@ describe("bluepass inquiry repository", () => {
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(requestBody).toMatchObject({
-      to: "085156246329",
+      to: "6285156246329",
       type: "text"
     });
     expect(requestBody.text.body).toContain("Your BluePass booking with Calico Jack is confirmed");

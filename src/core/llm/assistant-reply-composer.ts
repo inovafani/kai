@@ -132,7 +132,7 @@ function avoidRepeatedIStart(reply: string, history: AssistantConversationMessag
 }
 
 function userAskedForListOrDetail(message?: string | null) {
-  return /\b(list|options?|choices?|detail|details|explain|show|which|what are|recommend|recommendation)\b/i.test(
+  return /\b(list|options?|choices?|detail|details|explain|show|which|what are|recommend|recommendation|liveaboards?|yachts?|boats?|trips?)\b/i.test(
     message ?? ""
   );
 }
@@ -181,7 +181,11 @@ function capSentences(reply: string, latestUserMessage?: string | null) {
     return reply;
   }
 
-  if (/https?:\/\//i.test(reply)) {
+  if (/https?:\/\//i.test(reply) || /^[\s\d.]+[A-Z][^-:\n]+?\s+-/m.test(reply)) {
+    return reply;
+  }
+
+  if (/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(reply)) {
     return reply;
   }
 

@@ -28,6 +28,146 @@ afterEach(() => {
 });
 
 describe("handleBluePassMarketplaceMessage", () => {
+  it("answers operator onboarding questions without entering traveller inquiry collection", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "I run a liveaboard in Komodo, what's your cut?",
+      priorTravellerMessages: []
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.assistantContent).toContain("82%");
+    expect(result.assistantContent).toContain("18%");
+    expect(result.assistantContent).toContain("operator");
+    expect(result.assistantContent).not.toContain("Please share your name");
+    expect(result.assistantContent).not.toContain("guest count");
+  });
+
+  it("keeps a registered operator in operator mode even when they ask about commission", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "what commission does BluePass take?",
+      priorTravellerMessages: [],
+      identityPersona: "OPERATOR",
+      identityName: "Calico Jack"
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.assistantContent).toContain("Calico Jack");
+    expect(result.assistantContent).toContain("82%");
+    expect(result.assistantContent).toContain("18%");
+    expect(result.assistantContent).not.toContain("partner commission");
+    expect(result.assistantContent).not.toContain("Please share your name");
+  });
+
+  it("lets a registered operator switch into traveller booking mode with a strong booking request", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "I want to book Calico Jack in Komodo on 19 July for 2 guests",
+      priorTravellerMessages: [],
+      travellerPhone: "6285337210180",
+      identityPersona: "OPERATOR",
+      identityName: "Calico Jack"
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.assistantContent).toContain("Calico Jack");
+    expect(result.assistantContent).toContain("name");
+    expect(result.assistantContent).toContain("email");
+    expect(result.assistantContent).not.toContain("operator onboarding");
+    expect(result.assistantContent).not.toContain("82%");
+  });
+
+  it("answers partner commission questions without entering traveller inquiry collection", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "I book for clients and want to understand referral commission",
+      priorTravellerMessages: []
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.assistantContent).toContain("commission");
+    expect(result.assistantContent).toContain("client");
+    expect(result.assistantContent).not.toContain("Please share your name");
+    expect(result.assistantContent).not.toContain("guest count");
+  });
+
+  it("captures an operator lead when an operator shares a reachable contact", async () => {
+    const tenantId = `tenant_${randomUUID()}`;
+    const conversationId = `conversation_${randomUUID()}`;
+
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: "I run Calico Jack. Contact me at operator@calico.test or WhatsApp +62 853 3721 0180",
+      priorTravellerMessages: ["I run a liveaboard in Komodo"]
+    });
+
+    const lead = await prisma.bluePassInquiry.findFirst({
+      where: {
+        tenantId,
+        conversationId,
+        tripType: "OPERATOR_LEAD"
+      },
+      include: { events: true }
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.assistantContent).toContain("operator lead");
+    expect(result.assistantContent).toContain("operator@calico.test");
+    expect(result.assistantContent).toContain("+62 853 3721 0180");
+    expect(lead).toMatchObject({
+      status: "DRAFT",
+      travellerEmail: "operator@calico.test",
+      travellerPhone: "+62 853 3721 0180",
+      tripType: "OPERATOR_LEAD"
+    });
+    expect(lead?.events.map((event) => event.type)).toContain("PERSONA_LEAD_CREATED");
+  });
+
+  it("captures a partner lead when a partner shares a reachable contact", async () => {
+    const tenantId = `tenant_${randomUUID()}`;
+    const conversationId = `conversation_${randomUUID()}`;
+
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: "I book for clients. My email is agent@example.test and phone is 08123456789",
+      priorTravellerMessages: []
+    });
+
+    const lead = await prisma.bluePassInquiry.findFirst({
+      where: {
+        tenantId,
+        conversationId,
+        tripType: "PARTNER_LEAD"
+      },
+      include: { events: true }
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.assistantContent).toContain("partner lead");
+    expect(result.assistantContent).toContain("agent@example.test");
+    expect(result.assistantContent).toContain("08123456789");
+    expect(lead).toMatchObject({
+      status: "DRAFT",
+      travellerEmail: "agent@example.test",
+      travellerPhone: "08123456789",
+      tripType: "PARTNER_LEAD"
+    });
+    expect(lead?.events.map((event) => event.type)).toContain("PERSONA_LEAD_CREATED");
+  });
+
   it("explains BluePass value without starting an inquiry", async () => {
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
@@ -111,6 +251,44 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).not.toContain("Please share your name");
     expect(result.assistantContent).not.toContain("email");
     expect(result.assistantContent).not.toContain("phone");
+  });
+
+  it("treats new chat as a fresh traveller conversation instead of reusing old booking details", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "new chat",
+      priorTravellerMessages: [
+        "i want to order calico jack",
+        "my name is Inov, email is inoveka@gmail.com, i want 19th july for 2 people",
+        "yes please send inquiry"
+      ],
+      travellerPhone: "6285156246329"
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.bluepassLedger).toEqual([]);
+    expect(result.assistantContent).toContain("Fresh chat started");
+    expect(result.assistantContent).not.toContain("Calico Jack");
+    expect(result.assistantContent).not.toContain("Before I send this to the operator");
+    expect(result.assistantContent).not.toContain("I prepared BluePass inquiry");
+  });
+
+  it("does not infer operator mode from old history when the latest message resets the chat", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "start over",
+      priorTravellerMessages: ["I run a liveaboard in Komodo", "what commission does BluePass take?"]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.assistantContent).toContain("Fresh chat started");
+    expect(result.assistantContent).toContain("compare BluePass liveaboards");
+    expect(result.assistantContent).not.toContain("operator onboarding");
+    expect(result.assistantContent).not.toContain("82%");
   });
 
   it("answers gratitude without repeating the latest inquiry confirmation", async () => {
@@ -469,6 +647,58 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).toContain("085156246329");
     expect(result.assistantContent).toContain("Before I send this to the operator");
     expect(result.assistantContent).not.toContain("Could you share your WhatsApp number");
+  }, 20_000);
+
+  it("keeps a full email address when contact details include an inquiry date in the same message", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "my name is Inov, email is inoveka@gmail.com, i want 19th july for 2 people",
+      priorTravellerMessages: ["i want to order calico jack"],
+      travellerPhone: "6285156246329"
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.assistantContent).toContain("Calico Jack");
+    expect(result.assistantContent).toContain("19 July");
+    expect(result.assistantContent).toContain("2 guests");
+    expect(result.assistantContent).toContain("Inov");
+    expect(result.assistantContent).toContain("inoveka@gmail.com");
+    expect(result.assistantContent).toContain("6285156246329");
+    expect(result.assistantContent).not.toContain(" com, 628");
+  }, 20_000);
+
+  it("keeps recommendation follow-ups in browsing mode after a submitted inquiry exists", async () => {
+    const tenantId = `tenant_${randomUUID()}`;
+    const conversationId = `conversation_${randomUUID()}`;
+
+    await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content:
+        "Please send inquiry for Calico Jack in Komodo on 19 July for 2 guests. My name is Inov, email inoveka@gmail.com, phone 6285156246329",
+      priorTravellerMessages: []
+    });
+
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: "can i order anything else? like do you have recommendations?",
+      priorTravellerMessages: [
+        "i want to order calico jack",
+        "my name is Inov, email is inoveka@gmail.com, i want 19th july for 2 people",
+        "yes please send inquiry"
+      ]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+    expect(result.assistantContent).toContain("Komodo");
+    expect(result.assistantContent).toContain("Alila Purnama");
+    expect(result.assistantContent).not.toContain("latest BluePass inquiry");
+    expect(result.assistantContent).not.toContain("Current status");
+    expect(result.assistantContent).not.toContain("Please share your name");
   }, 20_000);
 
   it("requests a contact form when only traveller contact fields are missing", async () => {

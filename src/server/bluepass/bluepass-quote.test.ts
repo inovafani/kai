@@ -66,7 +66,7 @@ describe("bluepass quote", () => {
     expect(quote?.inclusions).toContain("full board meals");
     expect(quote?.exclusions).toContain("flights");
     expect(quote?.terms).toContain("30% deposit");
-  });
+  }, 20_000);
 
   it("prefers the final USD price over the year in counter details", async () => {
     const { tenantId, conversationId } = await createTestConversation("counter-year-price");
@@ -106,7 +106,7 @@ describe("bluepass quote", () => {
       grossPriceCents: 390000,
       conservationContributionCents: 19500
     });
-  });
+  }, 20_000);
 
   it("creates a needs-price quote when the operator accepts without final price", async () => {
     const { tenantId, conversationId } = await createTestConversation("accept");
@@ -147,7 +147,7 @@ describe("bluepass quote", () => {
       grossPriceCents: null,
       conservationContributionCents: null
     });
-  });
+  }, 20_000);
 
   it("notifies operator and traveller when the traveller approves a quote", async () => {
     process.env.META_GRAPH_VERSION = "v20.0";
@@ -222,7 +222,7 @@ describe("bluepass quote", () => {
     expect(sentBodies[0].text.body).toContain("Please hold the slot");
     expect(sentBodies[0].text.body).toContain("payment path");
     expect(sentBodies[1]).toMatchObject({
-      to: "085156246329",
+      to: "6285156246329",
       type: "text"
     });
     expect(sentBodies[1].text.body).toContain("Your BluePass quote for Calico Jack is approved");

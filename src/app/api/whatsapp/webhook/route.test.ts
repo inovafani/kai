@@ -23,7 +23,11 @@ const isolatedWhatsAppEnvKeys = [
   "WHATSAPP_BLUEPASS_TENANT_SLUG",
   "ENABLE_LLM",
   "LLM_PROVIDER",
-  "OPENAI_API_KEY"
+  "OPENAI_API_KEY",
+  "BLUEPASS_APP_URL",
+  "BLUEPASS_APP_SERVICE_TOKEN",
+  "KAI_CORE_ADMIN_TOKEN",
+  "KAI_ADMIN_TOKEN"
 ];
 
 beforeEach(() => {
@@ -1468,6 +1472,8 @@ describe("/api/whatsapp/webhook", () => {
       })
     );
     vi.stubGlobal("fetch", fetchMock);
+    const phoneSuffix = randomUUID().replace(/\D/g, "").padEnd(9, "3").slice(0, 9);
+    const travellerPhone = `6285${phoneSuffix}`;
 
     const tenant = await prisma.tenant.create({
       data: {
@@ -1494,7 +1500,7 @@ describe("/api/whatsapp/webhook", () => {
         guests: 4,
         travellerName: "Ekap",
         travellerEmail: "ekap@example.com",
-        travellerPhone: "085156246329"
+        travellerPhone
       },
       selectedYacht: {
         slug: "calico-jack",
@@ -1522,7 +1528,7 @@ describe("/api/whatsapp/webhook", () => {
                   value: {
                     messages: [
                       {
-                        from: "6285156246329",
+                        from: travellerPhone,
                         id: "wamid.traveller.alt",
                         type: "text",
                         text: {
@@ -1600,6 +1606,8 @@ describe("/api/whatsapp/webhook", () => {
       })
     );
     vi.stubGlobal("fetch", fetchMock);
+    const phoneSuffix = randomUUID().replace(/\D/g, "").padEnd(9, "4").slice(0, 9);
+    const travellerPhone = `6285${phoneSuffix}`;
 
     const tenant = await prisma.tenant.create({
       data: {
@@ -1626,7 +1634,7 @@ describe("/api/whatsapp/webhook", () => {
         guests: 2,
         travellerName: "Putra",
         travellerEmail: "putra@example.com",
-        travellerPhone: "085156246329"
+        travellerPhone
       },
       selectedYacht: {
         slug: "calico-jack",
@@ -1654,7 +1662,7 @@ describe("/api/whatsapp/webhook", () => {
                   value: {
                     messages: [
                       {
-                        from: "6285156246329",
+                        from: travellerPhone,
                         id: "wamid.traveller.alt.yes",
                         type: "text",
                         text: {

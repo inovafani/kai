@@ -7,11 +7,16 @@ import {
   type BluePassYachtCatalogItem
 } from "@/core/bluepass/catalog";
 import {
+  buildBluePassResetConversationReply,
+  isBluePassResetConversationRequest
+} from "@/core/bluepass/conversation-intent";
+import {
   extractBluePassInquiryIntent,
   getMissingBluePassInquiryFields,
   mergeBluePassInquiryIntent,
   type BluePassRequiredInquiryField
 } from "@/core/bluepass/intent";
+import { extractBluePassPersonaLead } from "@/core/bluepass/lead";
 import {
   buildBluePassInquiryConfirmationReply,
   buildBluePassInquiryReadyReply,
@@ -24,13 +29,21 @@ import {
   buildBluePassYachtComparisonReply,
   buildBluePassYachtOverviewReply
 } from "@/core/bluepass/reply";
-import type { BluePassReferralInput } from "./bluepass-inquiry-repository";
+import {
+  buildBluePassLeadCapturedReply,
+  buildBluePassOperatorReply,
+  buildBluePassPartnerReply,
+  classifyBluePassPersona,
+  type BluePassPersona
+} from "@/core/bluepass/triage";
 import {
   createOrReuseBluePassInquiry,
   dispatchBluePassOperatorWhatsApp,
   getActiveBluePassInquiryStatus,
   getLatestBluePassInquiryStatus,
-  syncBluePassReferralLedgerEstimate
+  syncBluePassReferralLedgerEstimate,
+  upsertBluePassPersonaLead,
+  type BluePassReferralInput
 } from "./bluepass-inquiry-repository";
 
 export type BluePassMarketplaceMessageInput = {
@@ -41,9 +54,76 @@ export type BluePassMarketplaceMessageInput = {
   referral?: BluePassReferralInput | null;
   catalog?: BluePassCatalogSnapshotItem[];
   travellerPhone?: string | null;
+  identityPersona?: BluePassPersona | null;
+  identityName?: string | null;
 };
 
 export async function handleBluePassMarketplaceMessage(input: BluePassMarketplaceMessageInput) {
+  if (isBluePassResetConversationRequest(input.content)) {
+    return buildConciergeResponse(
+      buildBluePassResetConversationReply({
+        persona: input.identityPersona ?? null,
+        identityName: input.identityName
+      })
+    );
+  }
+
+  const persona = classifyBluePassPersona({
+    messages: [input.content, ...input.priorTravellerMessages],
+    identityPersona: input.identityPersona
+  });
+
+  if (persona === "OPERATOR") {
+    const lead = resolvePersonaLead({
+      persona,
+      content: input.content,
+      priorTravellerMessages: input.priorTravellerMessages
+    });
+    if (lead) {
+      await upsertBluePassPersonaLead({
+        tenantId: input.tenantId,
+        conversationId: input.conversationId,
+        persona,
+        lead,
+        sourceMessage: input.content
+      });
+
+      return buildConciergeResponse(buildBluePassLeadCapturedReply({ persona, lead }));
+    }
+
+    return buildConciergeResponse(
+      buildBluePassOperatorReply({
+        latestMessage: input.content,
+        operatorName: input.identityName
+      })
+    );
+  }
+
+  if (persona === "PARTNER") {
+    const lead = resolvePersonaLead({
+      persona,
+      content: input.content,
+      priorTravellerMessages: input.priorTravellerMessages
+    });
+    if (lead) {
+      await upsertBluePassPersonaLead({
+        tenantId: input.tenantId,
+        conversationId: input.conversationId,
+        persona,
+        lead,
+        sourceMessage: input.content
+      });
+
+      return buildConciergeResponse(buildBluePassLeadCapturedReply({ persona, lead }));
+    }
+
+    return buildConciergeResponse(
+      buildBluePassPartnerReply({
+        latestMessage: input.content
+      })
+    );
+  }
+
   const catalog = resolveBluePassCatalog(input.catalog);
   const historyIntent = extractBluePassInquiryIntent(input.priorTravellerMessages);
   const messageIntent = extractBluePassInquiryIntent([input.content]);
@@ -370,6 +450,25 @@ function buildConciergeResponse(assistantContent: string, bluepassMatches: BlueP
     paymentRequest: null,
     contactRequest: null
   };
+}
+
+function resolvePersonaLead(input: {
+  persona: Extract<BluePassPersona, "OPERATOR" | "PARTNER">;
+  content: string;
+  priorTravellerMessages: string[];
+}) {
+  const latestLead = extractBluePassPersonaLead({
+    persona: input.persona,
+    messages: [input.content]
+  });
+  if (!latestLead) return null;
+
+  return (
+    extractBluePassPersonaLead({
+      persona: input.persona,
+      messages: [...input.priorTravellerMessages, input.content]
+    }) ?? latestLead
+  );
 }
 
 async function resolveDeclinedInquiryAlternative(input: {
