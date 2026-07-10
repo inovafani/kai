@@ -422,6 +422,25 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).not.toContain("I prepared BluePass inquiry");
   });
 
+  it("compares Komodo and Raja Ampat instead of reusing a stale yacht from history", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "whats better komodo or raja ampat?",
+      priorTravellerMessages: [
+        "liveaboards in komodo",
+        "Tell me about Anne Bonny"
+      ]
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("Komodo");
+    expect(result.assistantContent).toContain("Raja Ampat");
+    expect(result.assistantContent).toMatch(/different|depends|rule of thumb|better/i);
+    expect(result.assistantContent).not.toContain("Anne Bonny is");
+    expect(result.assistantContent).not.toContain("Please share your name");
+  });
+
   it("returns preview matches for discovery requests without asking for contact details", async () => {
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,

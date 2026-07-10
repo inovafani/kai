@@ -298,6 +298,62 @@ describe("handleBluePassWhatsAppInboundMessage", () => {
     expect(sentBody).not.toContain("phone so I can prepare");
   }, 20_000);
 
+  it("answers destination comparisons in WhatsApp instead of reusing a stale yacht from history", async () => {
+    const tenantSlug = `bluepass-whatsapp-traveller-destination-compare-${randomUUID()}`;
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = tenantSlug;
+    const travellerPhone = "6285156246329";
+    const fetchMock = stubWhatsAppSend("wamid.traveller.destination-compare.reply");
+
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: tenantSlug,
+        name: "BluePass WhatsApp Traveller Destination Compare Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const conversation = await prisma.conversation.create({
+      data: {
+        tenantId: tenant.id,
+        channel: "WHATSAPP",
+        travellerId: travellerPhone,
+        controlMode: "AI"
+      }
+    });
+    await prisma.message.createMany({
+      data: [
+        {
+          tenantId: tenant.id,
+          conversationId: conversation.id,
+          role: "TRAVELLER",
+          content: "liveaboards in komodo"
+        },
+        {
+          tenantId: tenant.id,
+          conversationId: conversation.id,
+          role: "TRAVELLER",
+          content: "Tell me about Anne Bonny"
+        }
+      ]
+    });
+
+    const result = await handleBluePassWhatsAppInboundMessage({
+      from: travellerPhone,
+      providerMessageId: "wamid.traveller.destination-compare",
+      body: "whats better komodo or raja ampat?"
+    });
+    const sentBody = getLastWhatsAppTextBody(fetchMock);
+
+    expect(result.handled).toBe(true);
+    expect(result.sent).toBe(true);
+    expect(sentBody).toContain("Komodo");
+    expect(sentBody).toContain("Raja Ampat");
+    expect(sentBody).toMatch(/different|better|simpler|remote/i);
+    expect(sentBody).not.toContain("Anne Bonny is");
+    expect(sentBody).not.toContain("Please share your name");
+  }, 20_000);
+
   it("uses the WhatsApp sender phone when a traveller completes a booking request", async () => {
     const tenantSlug = `bluepass-whatsapp-traveller-booking-phone-${randomUUID()}`;
     process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = tenantSlug;

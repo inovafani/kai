@@ -21,6 +21,7 @@ import {
   buildBluePassInquiryConfirmationReply,
   buildBluePassInquiryReadyReply,
   buildBluePassInquiryStatusReply,
+  buildBluePassDestinationComparisonReply,
   buildBluePassMissingFieldsReply,
   buildBluePassRecommendationReply,
   buildBluePassSeasonReply,
@@ -249,6 +250,10 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     return buildConciergeResponse(buildBluePassSeasonReply(seasonDestination));
   }
 
+  if (isBluePassDestinationComparisonRequest(input.content)) {
+    return buildConciergeResponse(buildBluePassDestinationComparisonReply());
+  }
+
   if (isBluePassYachtComparisonRequest(input.content) && latestMentionedYachts.length >= 2) {
     return buildConciergeResponse(buildBluePassYachtComparisonReply(latestMentionedYachts));
   }
@@ -309,10 +314,14 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     );
   }
 
-  if (selectedYacht && isBluePassYachtInformationRequest(input.content)) {
+  const overviewYacht =
+    latestMentionedYachts[0] ??
+    (isBluePassYachtFollowUpInformationRequest(input.content) ? historyMentionedYachts[0] ?? null : null);
+
+  if (overviewYacht && isBluePassYachtInformationRequest(input.content)) {
     const overviewMatch =
-      searchBluePassYachts({ selectedYachtSlug: selectedYacht.slug }, catalog, 1)[0] ??
-      bluepassMatches.find((match) => match.slug === selectedYacht.slug) ??
+      searchBluePassYachts({ selectedYachtSlug: overviewYacht.slug }, catalog, 1)[0] ??
+      bluepassMatches.find((match) => match.slug === overviewYacht.slug) ??
       bluepassMatches[0];
 
     return buildConciergeResponse(buildBluePassYachtOverviewReply(overviewMatch), [overviewMatch]);
@@ -636,17 +645,40 @@ function isBluePassYachtComparisonRequest(content: string) {
   return /\b(?:compare|versus|vs\.?|difference|which is better)\b/i.test(content);
 }
 
+function isBluePassDestinationComparisonRequest(content: string) {
+  const normalized = content.toLowerCase();
+  const mentionsKomodo = /\bkomodo\b/.test(normalized);
+  const mentionsRajaAmpat = /\braja\s+ampat\b/.test(normalized);
+  const asksComparison =
+    /\b(?:compare|versus|vs\.?|difference|which is better|what'?s better|whats better|better)\b/.test(normalized) ||
+    /\b(?:komodo|raja\s+ampat)\b.*\b(?:or|and)\b.*\b(?:komodo|raja\s+ampat)\b/.test(normalized);
+
+  return mentionsKomodo && mentionsRajaAmpat && asksComparison;
+}
+
 function isBluePassYachtInformationRequest(content: string) {
   const normalized = content.toLowerCase();
   const asksForInformation =
     /\b(?:tell me about|what is|what's|explain|describe|info about|learn about|details about)\b/.test(normalized) ||
-    /\?$/.test(normalized.trim());
+    isBluePassYachtFollowUpInformationRequest(content);
   const asksForCommercialAction =
     /\b(?:send|create|prepare|make|start|submit)\s+(?:an?\s+)?inquir(?:y|ies)\b/.test(normalized) ||
     /\b(?:check|confirm)\s+(?:live\s+)?availability\b/.test(normalized) ||
     /\b(?:order|book|booking|reserve|hold|quote|operator|whatsapp|proceed)\b/.test(normalized);
 
   return asksForInformation && !asksForCommercialAction;
+}
+
+function isBluePassYachtFollowUpInformationRequest(content: string) {
+  const normalized = content
+    .toLowerCase()
+    .replace(/[^\w\s']/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return /\b(?:tell me more|more details|more info|what about it|what about that|that yacht|this yacht|that boat|this boat|that one|this one)\b/.test(
+    normalized
+  );
 }
 
 function isBluePassRecommendationRequest(content: string) {

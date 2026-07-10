@@ -133,6 +133,14 @@ export function buildBluePassSeasonReply(destination: string) {
   return "Komodo is usually strongest from April to November, with June to September often excellent for dry-season cruising, dramatic island scenery, manta sites, and liveaboard routes from Labuan Bajo. Kai can use your dates, guest count, and style to narrow options, but availability and final price still need operator confirmation.";
 }
 
+export function buildBluePassDestinationComparisonReply() {
+  return [
+    "Komodo and Raja Ampat are both strong BluePass regions, but they fit different trips.",
+    "Komodo is easier to reach from Labuan Bajo and better for dramatic islands, shorter liveaboards, mantas, current diving, and a mix of cruising plus topside scenery.",
+    "Raja Ampat is more remote from Sorong and better for reef biodiversity, soft coral, Misool or Wayag routes, and longer expedition-style trips. If this is your first Indonesia liveaboard, Komodo is usually simpler; if the goal is the richest reef trip, Raja Ampat is the one to compare first."
+  ].join(" ");
+}
+
 export function buildBluePassYachtComparisonReply(yachts: BluePassYachtSummary[]) {
   const rows = yachts
     .slice(0, 3)
