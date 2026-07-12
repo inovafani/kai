@@ -11,6 +11,7 @@ import {
   listRecentTravellerMessageContents
 } from "@/server/conversation/conversation-repository";
 import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
+import { createBluePassRouterClient } from "@/server/llm/bluepass-router-client";
 import type { WhatsAppInboundTextMessage } from "@/server/whatsapp/webhook";
 import { sendWhatsAppText } from "@/server/whatsapp/client";
 import { handleBluePassMarketplaceMessage } from "./bluepass-message-flow";
@@ -181,7 +182,8 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
         priorTravellerMessages,
         travellerPhone,
         identityPersona: options.identityPersona,
-        identityName: options.identityName
+        identityName: options.identityName,
+        routerClient: createBluePassRouterClient(process.env)
       });
   const assistantContent =
     options.overrideAssistantContent ??

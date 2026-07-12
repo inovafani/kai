@@ -18,6 +18,7 @@ import {
   type BluePassRequiredInquiryField
 } from "@/core/bluepass/intent";
 import { extractBluePassPersonaLead } from "@/core/bluepass/lead";
+import type { BluePassRouterAction, BluePassRouterLlmClient } from "@/core/llm/bluepass-router";
 import {
   buildBluePassInquiryConfirmationReply,
   buildBluePassInquiryReadyReply,
@@ -59,6 +60,7 @@ export type BluePassMarketplaceMessageInput = {
   travellerPhone?: string | null;
   identityPersona?: BluePassPersona | null;
   identityName?: string | null;
+  routerClient?: BluePassRouterLlmClient | null;
 };
 
 export async function handleBluePassMarketplaceMessage(input: BluePassMarketplaceMessageInput) {
@@ -141,13 +143,12 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     })
       ? historyMentionedYachts[0] ?? null
       : null);
-  const intent = mergeBluePassInquiryIntent(historyIntent, {
+  const regexIntent = mergeBluePassInquiryIntent(historyIntent, {
     ...messageIntent,
     destination: messageIntent.destination ?? (selectedYacht ? selectedYacht.region : undefined),
     selectedYachtSlug: selectedYacht?.slug ?? messageIntent.selectedYachtSlug,
     travellerPhone: messageIntent.travellerPhone ?? input.travellerPhone ?? undefined
   });
-  const bluepassMatches = searchBluePassYachts(intent, catalog);
 
   const declinedAlternative = isBluePassInquirySubmissionRequest(input.content)
     ? await resolveDeclinedInquiryAlternative({
@@ -243,148 +244,184 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     };
   }
 
-  if (isBluePassValueQuestion(input.content)) {
-    return buildConciergeResponse(buildBluePassValueReply());
-  }
+  const regexMissingFields = getMissingBluePassInquiryFields(regexIntent);
+  const routerDecision = await resolveBluePassRouterDecision({
+    routerClient: input.routerClient ?? null,
+    content: input.content,
+    priorTravellerMessages: input.priorTravellerMessages,
+    knownIntent: regexIntent,
+    missingFields: regexMissingFields,
+    hasSelectedYacht: Boolean(selectedYacht),
+    mentionedYachtNames: latestMentionedYachts.map((yacht) => yacht.name)
+  });
 
-  if (isBluePassSmallTalkRequest(input.content)) {
-    return buildConciergeResponse(
-      buildBluePassSmallTalkReply({
-        gratitude: isBluePassGratitudeRequest(input.content)
-      })
-    );
-  }
-
-  const seasonDestination = resolveSeasonDestination(input.content);
-  if (seasonDestination) {
-    return buildConciergeResponse(buildBluePassSeasonReply(seasonDestination));
-  }
-
-  if (isBluePassDestinationComparisonRequest(input.content)) {
-    return buildConciergeResponse(buildBluePassDestinationComparisonReply());
-  }
-
-  if (isBluePassYachtComparisonRequest(input.content) && latestMentionedYachts.length >= 2) {
-    return buildConciergeResponse(buildBluePassYachtComparisonReply(latestMentionedYachts));
-  }
-
-  if (isBluePassRecommendationRequest(input.content) && !isBluePassInquirySubmissionRequest(input.content)) {
-    const recommendationDestination = resolveRecommendationDestination({
-      content: input.content,
-      intentDestination: intent.destination,
-      priorTravellerMessages: input.priorTravellerMessages
-    });
-    const excludedYachts = resolveRecommendationExcludedYachts({
-      content: input.content,
-      selectedYacht,
-      latestMentionedYachts,
-      historyMentionedYachts
-    });
-    const excludedYachtSlugs = new Set(excludedYachts.map((yacht) => yacht.slug));
-    if (isBluePassOtherOptionsRequest(input.content) && excludedYachtSlugs.size === 0 && recommendationDestination) {
-      for (const yacht of searchBluePassYachts({ destination: recommendationDestination }, catalog, 3)) {
-        excludedYachtSlugs.add(yacht.slug);
-        excludedYachts.push(yacht);
-      }
-    }
-
-    const recommendationMatches = searchBluePassYachts(
-      {
-        destination: recommendationDestination,
-        guests: intent.guests,
-        interests: intent.interests
-      },
-      catalog,
-      12
-    )
-      .filter((match) =>
-        recommendationDestination ? match.region.toLowerCase().includes(recommendationDestination.toLowerCase()) : true
-      )
-      .filter((match) => !excludedYachtSlugs.has(match.slug))
-      .slice(0, 3);
-
-    return buildConciergeResponse(
-      buildBluePassRecommendationReply({
-        destination: recommendationDestination,
-        matches: recommendationMatches,
-        excludedYachtNames: excludedYachts.map((yacht) => yacht.name)
-      }),
-      recommendationMatches
-    );
-  }
-
-  if (isBluePassTravelInspirationRequest(input.content) && !isBluePassInquirySubmissionRequest(input.content)) {
-    const inspirationMatches = buildBluePassInspirationMatches(catalog);
-
-    return buildConciergeResponse(
-      buildBluePassRecommendationReply({
-        matches: inspirationMatches
-      }),
-      inspirationMatches
-    );
-  }
-
+  const intent = routerDecision ? mergeBluePassInquiryIntent(regexIntent, routerDecision.intent) : regexIntent;
+  const bluepassMatches = searchBluePassYachts(intent, catalog);
+  const missingFields = getMissingBluePassInquiryFields(intent);
   const overviewYacht =
     latestMentionedYachts[0] ??
     (isBluePassYachtFollowUpInformationRequest(input.content) ? historyMentionedYachts[0] ?? null : null);
+  const seasonDestination =
+    (routerDecision?.action === "SEASON_QUESTION" ? routerDecision.seasonDestination : null) ??
+    resolveSeasonDestination(input.content);
 
-  if (overviewYacht && isBluePassYachtInformationRequest(input.content)) {
-    const overviewMatch =
-      searchBluePassYachts({ selectedYachtSlug: overviewYacht.slug }, catalog, 1)[0] ??
-      bluepassMatches.find((match) => match.slug === overviewYacht.slug) ??
-      bluepassMatches[0];
+  const action = resolveFinalBluePassRouterAction({
+    llmAction: routerDecision?.action ?? null,
+    content: input.content,
+    intent,
+    selectedYacht,
+    latestMentionedYachts,
+    overviewYacht,
+    seasonDestination,
+    missingFields
+  });
 
-    return buildConciergeResponse(buildBluePassYachtOverviewReply(overviewMatch), [overviewMatch]);
-  }
+  switch (action) {
+    case "VALUE_QUESTION":
+      return buildConciergeResponse(buildBluePassValueReply());
 
-  const missingFields = getMissingBluePassInquiryFields(intent);
+    case "SMALL_TALK":
+      return buildConciergeResponse(
+        buildBluePassSmallTalkReply({
+          gratitude: Boolean(routerDecision?.gratitude) || isBluePassGratitudeRequest(input.content)
+        })
+      );
 
-  if (missingFields.length > 0) {
-    if (isBluePassOpenGeneralQuestion({ content: input.content, intent, selectedYacht })) {
-      return buildConciergeResponse(buildBluePassOpenQuestionReply());
+    case "SEASON_QUESTION":
+      return buildConciergeResponse(buildBluePassSeasonReply(seasonDestination as string));
+
+    case "DESTINATION_COMPARISON":
+      return buildConciergeResponse(buildBluePassDestinationComparisonReply());
+
+    case "YACHT_COMPARISON":
+      return buildConciergeResponse(buildBluePassYachtComparisonReply(latestMentionedYachts));
+
+    case "RECOMMENDATION": {
+      const recommendationDestination = resolveRecommendationDestination({
+        content: input.content,
+        intentDestination: intent.destination,
+        priorTravellerMessages: input.priorTravellerMessages
+      });
+      const excludedYachts = resolveRecommendationExcludedYachts({
+        content: input.content,
+        selectedYacht,
+        latestMentionedYachts,
+        historyMentionedYachts
+      });
+      const excludedYachtSlugs = new Set(excludedYachts.map((yacht) => yacht.slug));
+      if (isBluePassOtherOptionsRequest(input.content) && excludedYachtSlugs.size === 0 && recommendationDestination) {
+        for (const yacht of searchBluePassYachts({ destination: recommendationDestination }, catalog, 3)) {
+          excludedYachtSlugs.add(yacht.slug);
+          excludedYachts.push(yacht);
+        }
+      }
+
+      const recommendationMatches = searchBluePassYachts(
+        {
+          destination: recommendationDestination,
+          guests: intent.guests,
+          interests: intent.interests
+        },
+        catalog,
+        12
+      )
+        .filter((match) =>
+          recommendationDestination ? match.region.toLowerCase().includes(recommendationDestination.toLowerCase()) : true
+        )
+        .filter((match) => !excludedYachtSlugs.has(match.slug))
+        .slice(0, 3);
+
+      return buildConciergeResponse(
+        buildBluePassRecommendationReply({
+          destination: recommendationDestination,
+          matches: recommendationMatches,
+          excludedYachtNames: excludedYachts.map((yacht) => yacht.name)
+        }),
+        recommendationMatches
+      );
     }
 
-    const promptMissingFields = getPromptMissingFields(missingFields);
+    case "TRAVEL_INSPIRATION": {
+      const inspirationMatches = buildBluePassInspirationMatches(catalog);
 
-    return {
-      replyMode: "ACTION" as const,
-      assistantContent: buildBluePassMissingFieldsReply({
-        destination: intent.destination,
-        selectedYacht,
-        missingFields: promptMissingFields
-      }),
-      bluepassMatches: [],
-      bluepassInquiry: null,
-      bluepassLedger: [],
-      bluepassDispatch: null,
-      paymentRequest: null,
-      contactRequest: shouldRequestContactForm(missingFields)
-        ? {
-            status: "CONTACT_DETAILS_REQUIRED" as const,
-            fields: getContactRequestFields(missingFields)
-          }
-        : null
-    };
-  }
+      return buildConciergeResponse(
+        buildBluePassRecommendationReply({
+          matches: inspirationMatches
+        }),
+        inspirationMatches
+      );
+    }
 
-  if (!isBluePassInquirySubmissionRequest(input.content)) {
-    return {
-      replyMode: "ACTION" as const,
-      assistantContent: buildBluePassInquiryConfirmationReply({
-        selectedYachtName: selectedYacht?.name,
-        destination: intent.destination,
-        dateWindow: intent.dateWindow,
-        guests: intent.guests,
-        travellerName: intent.travellerName,
-        travellerEmail: intent.travellerEmail,
-        travellerPhone: intent.travellerPhone
-      }),
-      bluepassMatches: [],
-      bluepassInquiry: null,
-      bluepassLedger: [],
-      bluepassDispatch: null,
-      paymentRequest: null
-    };
+    case "YACHT_INFO": {
+      const infoYacht = overviewYacht as BluePassYachtCatalogItem;
+      const overviewMatch =
+        searchBluePassYachts({ selectedYachtSlug: infoYacht.slug }, catalog, 1)[0] ??
+        bluepassMatches.find((match) => match.slug === infoYacht.slug) ??
+        bluepassMatches[0];
+
+      return buildConciergeResponse(buildBluePassYachtOverviewReply(overviewMatch), [overviewMatch]);
+    }
+
+    case "GENERAL_QUESTION":
+      return buildConciergeResponse(buildBluePassOpenQuestionReply());
+
+    case "BROWSE_OPTIONS": {
+      const browsingMatches = bluepassMatches.slice(0, 3);
+
+      return buildConciergeResponse(
+        buildBluePassRecommendationReply({
+          destination: intent.destination,
+          matches: browsingMatches
+        }),
+        browsingMatches
+      );
+    }
+
+    case "REQUEST_MISSING_FIELDS": {
+      const promptMissingFields = getPromptMissingFields(missingFields);
+
+      return {
+        replyMode: "ACTION" as const,
+        assistantContent: buildBluePassMissingFieldsReply({
+          destination: intent.destination,
+          selectedYacht,
+          missingFields: promptMissingFields
+        }),
+        bluepassMatches: [],
+        bluepassInquiry: null,
+        bluepassLedger: [],
+        bluepassDispatch: null,
+        paymentRequest: null,
+        contactRequest: shouldRequestContactForm(missingFields)
+          ? {
+              status: "CONTACT_DETAILS_REQUIRED" as const,
+              fields: getContactRequestFields(missingFields)
+            }
+          : null
+      };
+    }
+
+    case "CONFIRM_INQUIRY":
+      return {
+        replyMode: "ACTION" as const,
+        assistantContent: buildBluePassInquiryConfirmationReply({
+          selectedYachtName: selectedYacht?.name,
+          destination: intent.destination,
+          dateWindow: intent.dateWindow,
+          guests: intent.guests,
+          travellerName: intent.travellerName,
+          travellerEmail: intent.travellerEmail,
+          travellerPhone: intent.travellerPhone
+        }),
+        bluepassMatches: [],
+        bluepassInquiry: null,
+        bluepassLedger: [],
+        bluepassDispatch: null,
+        paymentRequest: null
+      };
+
+    case "SUBMIT_INQUIRY":
+      break;
   }
 
   const created = await createOrReuseBluePassInquiry({
@@ -509,6 +546,111 @@ function buildConciergeResponse(assistantContent: string, bluepassMatches: BlueP
     paymentRequest: null,
     contactRequest: null
   };
+}
+
+async function resolveBluePassRouterDecision(input: {
+  routerClient: BluePassRouterLlmClient | null;
+  content: string;
+  priorTravellerMessages: string[];
+  knownIntent: BluePassInquiryIntent;
+  missingFields: BluePassRequiredInquiryField[];
+  hasSelectedYacht: boolean;
+  mentionedYachtNames: string[];
+}) {
+  if (!input.routerClient) return null;
+
+  try {
+    return await input.routerClient.route({
+      latestMessage: input.content,
+      priorTravellerMessages: input.priorTravellerMessages,
+      knownIntent: input.knownIntent,
+      missingFields: input.missingFields,
+      hasSelectedYacht: input.hasSelectedYacht,
+      mentionedYachtNames: input.mentionedYachtNames
+    });
+  } catch (error) {
+    console.error("bluepass_router.llm_call_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return null;
+  }
+}
+
+// Trusts the LLM's classification as the primary signal, but only after guarding against the
+// small set of outcomes where trusting a wrong LLM verdict would be unsafe (a hallucinated
+// yacht/season that does not exist in this conversation, or skipping the deterministic
+// required-fields gate that guards real DB writes and operator WhatsApp dispatch). Any other
+// mismatch falls back to the regex cascade, which mirrors the router's own action taxonomy.
+function resolveFinalBluePassRouterAction(input: {
+  llmAction: BluePassRouterAction | null;
+  content: string;
+  intent: BluePassInquiryIntent;
+  selectedYacht: BluePassYachtCatalogItem | null;
+  latestMentionedYachts: BluePassYachtCatalogItem[];
+  overviewYacht: BluePassYachtCatalogItem | null;
+  seasonDestination: string | null;
+  missingFields: BluePassRequiredInquiryField[];
+}): BluePassRouterAction {
+  const { llmAction } = input;
+
+  if (llmAction) {
+    const missingFieldsMismatch =
+      (llmAction === "SUBMIT_INQUIRY" || llmAction === "CONFIRM_INQUIRY") && input.missingFields.length > 0;
+    const missingFieldsFalselyClaimed =
+      (llmAction === "REQUEST_MISSING_FIELDS" || llmAction === "BROWSE_OPTIONS") && input.missingFields.length === 0;
+    const hasHardPreconditionFailure =
+      (llmAction === "YACHT_COMPARISON" && input.latestMentionedYachts.length < 2) ||
+      (llmAction === "YACHT_INFO" && !input.overviewYacht) ||
+      (llmAction === "SEASON_QUESTION" && !input.seasonDestination) ||
+      missingFieldsMismatch ||
+      missingFieldsFalselyClaimed;
+
+    if (!hasHardPreconditionFailure) {
+      return llmAction;
+    }
+  }
+
+  return resolveFallbackBluePassRouterAction(input);
+}
+
+// Exact regex-cascade equivalent of the original deterministic router, used whenever the LLM is
+// unavailable, fails, or returns a decision that fails a hard precondition above. Every existing
+// test exercises this path (none pass a routerClient), so it must stay byte-for-byte equivalent
+// to the router's prior behavior.
+function resolveFallbackBluePassRouterAction(input: {
+  content: string;
+  intent: BluePassInquiryIntent;
+  selectedYacht: BluePassYachtCatalogItem | null;
+  latestMentionedYachts: BluePassYachtCatalogItem[];
+  overviewYacht: BluePassYachtCatalogItem | null;
+  seasonDestination: string | null;
+  missingFields: BluePassRequiredInquiryField[];
+}): BluePassRouterAction {
+  const { content } = input;
+
+  if (isBluePassValueQuestion(content)) return "VALUE_QUESTION";
+  if (isBluePassSmallTalkRequest(content)) return "SMALL_TALK";
+  if (input.seasonDestination) return "SEASON_QUESTION";
+  if (isBluePassDestinationComparisonRequest(content)) return "DESTINATION_COMPARISON";
+  if (isBluePassYachtComparisonRequest(content) && input.latestMentionedYachts.length >= 2) return "YACHT_COMPARISON";
+  if (isBluePassRecommendationRequest(content) && !isBluePassInquirySubmissionRequest(content)) return "RECOMMENDATION";
+  if (isBluePassTravelInspirationRequest(content) && !isBluePassInquirySubmissionRequest(content)) {
+    return "TRAVEL_INSPIRATION";
+  }
+  if (input.overviewYacht && isBluePassYachtInformationRequest(content)) return "YACHT_INFO";
+
+  if (input.missingFields.length > 0) {
+    if (isBluePassOpenGeneralQuestion({ content, intent: input.intent, selectedYacht: input.selectedYacht })) {
+      return "GENERAL_QUESTION";
+    }
+    if (!input.selectedYacht && !hasBluePassBookingLanguage(content) && !isBluePassInquirySubmissionRequest(content)) {
+      return "BROWSE_OPTIONS";
+    }
+    return "REQUEST_MISSING_FIELDS";
+  }
+
+  if (!isBluePassInquirySubmissionRequest(content)) return "CONFIRM_INQUIRY";
+  return "SUBMIT_INQUIRY";
 }
 
 function buildBluePassInspirationMatches(catalog: BluePassYachtCatalogItem[]) {

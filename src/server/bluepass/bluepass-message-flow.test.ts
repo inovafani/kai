@@ -529,6 +529,41 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.paymentRequest).toBeNull();
   });
 
+  it("keeps showing Komodo matches for ambiguous browsing follow-ups instead of demanding contact details", async () => {
+    const tenantId = `tenant_${randomUUID()}`;
+    const conversationId = `conversation_${randomUUID()}`;
+
+    const first = await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: "your recommendation for me? anywhere",
+      priorTravellerMessages: []
+    });
+    expect(first.assistantContent).toContain("Komodo");
+
+    const second = await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: "in komodo please",
+      priorTravellerMessages: ["your recommendation for me? anywhere"]
+    });
+    expect(second.assistantContent).toContain("Komodo");
+    expect(second.assistantContent).not.toContain("Raja Ampat");
+    expect(second.assistantContent).not.toContain("Please share your name");
+    expect(second.bluepassMatches.length).toBeGreaterThan(0);
+
+    const third = await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: "in komodo you dumbass",
+      priorTravellerMessages: ["your recommendation for me? anywhere", "in komodo please"]
+    });
+    expect(third.assistantContent).toContain("Komodo");
+    expect(third.assistantContent).not.toContain("Raja Ampat");
+    expect(third.assistantContent).not.toContain("Please share your name");
+    expect(third.bluepassMatches.length).toBeGreaterThan(0);
+  });
+
   it("uses the WhatsApp sender phone instead of asking the traveller to repeat it", async () => {
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
@@ -1140,4 +1175,102 @@ describe("handleBluePassMarketplaceMessage", () => {
       alternativeYachtSlug: "alila-purnama"
     });
   }, 60_000);
+});
+
+describe("handleBluePassMarketplaceMessage with an LLM router client", () => {
+  function fakeRouterClient(decision: {
+    action: string;
+    destination?: string;
+    guests?: number;
+    seasonDestination?: "Komodo" | "Raja Ampat" | null;
+    gratitude?: boolean;
+  }) {
+    return {
+      route: async () => ({
+        action: decision.action as never,
+        intent: {
+          ...(decision.destination ? { destination: decision.destination } : {}),
+          ...(decision.guests ? { guests: decision.guests } : {})
+        },
+        seasonDestination: decision.seasonDestination ?? null,
+        gratitude: decision.gratitude ?? false
+      })
+    };
+  }
+
+  it("lets the LLM router classify a message the regex cascade cannot recognize as a general question", async () => {
+    // No regex pattern in the fallback cascade matches this phrasing at all - proving the LLM
+    // decision, not the regex fallback, is what drives the branch here.
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "zxqv nonsense phrase with no matching pattern",
+      priorTravellerMessages: [],
+      routerClient: fakeRouterClient({ action: "GENERAL_QUESTION" })
+    });
+
+    expect(result.replyMode).toBe("CONCIERGE");
+    expect(result.assistantContent).toContain("Happy to help");
+  });
+
+  it("lets the LLM router resolve the destination the regex intent extractor missed", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "show me options please",
+      priorTravellerMessages: [],
+      routerClient: fakeRouterClient({ action: "RECOMMENDATION", destination: "Raja Ampat" })
+    });
+
+    expect(result.assistantContent).toContain("Raja Ampat");
+    expect(result.assistantContent).not.toContain("Komodo");
+  });
+
+  it("falls back to the regex cascade when the LLM claims a yacht comparison with only one yacht in context", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "tell me about Alila Purnama",
+      priorTravellerMessages: [],
+      routerClient: fakeRouterClient({ action: "YACHT_COMPARISON" })
+    });
+
+    // Only one yacht is in context, so the hard precondition guard rejects the LLM's verdict and
+    // the regex cascade takes over, correctly resolving this as a yacht info request instead.
+    expect(result.assistantContent).toContain("Alila Purnama");
+    expect(result.assistantContent).not.toContain("versus");
+  });
+
+  it("never creates an inquiry when the LLM claims SUBMIT_INQUIRY but required fields are still missing", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "yes go ahead",
+      priorTravellerMessages: ["in komodo please"],
+      routerClient: fakeRouterClient({ action: "SUBMIT_INQUIRY" })
+    });
+
+    // No name/email/phone/guests/dates were ever provided - trusting the LLM here would create a
+    // live operator inquiry with missing contact details, so the hard precondition guard must
+    // reject SUBMIT_INQUIRY and fall back to the deterministic missing-fields gate instead.
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.bluepassDispatch).toBeNull();
+  });
+
+  it("falls back to the regex cascade when the router client throws", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "what is bluepass?",
+      priorTravellerMessages: [],
+      routerClient: {
+        route: async () => {
+          throw new Error("network timeout");
+        }
+      }
+    });
+
+    expect(result.assistantContent).toContain("BluePass");
+    expect(result.assistantContent).toContain("conservation");
+  });
 });

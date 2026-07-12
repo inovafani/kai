@@ -33,8 +33,14 @@ export function extractBluePassInquiryIntent(messages: string[]): BluePassInquir
   const lowerText = text.toLowerCase();
   const intent: BluePassInquiryIntent = {};
 
-  if (/\b(?:komodo|labuan\s+bajo|flores)\b/i.test(text)) intent.destination = "Komodo";
-  if (/\braja\s+ampat\b/i.test(text)) intent.destination = "Raja Ampat";
+  const komodoMentions = [...text.matchAll(/\b(?:komodo|labuan\s+bajo|flores)\b/gi)];
+  const rajaAmpatMentions = [...text.matchAll(/\braja\s+ampat\b/gi)];
+  const lastKomodoIndex = komodoMentions.length > 0 ? komodoMentions[komodoMentions.length - 1].index ?? -1 : -1;
+  const lastRajaAmpatIndex =
+    rajaAmpatMentions.length > 0 ? rajaAmpatMentions[rajaAmpatMentions.length - 1].index ?? -1 : -1;
+  if (lastKomodoIndex >= 0 || lastRajaAmpatIndex >= 0) {
+    intent.destination = lastRajaAmpatIndex > lastKomodoIndex ? "Raja Ampat" : "Komodo";
+  }
   if (/\b(dive|diving)\b/i.test(text)) intent.interests = unique([...(intent.interests ?? []), "dive"]);
   if (/\b(private|charter)\b/i.test(text)) intent.interests = unique([...(intent.interests ?? []), "private"]);
   if (/\bcabin\b/i.test(text)) intent.interests = unique([...(intent.interests ?? []), "cabin"]);

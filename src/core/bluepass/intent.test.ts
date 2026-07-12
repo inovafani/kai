@@ -59,6 +59,21 @@ describe("BluePass inquiry intent", () => {
     });
   });
 
+  it("uses the most recently mentioned destination instead of always preferring Raja Ampat", () => {
+    const intent = extractBluePassInquiryIntent([
+      "any recommendation for raja ampat?",
+      "in komodo please"
+    ]);
+
+    expect(intent.destination).toBe("Komodo");
+  });
+
+  it("switches back to Raja Ampat when it is mentioned after Komodo", () => {
+    const intent = extractBluePassInquiryIntent(["in komodo please", "actually raja ampat"]);
+
+    expect(intent.destination).toBe("Raja Ampat");
+  });
+
   it("reports required missing fields", () => {
     expect(
       getMissingBluePassInquiryFields({
