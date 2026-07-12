@@ -14,6 +14,7 @@ import {
   extractBluePassInquiryIntent,
   getMissingBluePassInquiryFields,
   mergeBluePassInquiryIntent,
+  type BluePassInquiryIntent,
   type BluePassRequiredInquiryField
 } from "@/core/bluepass/intent";
 import { extractBluePassPersonaLead } from "@/core/bluepass/lead";
@@ -130,7 +131,15 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   const messageIntent = extractBluePassInquiryIntent([input.content]);
   const latestMentionedYachts = resolveMentionedYachts(input.content, catalog);
   const historyMentionedYachts = resolveMentionedYachts(input.priorTravellerMessages.join("\n"), catalog);
-  const selectedYacht = latestMentionedYachts[0] ?? historyMentionedYachts[0] ?? null;
+  const selectedYacht =
+    latestMentionedYachts[0] ??
+    (shouldCarryBluePassHistoryYacht({
+      content: input.content,
+      messageIntent,
+      priorTravellerMessages: input.priorTravellerMessages
+    })
+      ? historyMentionedYachts[0] ?? null
+      : null);
   const intent = mergeBluePassInquiryIntent(historyIntent, {
     ...messageIntent,
     destination: messageIntent.destination ?? (selectedYacht ? selectedYacht.region : undefined),
@@ -687,7 +696,10 @@ function isBluePassRecommendationRequest(content: string) {
     /\b(?:recommend|recommendation|recommendations|suggest|option|options|alternative|alternatives)\b/.test(
       normalized
     ) ||
-    /\b(?:anything else|something else|another|other than|rather than|besides|instead of)\b/.test(normalized);
+    /\b(?:anything else|something else|another|other than|rather than|besides|instead of)\b/.test(normalized) ||
+    /\b(?:better|best|beautiful|most beautiful|nicest)\s+(?:place|destination|spot|island|area)s?\b/.test(
+      normalized
+    );
   const asksForBrowsing =
     /\b(?:liveaboards?|yachts?|boats?|trips?)\b/.test(normalized) ||
     /\b(?:show me|what are|which)\b.*\b(?:komodo|raja\s+ampat|liveaboards?|yachts?|boats?|trips?)\b/.test(
@@ -714,8 +726,54 @@ function isBluePassTravelInspirationRequest(content: string) {
     /\b(?:healing|relax|relaxing|chill|honeymoon|romantic|solo|couple|family|friends|retreat|escape)\b/.test(
       normalized
     ) ||
-    /\b(?:what\s+(?:trip|destination|place)\s+(?:fits|suits)\s+me|help\s+me\s+choose)\b/.test(normalized)
+    /\b(?:what\s+(?:trip|destination|place)\s+(?:fits|suits)\s+me|help\s+me\s+choose)\b/.test(normalized) ||
+    /\b(?:better|best|beautiful|most beautiful|nicest)\s+(?:place|destination|spot|island|area)s?\b/.test(
+      normalized
+    ) ||
+    /\b(?:place|destination|spot|island|area)s?\s+(?:to\s+go|in\s+indonesia)\b/.test(normalized) ||
+    /\bindonesia\b.*\b(?:better|best|beautiful|destination|place|where|go)\b/.test(normalized)
   );
+}
+
+function shouldCarryBluePassHistoryYacht(input: {
+  content: string;
+  messageIntent: BluePassInquiryIntent;
+  priorTravellerMessages: string[];
+}) {
+  const normalized = input.content.toLowerCase();
+
+  if (isBluePassValueQuestion(input.content)) return false;
+  if (isBluePassSmallTalkRequest(input.content)) return false;
+  if (resolveSeasonDestination(input.content)) return false;
+  if (isBluePassDestinationComparisonRequest(input.content)) return false;
+  if (isBluePassTravelInspirationRequest(input.content) && !isBluePassInquirySubmissionRequest(input.content)) {
+    return false;
+  }
+  if (isBluePassRecommendationRequest(input.content) && !isBluePassInquirySubmissionRequest(input.content)) {
+    return false;
+  }
+
+  if (isBluePassYachtFollowUpInformationRequest(input.content) || isBluePassInquirySubmissionRequest(input.content)) {
+    return true;
+  }
+
+  const hasBookingLanguage =
+    /\b(?:order|book|booking|reserve|hold|quote|operator|inquiry|availability|send|submit|create|prepare|proceed|confirm)\b/.test(
+      normalized
+    );
+  const hasTripOrContactDetails = Boolean(
+    input.messageIntent.dateWindow ||
+      input.messageIntent.guests ||
+      input.messageIntent.travellerName ||
+      input.messageIntent.travellerEmail ||
+      input.messageIntent.travellerPhone ||
+      input.messageIntent.budget
+  );
+  const priorHasBookingLanguage = /\b(?:order|book|booking|reserve|hold|quote|operator|inquiry|availability)\b/.test(
+    input.priorTravellerMessages.join("\n").toLowerCase()
+  );
+
+  return hasBookingLanguage || hasTripOrContactDetails || (priorHasBookingLanguage && Boolean(input.messageIntent.destination));
 }
 
 function resolveRecommendationDestination(input: {

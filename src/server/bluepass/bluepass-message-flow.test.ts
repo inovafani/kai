@@ -441,6 +441,46 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).not.toContain("Please share your name");
   });
 
+  it("answers broad Indonesia destination questions instead of reusing a stale yacht", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "is there any better place to go in indonesia?",
+      priorTravellerMessages: [
+        "can you tell me about celestia?",
+        "Celestia looks good but I am still exploring"
+      ]
+    });
+
+    expect(result.replyMode).toBe("CONCIERGE");
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("BluePass");
+    expect(result.assistantContent).not.toContain("Great choice - Celestia");
+    expect(result.assistantContent).not.toContain("Celestia is");
+    expect(result.assistantContent).not.toContain("live calendar");
+    expect(result.assistantContent).not.toContain("Please share your name");
+  });
+
+  it("treats most-beautiful destination questions as travel inspiration instead of booking collection", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "what is most beautiful destination in indonesia?",
+      priorTravellerMessages: [
+        "tell me about celestia",
+        "what is better komodo or raja ampat?"
+      ]
+    });
+
+    expect(result.replyMode).toBe("CONCIERGE");
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("BluePass");
+    expect(result.assistantContent).not.toContain("Great choice - Celestia");
+    expect(result.assistantContent).not.toContain("Celestia is");
+    expect(result.assistantContent).not.toContain("operator to confirm availability");
+    expect(result.assistantContent).not.toContain("Please share your name");
+  });
+
   it("returns preview matches for discovery requests without asking for contact details", async () => {
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
