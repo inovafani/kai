@@ -100,6 +100,30 @@ describe("createGroqAssistantClient", () => {
     expect(body.temperature).toBe(0.75);
   });
 
+  it("grants general-knowledge concierge freedom when no required facts are present", async () => {
+    const fetcher = vi.fn(async () => {
+      return new Response(JSON.stringify({ choices: [{ message: { content: "Bali is great for healing." } }] }), {
+        status: 200
+      });
+    });
+    const client = createGroqAssistantClient({ GROQ_API_KEY: "gsk-test" }, fetcher);
+
+    await client?.composeReply({
+      deterministicReply: "I can help with that.",
+      requiredFacts: [],
+      latestUserMessage: "is bali good for healing?"
+    });
+
+    const [, requestInit] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    const body = JSON.parse(requestInit.body as string) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const userPrompt = body.messages[1].content;
+    expect(userPrompt).toContain("Answer the traveller naturally and helpfully");
+    expect(userPrompt).toContain("knowledgeable, well-travelled Indonesia travel concierge");
+    expect(userPrompt).not.toContain("Preserve every required fact exactly as written.");
+  });
+
   it("fails closed when the Groq API response is not ok", async () => {
     const client = createGroqAssistantClient(
       { GROQ_API_KEY: "gsk-test" },

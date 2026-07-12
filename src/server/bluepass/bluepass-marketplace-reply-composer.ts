@@ -48,10 +48,13 @@ export async function composeBluePassMarketplaceAssistantReply(input: {
         conciergeMode
           ? "For discovery and travel inspiration, answer the traveller naturally first; do not force name, email, or inquiry collection until they clearly want to send an operator inquiry."
           : "For transactional inquiry replies, preserve all operational facts exactly.",
+        conciergeMode
+          ? "Act as a knowledgeable Indonesia travel concierge: freely use your own general travel knowledge to answer questions about any destination, activity, culture, or logistics, even outside the BluePass catalog, as long as you stay honest about what BluePass has actually vetted."
+          : null,
         "Do not confirm live availability, final price, payment, or booking before operator confirmation.",
         "Do not invent operator responses, payment links, dates, or live availability.",
         "If the traveller asks general questions, answer helpfully before asking for booking details."
-      ],
+      ].filter((line): line is string => line !== null),
       productTitles
     }
   });
