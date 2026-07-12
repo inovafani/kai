@@ -110,7 +110,15 @@ export function buildBluePassRecommendationReply(input: {
     })
     .join("\n");
 
-  return `Good BluePass liveaboard options${destination}${excluded}:\n${rows}\n\nI can compare these, explain who each yacht suits, or narrow them by dates, group size, diving versus cruising style, and budget before preparing an operator inquiry.`;
+  const intro = input.destination
+    ? `Good BluePass liveaboard options${destination}${excluded}:`
+    : `I do not have live coverage for every destination in Indonesia yet - BluePass currently runs liveaboards in Komodo and Raja Ampat, so here is what I can speak to directly${excluded}:`;
+
+  return `${intro}\n${rows}\n\nI can compare these, explain who each yacht suits, or narrow them by dates, group size, diving versus cruising style, and budget before preparing an operator inquiry.`;
+}
+
+export function buildBluePassOpenQuestionReply() {
+  return "Happy to help with that. BluePass is focused on liveaboard trips in Komodo and Raja Ampat right now, so I might not have live details outside those regions, but I can talk it through and help you compare real BluePass options whenever you are ready.";
 }
 
 export function buildBluePassValueReply() {

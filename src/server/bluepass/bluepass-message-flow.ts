@@ -24,6 +24,7 @@ import {
   buildBluePassInquiryStatusReply,
   buildBluePassDestinationComparisonReply,
   buildBluePassMissingFieldsReply,
+  buildBluePassOpenQuestionReply,
   buildBluePassRecommendationReply,
   buildBluePassSeasonReply,
   buildBluePassSmallTalkReply,
@@ -339,6 +340,10 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   const missingFields = getMissingBluePassInquiryFields(intent);
 
   if (missingFields.length > 0) {
+    if (isBluePassOpenGeneralQuestion({ content: input.content, intent, selectedYacht })) {
+      return buildConciergeResponse(buildBluePassOpenQuestionReply());
+    }
+
     const promptMissingFields = getPromptMissingFields(missingFields);
 
     return {
@@ -596,6 +601,34 @@ function getPromptMissingFields(missingFields: BluePassRequiredInquiryField[]) {
   const tripFields = missingFields.filter((field) => !contactFields.has(field));
 
   return tripFields.length > 0 ? tripFields : missingFields;
+}
+
+function hasBluePassBookingLanguage(content: string) {
+  return /\b(?:order|book|booking|reserve|hold|quote|operator|inquiry|inquiries|availability|send|submit|create|prepare|proceed|confirm|confirmed)\b/.test(
+    content.toLowerCase()
+  );
+}
+
+function isBluePassOpenGeneralQuestion(input: {
+  content: string;
+  intent: BluePassInquiryIntent;
+  selectedYacht: BluePassYachtCatalogItem | null;
+}) {
+  if (input.selectedYacht) return false;
+  if (hasBluePassBookingLanguage(input.content)) return false;
+
+  const hasAnyTripSignal = Boolean(
+    input.intent.destination ||
+      input.intent.dateWindow ||
+      input.intent.guests ||
+      input.intent.travellerName ||
+      input.intent.travellerEmail ||
+      input.intent.travellerPhone ||
+      input.intent.budget ||
+      (input.intent.interests && input.intent.interests.length > 0)
+  );
+
+  return !hasAnyTripSignal;
 }
 
 function isBluePassValueQuestion(content: string) {

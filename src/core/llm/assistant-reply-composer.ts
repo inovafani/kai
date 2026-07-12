@@ -234,14 +234,30 @@ export async function composeAssistantReply(
       conversationHistory: input.conversationHistory ?? []
     });
     rewrite = applyNaturalnessCheck(rewrite, input);
-  } catch {
+  } catch (error) {
+    console.error("assistant_reply_composer.llm_call_failed", {
+      tenantName: input.tenantContext?.tenantName,
+      requiredFacts,
+      error: error instanceof Error ? error.message : String(error)
+    });
+
     return {
       source: "DETERMINISTIC",
       reply: applyNaturalnessCheck(input.deterministicReply, input)
     };
   }
 
-  if (!isSafeRewrite(rewrite, requiredFacts) || !respectsTenantProductContext(rewrite, input.tenantContext)) {
+  const safeRewrite = isSafeRewrite(rewrite, requiredFacts);
+  const respectsProductContext = respectsTenantProductContext(rewrite, input.tenantContext);
+
+  if (!safeRewrite || !respectsProductContext) {
+    console.warn("assistant_reply_composer.llm_rewrite_rejected", {
+      tenantName: input.tenantContext?.tenantName,
+      requiredFacts,
+      reason: !safeRewrite ? "unsafe_or_missing_required_facts" : "product_context_mismatch",
+      rewrite
+    });
+
     return {
       source: "DETERMINISTIC",
       reply: applyNaturalnessCheck(input.deterministicReply, input)

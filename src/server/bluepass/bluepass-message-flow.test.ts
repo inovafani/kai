@@ -481,6 +481,35 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).not.toContain("Please share your name");
   });
 
+  it("answers an unmatched general question instead of demanding trip details", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "what about sulawesi? do you know some?",
+      priorTravellerMessages: ["is bali good for healing?"]
+    });
+
+    expect(result.replyMode).toBe("CONCIERGE");
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.contactRequest).toBeNull();
+    expect(result.assistantContent).toContain("BluePass");
+    expect(result.assistantContent).not.toContain("please share your");
+    expect(result.assistantContent).not.toContain("date window");
+  });
+
+  it("gives an honest answer for out-of-coverage destination questions instead of a bare boat list", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "is bali good for healing?",
+      priorTravellerMessages: []
+    });
+
+    expect(result.replyMode).toBe("CONCIERGE");
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.assistantContent).toContain("Komodo and Raja Ampat");
+  });
+
   it("returns preview matches for discovery requests without asking for contact details", async () => {
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
