@@ -13,3 +13,5 @@ kai-dev-*.log
 .env.*
 !.env.example
 .DS_Store
+.vercel
+.env*

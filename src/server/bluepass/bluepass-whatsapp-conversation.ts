@@ -13,7 +13,7 @@ import {
 import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
 import { createBluePassRouterClient } from "@/server/llm/bluepass-router-client";
 import type { WhatsAppInboundTextMessage } from "@/server/whatsapp/webhook";
-import { sendWhatsAppText } from "@/server/whatsapp/client";
+import { sendWhatsAppImage, sendWhatsAppText } from "@/server/whatsapp/client";
 import { handleBluePassMarketplaceMessage } from "./bluepass-message-flow";
 import {
   findLatestBluePassParticipantContext,
@@ -216,6 +216,25 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
     role: "kai",
     body: assistantContent
   });
+
+  const featuredYacht = result?.bluepassMatches?.[0];
+  if (featuredYacht?.imageUrl) {
+    const caption = featuredYacht.productUrl
+      ? `${featuredYacht.name} — ${featuredYacht.productUrl}`
+      : featuredYacht.name;
+
+    await sendWhatsAppImage({
+      to: input.from,
+      role: "kai",
+      imageUrl: featuredYacht.imageUrl,
+      caption
+    }).catch((error) => {
+      console.warn("bluepass_whatsapp.image_send_failed", {
+        yachtSlug: featuredYacht.slug,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }
 
   if (result?.bluepassInquiry) {
     await prisma.bluePassInquiryEvent.create({

@@ -16,6 +16,13 @@ export type WhatsAppTextMessage = {
   body: string;
 };
 
+export type WhatsAppImageMessage = {
+  to: string;
+  role?: WhatsAppSenderRole;
+  imageUrl: string;
+  caption?: string;
+};
+
 export type WhatsAppTypingIndicatorMessage = {
   role?: WhatsAppSenderRole;
   messageId: string;
@@ -39,6 +46,16 @@ type WhatsAppTextApiPayload = {
   text: {
     preview_url: false;
     body: string;
+  };
+};
+
+type WhatsAppImageApiPayload = {
+  messaging_product: "whatsapp";
+  to: string;
+  type: "image";
+  image: {
+    link: string;
+    caption?: string;
   };
 };
 
@@ -106,6 +123,22 @@ export async function sendWhatsAppText(message: WhatsAppTextMessage): Promise<Wh
       preview_url: false,
       body: message.body
     }
+  });
+}
+
+export async function sendWhatsAppImage(message: WhatsAppImageMessage): Promise<WhatsAppSendResult> {
+  const imageUrl = message.imageUrl.trim();
+  if (!imageUrl) {
+    throw new Error("WhatsApp image URL is required.");
+  }
+
+  const caption = message.caption?.trim();
+
+  return postWhatsAppMessage(message.role ?? "kai", {
+    messaging_product: "whatsapp",
+    to: normalizeRecipientPhone(message.to),
+    type: "image",
+    image: caption ? { link: imageUrl, caption } : { link: imageUrl }
   });
 }
 
@@ -181,7 +214,7 @@ function maskPhoneNumber(value: string) {
 
 async function postWhatsAppMessage(
   role: WhatsAppSenderRole,
-  payload: WhatsAppTemplateApiPayload | WhatsAppTextApiPayload | WhatsAppTypingIndicatorApiPayload
+  payload: WhatsAppTemplateApiPayload | WhatsAppTextApiPayload | WhatsAppImageApiPayload | WhatsAppTypingIndicatorApiPayload
 ): Promise<WhatsAppSendResult> {
   const phoneId = resolveWhatsAppPhoneId(role);
   const graphVersion = resolveMetaGraphVersion();

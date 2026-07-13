@@ -570,9 +570,11 @@ function stubWhatsAppSend(
 }
 
 function getLastWhatsAppTextBody(fetchMock: { mock: { calls: Parameters<typeof fetch>[] } }) {
-  const lastCall = fetchMock.mock.calls.at(-1);
-  if (!lastCall) return "";
+  const textCalls = fetchMock.mock.calls
+    .filter((call) => String(call[0]).includes("graph.facebook.com"))
+    .map((call) => JSON.parse(String((call[1] as RequestInit).body)))
+    .filter((payload) => payload.type === "text");
 
-  const payload = JSON.parse(String((lastCall[1] as RequestInit).body));
-  return String(payload.text?.body ?? "");
+  const lastTextCall = textCalls.at(-1);
+  return String(lastTextCall?.text?.body ?? "");
 }

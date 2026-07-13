@@ -54,6 +54,15 @@ function getLastWhatsAppTextBody(fetchMock: { mock: { calls: Parameters<typeof f
   return bodies.at(-1) ?? "";
 }
 
+function getLastWhatsAppTextRequestBody(fetchMock: { mock: { calls: Parameters<typeof fetch>[] } }) {
+  const textCalls = fetchMock.mock.calls
+    .filter((call) => String(call[0]).includes("graph.facebook.com"))
+    .map((call) => JSON.parse(String((call[1] as RequestInit).body)))
+    .filter((body) => body.type === "text");
+
+  return textCalls.at(-1) ?? {};
+}
+
 describe("/api/whatsapp/webhook", () => {
   it("verifies the Meta webhook challenge with the configured token", async () => {
     process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN = "verify_secret";
@@ -1120,7 +1129,7 @@ describe("/api/whatsapp/webhook", () => {
       })
     );
     const body = await response.json();
-    const requestBody = JSON.parse(String((fetchMock.mock.calls.at(-1)?.[1] as RequestInit).body));
+    const requestBody = getLastWhatsAppTextRequestBody(fetchMock);
     const messages = await prisma.message.findMany({
       where: { conversationId: whatsappConversation.id },
       orderBy: { createdAt: "asc" }
