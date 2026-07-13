@@ -173,6 +173,16 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
     content: input.body
   });
 
+  const routerClient = createBluePassRouterClient(process.env);
+  console.log("bluepass_whatsapp.llm_router_client", {
+    enabled: routerClient !== null,
+    ENABLE_LLM: process.env.ENABLE_LLM ?? null,
+    ENABLE_OPENAI_LLM: process.env.ENABLE_OPENAI_LLM ?? null,
+    LLM_PROVIDER: process.env.LLM_PROVIDER ?? null,
+    hasGroqKey: Boolean(process.env.GROQ_API_KEY?.trim()),
+    hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY?.trim())
+  });
+
   const result = options.overrideAssistantContent
     ? null
     : await handleBluePassMarketplaceMessage({
@@ -183,7 +193,7 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
         travellerPhone,
         identityPersona: options.identityPersona,
         identityName: options.identityName,
-        routerClient: createBluePassRouterClient(process.env)
+        routerClient
       });
   const assistantContent =
     options.overrideAssistantContent ??

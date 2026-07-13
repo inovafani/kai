@@ -758,6 +758,7 @@ function isBluePassOpenGeneralQuestion(input: {
 }) {
   if (input.selectedYacht) return false;
   if (hasBluePassBookingLanguage(input.content)) return false;
+  if (mentionsOffCatalogDestination(input.content)) return true;
 
   const hasAnyTripSignal = Boolean(
     input.intent.destination ||
@@ -771,6 +772,20 @@ function isBluePassOpenGeneralQuestion(input: {
   );
 
   return !hasAnyTripSignal;
+}
+
+// Once a destination like Komodo is locked in from earlier turns, `hasAnyTripSignal` above stays
+// true for the rest of the conversation, which used to swallow later off-topic destination
+// questions into the same stale Komodo/Raja Ampat catalog dump. This catches messages that name a
+// place BluePass does not serve, so they get an honest answer instead of a reused yacht list.
+const offCatalogDestinationPattern =
+  /\b(?:bali|lombok|sulawesi|sumatra|jakarta|bandung|yogyakarta|jogja|bunaken|wakatobi|gili|sumba|nusa\s+penida|banda|alor|derawan|belitung|bromo|ubud|manado|makassar|bintan|batam|karimunjawa)\b/;
+
+function mentionsOffCatalogDestination(content: string) {
+  const normalized = content.toLowerCase();
+  if (/\b(?:komodo|raja\s+ampat|labuan\s+bajo)\b/.test(normalized)) return false;
+
+  return offCatalogDestinationPattern.test(normalized);
 }
 
 function isBluePassValueQuestion(content: string) {
@@ -871,10 +886,7 @@ function isBluePassRecommendationRequest(content: string) {
     /\b(?:recommend|recommendation|recommendations|suggest|option|options|alternative|alternatives)\b/.test(
       normalized
     ) ||
-    /\b(?:anything else|something else|another|other than|rather than|besides|instead of)\b/.test(normalized) ||
-    /\b(?:better|best|beautiful|most beautiful|nicest)\s+(?:place|destination|spot|island|area)s?\b/.test(
-      normalized
-    );
+    /\b(?:anything else|something else|another|other than|rather than|besides|instead of)\b/.test(normalized);
   const asksForBrowsing =
     /\b(?:liveaboards?|yachts?|boats?|trips?)\b/.test(normalized) ||
     /\b(?:show me|what are|which)\b.*\b(?:komodo|raja\s+ampat|liveaboards?|yachts?|boats?|trips?)\b/.test(
