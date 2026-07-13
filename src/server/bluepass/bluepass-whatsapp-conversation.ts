@@ -44,6 +44,15 @@ export async function handleBluePassWhatsAppInboundMessage(
   const identityPersona = directoryIdentity?.persona ?? partnerDirectoryIdentity?.persona ?? null;
   const identityName = directoryIdentity?.operatorName ?? partnerDirectoryIdentity?.partnerName ?? null;
 
+  if (identityPersona) {
+    console.log("bluepass_whatsapp.identity_directory_match", {
+      identityPersona,
+      identityName,
+      operatorSlug: directoryIdentity?.operatorSlug ?? null,
+      partnerId: partnerDirectoryIdentity?.partnerId ?? null
+    });
+  }
+
   if (isBluePassResetConversationRequest(input.body)) {
     return handleBluePassTravellerMarketplaceWhatsAppMessage(input, {
       resetConversation: true,
@@ -218,6 +227,13 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
   });
 
   const featuredYacht = result?.bluepassMatches?.[0];
+  console.log("bluepass_whatsapp.image_send_decision", {
+    replyMode: result?.replyMode ?? null,
+    matchCount: result?.bluepassMatches?.length ?? 0,
+    featuredYachtSlug: featuredYacht?.slug ?? null,
+    hasImageUrl: Boolean(featuredYacht?.imageUrl)
+  });
+
   if (featuredYacht?.imageUrl) {
     const caption = featuredYacht.productUrl
       ? `${featuredYacht.name} — ${featuredYacht.productUrl}`
@@ -228,12 +244,20 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
       role: "kai",
       imageUrl: featuredYacht.imageUrl,
       caption
-    }).catch((error) => {
-      console.warn("bluepass_whatsapp.image_send_failed", {
-        yachtSlug: featuredYacht.slug,
-        error: error instanceof Error ? error.message : String(error)
+    })
+      .then((imageResult) => {
+        console.log("bluepass_whatsapp.image_send_succeeded", {
+          yachtSlug: featuredYacht.slug,
+          providerMessageId: imageResult.providerMessageId
+        });
+      })
+      .catch((error) => {
+        console.warn("bluepass_whatsapp.image_send_failed", {
+          yachtSlug: featuredYacht.slug,
+          imageUrl: featuredYacht.imageUrl,
+          error: error instanceof Error ? error.message : String(error)
+        });
       });
-    });
   }
 
   if (result?.bluepassInquiry) {

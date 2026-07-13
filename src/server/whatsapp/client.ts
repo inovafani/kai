@@ -126,10 +126,19 @@ export async function sendWhatsAppText(message: WhatsAppTextMessage): Promise<Wh
   });
 }
 
+const supportedWhatsAppImageExtensions = [".jpg", ".jpeg", ".png"];
+
 export async function sendWhatsAppImage(message: WhatsAppImageMessage): Promise<WhatsAppSendResult> {
   const imageUrl = message.imageUrl.trim();
   if (!imageUrl) {
     throw new Error("WhatsApp image URL is required.");
+  }
+
+  const lowerCaseUrl = imageUrl.toLowerCase();
+  if (!supportedWhatsAppImageExtensions.some((extension) => lowerCaseUrl.endsWith(extension))) {
+    throw new Error(
+      `WhatsApp only accepts JPEG or PNG images for image messages (unsupported format: ${imageUrl}).`
+    );
   }
 
   const caption = message.caption?.trim();
