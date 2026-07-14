@@ -931,7 +931,7 @@ function isBluePassYachtFollowUpInformationRequest(content: string) {
     .replace(/\s+/g, " ")
     .trim();
 
-  return /\b(?:tell me more|more details|more info|what about it|what about that|that yacht|this yacht|that boat|this boat|that one|this one)\b/.test(
+  return /\b(?:tell me more|more details|more info|what about it|what about that|that yacht|this yacht|the yacht|that boat|this boat|the boat|the liveaboard|the trip|that one|this one)\b/.test(
     normalized
   );
 }
@@ -943,8 +943,15 @@ function isBluePassRecommendationRequest(content: string) {
       normalized
     ) ||
     /\b(?:anything else|something else|another|other than|rather than|besides|instead of)\b/.test(normalized);
+  // "the/this/that boat" etc. refers to a specific, already-in-context vessel/trip - it's an
+  // attribute question ("does the boat have wifi?"), not a request to browse multiple options.
+  // Without this guard, the bare noun check below matches on "boat" alone and misreads it as
+  // RECOMMENDATION.
+  const asksAboutAnAlreadyReferencedVessel = /\b(?:the|this|that)\s+(?:liveaboards?|yachts?|boats?|trips?)\b/.test(
+    normalized
+  );
   const asksForBrowsing =
-    /\b(?:liveaboards?|yachts?|boats?|trips?)\b/.test(normalized) ||
+    (/\b(?:liveaboards?|yachts?|boats?|trips?)\b/.test(normalized) && !asksAboutAnAlreadyReferencedVessel) ||
     /\b(?:show me|what are|which)\b.*\b(?:komodo|raja\s+ampat|liveaboards?|yachts?|boats?|trips?)\b/.test(
       normalized
     );

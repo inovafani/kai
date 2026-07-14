@@ -696,6 +696,22 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).not.toContain("queued the operator WhatsApp");
   }, 20_000);
 
+  it("treats a follow-up amenity question about 'the boat' as yacht info instead of a missing-fields prompt", async () => {
+    // Regression case found from real traffic: once a yacht is already in context, "does the boat
+    // have wifi?" must resolve to yacht info (CONCIERGE, polish stays on) rather than falling
+    // through to a bare missing-fields prompt (ACTION mode, polish skipped by Fix 1) that would
+    // never actually address the traveller's question.
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "does the boat have wifi?",
+      priorTravellerMessages: ["Can you tell me about Alila Purnama?"]
+    });
+
+    expect(result.replyMode).toBe("CONCIERGE");
+    expect(result.assistantContent).toContain("Alila Purnama");
+  });
+
   it("includes the product link when answering selected yacht questions from the Discover catalog", async () => {
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
