@@ -294,9 +294,13 @@ async function composeBluePassMarketplaceWhatsAppReply(input: {
   latestMessage: string;
   marketplaceResult: Awaited<ReturnType<typeof handleBluePassMarketplaceMessage>>;
 }) {
-  const shouldPolish = shouldPolishBluePassMarketplaceReply({ replyMode: input.marketplaceResult.replyMode });
+  const shouldPolish = shouldPolishBluePassMarketplaceReply({
+    persona: input.marketplaceResult.persona,
+    replyMode: input.marketplaceResult.replyMode
+  });
   console.log(shouldPolish ? "bluepass_llm.polish_call_made" : "bluepass_llm.polish_call_skipped", {
     channel: "whatsapp",
+    persona: input.marketplaceResult.persona,
     replyMode: input.marketplaceResult.replyMode
   });
 

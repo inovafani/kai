@@ -64,19 +64,20 @@ export type BluePassMarketplaceMessageInput = {
 };
 
 export async function handleBluePassMarketplaceMessage(input: BluePassMarketplaceMessageInput) {
+  const persona = classifyBluePassPersona({
+    messages: [input.content, ...input.priorTravellerMessages],
+    identityPersona: input.identityPersona
+  });
+
   if (isBluePassResetConversationRequest(input.content)) {
     return buildConciergeResponse(
+      persona,
       buildBluePassResetConversationReply({
         persona: input.identityPersona ?? null,
         identityName: input.identityName
       })
     );
   }
-
-  const persona = classifyBluePassPersona({
-    messages: [input.content, ...input.priorTravellerMessages],
-    identityPersona: input.identityPersona
-  });
 
   if (persona === "OPERATOR") {
     const lead = resolvePersonaLead({
@@ -93,10 +94,11 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
         sourceMessage: input.content
       });
 
-      return buildConciergeResponse(buildBluePassLeadCapturedReply({ persona, lead }));
+      return buildConciergeResponse(persona, buildBluePassLeadCapturedReply({ persona, lead }));
     }
 
     return buildConciergeResponse(
+      persona,
       buildBluePassOperatorReply({
         latestMessage: input.content,
         operatorName: input.identityName
@@ -119,10 +121,11 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
         sourceMessage: input.content
       });
 
-      return buildConciergeResponse(buildBluePassLeadCapturedReply({ persona, lead }));
+      return buildConciergeResponse(persona, buildBluePassLeadCapturedReply({ persona, lead }));
     }
 
     return buildConciergeResponse(
+      persona,
       buildBluePassPartnerReply({
         latestMessage: input.content
       })
@@ -203,6 +206,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
 
     return {
       replyMode: "ACTION" as const,
+      persona,
       assistantContent: buildBluePassInquiryReadyReply({
         inquiryId: bluepassInquiry.id,
         selectedYachtName: bluepassInquiry.selectedYachtName,
@@ -225,12 +229,14 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
 
     if (!status) {
       return buildConciergeResponse(
+        persona,
         "I do not see an active BluePass inquiry in this chat yet. I can help shortlist options first, then prepare an operator inquiry once you share the trip details."
       );
     }
 
     return {
       replyMode: "ACTION" as const,
+      persona,
       assistantContent: buildBluePassInquiryStatusReply({
         inquiryId: status.inquiry.id,
         selectedYachtName: status.inquiry.selectedYachtName,
@@ -301,23 +307,24 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
 
   switch (action) {
     case "VALUE_QUESTION":
-      return buildConciergeResponse(buildBluePassValueReply());
+      return buildConciergeResponse(persona, buildBluePassValueReply());
 
     case "SMALL_TALK":
       return buildConciergeResponse(
+        persona,
         buildBluePassSmallTalkReply({
           gratitude: Boolean(routerDecision?.gratitude) || isBluePassGratitudeRequest(input.content)
         })
       );
 
     case "SEASON_QUESTION":
-      return buildConciergeResponse(buildBluePassSeasonReply(seasonDestination as string));
+      return buildConciergeResponse(persona, buildBluePassSeasonReply(seasonDestination as string));
 
     case "DESTINATION_COMPARISON":
-      return buildConciergeResponse(buildBluePassDestinationComparisonReply());
+      return buildConciergeResponse(persona, buildBluePassDestinationComparisonReply());
 
     case "YACHT_COMPARISON":
-      return buildConciergeResponse(buildBluePassYachtComparisonReply(latestMentionedYachts));
+      return buildConciergeResponse(persona, buildBluePassYachtComparisonReply(latestMentionedYachts));
 
     case "RECOMMENDATION": {
       const recommendationDestination = resolveRecommendationDestination({
@@ -355,6 +362,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
         .slice(0, 3);
 
       return buildConciergeResponse(
+        persona,
         buildBluePassRecommendationReply({
           destination: recommendationDestination,
           matches: recommendationMatches,
@@ -368,6 +376,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
       const inspirationMatches = buildBluePassInspirationMatches(catalog);
 
       return buildConciergeResponse(
+        persona,
         buildBluePassRecommendationReply({
           matches: inspirationMatches
         }),
@@ -382,16 +391,17 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
         bluepassMatches.find((match) => match.slug === infoYacht.slug) ??
         bluepassMatches[0];
 
-      return buildConciergeResponse(buildBluePassYachtOverviewReply(overviewMatch), [overviewMatch]);
+      return buildConciergeResponse(persona, buildBluePassYachtOverviewReply(overviewMatch), [overviewMatch]);
     }
 
     case "GENERAL_QUESTION":
-      return buildConciergeResponse(buildBluePassOpenQuestionReply());
+      return buildConciergeResponse(persona, buildBluePassOpenQuestionReply());
 
     case "BROWSE_OPTIONS": {
       const browsingMatches = bluepassMatches.slice(0, 3);
 
       return buildConciergeResponse(
+        persona,
         buildBluePassRecommendationReply({
           destination: intent.destination,
           matches: browsingMatches
@@ -405,6 +415,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
 
       return {
         replyMode: "ACTION" as const,
+        persona,
         assistantContent: buildBluePassMissingFieldsReply({
           destination: intent.destination,
           selectedYacht,
@@ -427,6 +438,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     case "CONFIRM_INQUIRY":
       return {
         replyMode: "ACTION" as const,
+        persona,
         assistantContent: buildBluePassInquiryConfirmationReply({
           selectedYachtName: selectedYacht?.name,
           destination: intent.destination,
@@ -467,6 +479,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
 
   return {
     replyMode: "ACTION" as const,
+    persona,
     assistantContent: buildBluePassInquiryReadyReply({
       inquiryId: bluepassInquiry.id,
       selectedYachtName: bluepassInquiry.selectedYachtName,
@@ -558,9 +571,14 @@ function levenshteinDistance(a: string, b: string) {
   return previous[b.length];
 }
 
-function buildConciergeResponse(assistantContent: string, bluepassMatches: BluePassYachtCard[] = []) {
+function buildConciergeResponse(
+  persona: BluePassPersona,
+  assistantContent: string,
+  bluepassMatches: BluePassYachtCard[] = []
+) {
   return {
     replyMode: "CONCIERGE" as const,
+    persona,
     assistantContent,
     bluepassMatches,
     bluepassInquiry: null,

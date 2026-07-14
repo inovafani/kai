@@ -1,5 +1,6 @@
 import type { AssistantLlmClient, AssistantTenantContext } from "@/core/llm/assistant-reply-composer";
 import { getKaiLlmRuntimeSettings } from "@/server/config/kai-environment";
+import { logBluePassLlmUsage } from "./bluepass-llm-usage";
 
 type Fetcher = typeof fetch;
 
@@ -11,6 +12,11 @@ interface GroqChatCompletionPayload {
       content?: string;
     };
   }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
 }
 
 const defaultGroqModel = "llama-3.3-70b-versatile";
@@ -129,6 +135,20 @@ export function createGroqAssistantClient(
 
         if (!text) {
           throw new Error("Groq response generation returned empty text.");
+        }
+
+        if (payload.usage) {
+          logBluePassLlmUsage({
+            callType: "polish",
+            provider: "groq",
+            model,
+            tenantName: input.tenantContext?.tenantName,
+            usage: {
+              promptTokens: payload.usage.prompt_tokens ?? 0,
+              completionTokens: payload.usage.completion_tokens ?? 0,
+              totalTokens: payload.usage.total_tokens ?? 0
+            }
+          });
         }
 
         return text;

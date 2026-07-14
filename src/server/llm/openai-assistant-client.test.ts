@@ -144,6 +144,44 @@ describe("createOpenAiAssistantClient", () => {
     expect(requestInit.signal).toBeInstanceOf(AbortSignal);
   });
 
+  it("logs real token usage from the OpenAI Responses API instead of discarding it", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const fetcher = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          output_text: "Safe reply.",
+          usage: { input_tokens: 300, output_tokens: 50, total_tokens: 350 }
+        }),
+        { status: 200 }
+      );
+    });
+    const client = createOpenAiAssistantClient(
+      { OPENAI_API_KEY: "sk-test", ENABLE_OPENAI_LLM: "true", OPENAI_MODEL: "gpt-4.1-mini" },
+      fetcher
+    );
+
+    await client?.composeReply({
+      deterministicReply: "Safe reply.",
+      requiredFacts: [],
+      tenantContext: { tenantName: "BluePass" }
+    });
+
+    expect(logSpy).toHaveBeenCalledWith(
+      "bluepass_llm.usage",
+      expect.objectContaining({
+        callType: "polish",
+        provider: "openai",
+        model: "gpt-4.1-mini",
+        tenantName: "BluePass",
+        promptTokens: 300,
+        completionTokens: 50,
+        totalTokens: 350
+      })
+    );
+
+    logSpy.mockRestore();
+  });
+
   it("fails closed when the OpenAI API response is not ok", async () => {
     const client = createOpenAiAssistantClient(
       { OPENAI_API_KEY: "sk-test", ENABLE_OPENAI_LLM: "true" },

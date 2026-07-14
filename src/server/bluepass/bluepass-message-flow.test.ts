@@ -38,6 +38,7 @@ describe("handleBluePassMarketplaceMessage", () => {
       priorTravellerMessages: []
     });
 
+    expect(result.persona).toBe("OPERATOR");
     expect(result.bluepassInquiry).toBeNull();
     expect(result.bluepassDispatch).toBeNull();
     expect(result.assistantContent).toContain("82%");
@@ -141,6 +142,7 @@ describe("handleBluePassMarketplaceMessage", () => {
       include: { events: true }
     });
 
+    expect(result.persona).toBe("OPERATOR");
     expect(result.bluepassInquiry).toBeNull();
     expect(result.bluepassDispatch).toBeNull();
     expect(result.assistantContent).toContain("operator lead");
@@ -175,6 +177,7 @@ describe("handleBluePassMarketplaceMessage", () => {
       include: { events: true }
     });
 
+    expect(result.persona).toBe("PARTNER");
     expect(result.bluepassInquiry).toBeNull();
     expect(result.bluepassDispatch).toBeNull();
     expect(result.assistantContent).toContain("partner lead");

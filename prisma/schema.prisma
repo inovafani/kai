@@ -306,3 +306,24 @@ model BluePassOperatorDispatch {
   @@index([tenantId, conversationId, status, createdAt])
   @@index([bluePassInquiryId, createdAt])
 }
+
+// One row per LLM (Groq/OpenAI) call - router or polish. Written best-effort from
+// src/server/llm/bluepass-llm-usage.ts so a logging failure never breaks the actual reply.
+// tenantName is a display string, not a hard relation: the router has no tenant context today
+// (BluePass-only), and the polish layer only carries a tenant display name, not a tenant id.
+model LlmUsageEvent {
+  id               String   @id @default(cuid())
+  callType         String
+  provider         String
+  model            String
+  tenantName       String?
+  promptTokens     Int
+  completionTokens Int
+  totalTokens      Int
+  estimatedCostUsd Float?
+  createdAt        DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([tenantName, createdAt])
+  @@index([callType, createdAt])
+}

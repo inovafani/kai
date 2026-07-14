@@ -124,6 +124,41 @@ describe("createGroqAssistantClient", () => {
     expect(userPrompt).not.toContain("Preserve every required fact exactly as written.");
   });
 
+  it("logs real token usage from the Groq response instead of discarding it", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const fetcher = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: "Safe reply." } }],
+          usage: { prompt_tokens: 512, completion_tokens: 64, total_tokens: 576 }
+        }),
+        { status: 200 }
+      );
+    });
+    const client = createGroqAssistantClient({ GROQ_API_KEY: "gsk-test", GROQ_MODEL: "llama-3.3-70b-versatile" }, fetcher);
+
+    await client?.composeReply({
+      deterministicReply: "Safe reply.",
+      requiredFacts: [],
+      tenantContext: { tenantName: "BluePass" }
+    });
+
+    expect(logSpy).toHaveBeenCalledWith(
+      "bluepass_llm.usage",
+      expect.objectContaining({
+        callType: "polish",
+        provider: "groq",
+        model: "llama-3.3-70b-versatile",
+        tenantName: "BluePass",
+        promptTokens: 512,
+        completionTokens: 64,
+        totalTokens: 576
+      })
+    );
+
+    logSpy.mockRestore();
+  });
+
   it("fails closed when the Groq API response is not ok", async () => {
     const client = createGroqAssistantClient(
       { GROQ_API_KEY: "gsk-test" },

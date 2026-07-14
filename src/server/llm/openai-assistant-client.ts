@@ -1,5 +1,6 @@
 import type { AssistantLlmClient, AssistantTenantContext } from "@/core/llm/assistant-reply-composer";
 import { getKaiLlmRuntimeSettings } from "@/server/config/kai-environment";
+import { logBluePassLlmUsage } from "./bluepass-llm-usage";
 
 type Fetcher = typeof fetch;
 
@@ -7,6 +8,11 @@ export type OpenAiAssistantEnvironment = Record<string, string | undefined>;
 
 interface OpenAiResponsePayload {
   output_text?: string;
+  usage?: {
+    input_tokens?: number;
+    output_tokens?: number;
+    total_tokens?: number;
+  };
 }
 
 const defaultOpenAiModel = "gpt-4.1-mini";
@@ -117,6 +123,20 @@ export function createOpenAiAssistantClient(
 
         if (!payload.output_text?.trim()) {
           throw new Error("OpenAI response generation returned empty text.");
+        }
+
+        if (payload.usage) {
+          logBluePassLlmUsage({
+            callType: "polish",
+            provider: "openai",
+            model,
+            tenantName: input.tenantContext?.tenantName,
+            usage: {
+              promptTokens: payload.usage.input_tokens ?? 0,
+              completionTokens: payload.usage.output_tokens ?? 0,
+              totalTokens: payload.usage.total_tokens ?? 0
+            }
+          });
         }
 
         return payload.output_text.trim();

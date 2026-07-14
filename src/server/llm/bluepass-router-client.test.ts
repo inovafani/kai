@@ -50,6 +50,36 @@ describe("createGroqBluePassRouterClient", () => {
     expect(body.messages[1].content).toContain("any recommendation for raja ampat?");
   });
 
+  it("logs real token usage from the Groq router response instead of discarding it", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const fetcher = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"action":"RECOMMENDATION","destination":"Komodo"}' } }],
+          usage: { prompt_tokens: 200, completion_tokens: 15, total_tokens: 215 }
+        }),
+        { status: 200 }
+      );
+    });
+
+    const client = createGroqBluePassRouterClient({ GROQ_API_KEY: "gsk-test", GROQ_MODEL: "llama-test" }, fetcher);
+    await client?.route(baseRouterInput);
+
+    expect(logSpy).toHaveBeenCalledWith(
+      "bluepass_llm.usage",
+      expect.objectContaining({
+        callType: "router",
+        provider: "groq",
+        model: "llama-test",
+        promptTokens: 200,
+        completionTokens: 15,
+        totalTokens: 215
+      })
+    );
+
+    logSpy.mockRestore();
+  });
+
   it("throws when the response cannot be parsed into a decision", async () => {
     const client = createGroqBluePassRouterClient(
       { GROQ_API_KEY: "gsk-test" },

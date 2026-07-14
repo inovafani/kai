@@ -129,9 +129,13 @@ export async function POST(request: NextRequest) {
       tenantId: resolved.tenant.id,
       conversationId: conversation.id
     });
-    const shouldPolish = shouldPolishBluePassMarketplaceReply({ replyMode: bluepassResult.replyMode });
+    const shouldPolish = shouldPolishBluePassMarketplaceReply({
+      persona: bluepassResult.persona,
+      replyMode: bluepassResult.replyMode
+    });
     console.log(shouldPolish ? "bluepass_llm.polish_call_made" : "bluepass_llm.polish_call_skipped", {
       channel: "widget",
+      persona: bluepassResult.persona,
       replyMode: bluepassResult.replyMode
     });
 

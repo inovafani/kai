@@ -6,6 +6,7 @@ import {
   type BluePassRouterLlmClient
 } from "@/core/llm/bluepass-router";
 import { getKaiLlmRuntimeSettings } from "@/server/config/kai-environment";
+import { logBluePassLlmUsage, type BluePassLlmProvider } from "./bluepass-llm-usage";
 
 type Fetcher = typeof fetch;
 
@@ -64,6 +65,7 @@ function buildUserPrompt(input: BluePassRouterInput) {
 async function callChatCompletionRouter(input: {
   url: string;
   apiKey: string;
+  provider: BluePassLlmProvider;
   model: string;
   timeoutMs: number;
   maxOutputTokens: number;
@@ -97,7 +99,10 @@ async function callChatCompletionRouter(input: {
       throw new Error("BluePass router LLM call failed.");
     }
 
-    const payload = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const payload = (await response.json()) as {
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    };
     const text = payload.choices?.[0]?.message?.content?.trim();
     if (!text) {
       throw new Error("BluePass router LLM returned empty text.");
@@ -106,6 +111,19 @@ async function callChatCompletionRouter(input: {
     const decision = parseBluePassRouterDecision(text);
     if (!decision) {
       throw new Error("BluePass router LLM returned an unparseable decision.");
+    }
+
+    if (payload.usage) {
+      logBluePassLlmUsage({
+        callType: "router",
+        provider: input.provider,
+        model: input.model,
+        usage: {
+          promptTokens: payload.usage.prompt_tokens ?? 0,
+          completionTokens: payload.usage.completion_tokens ?? 0,
+          totalTokens: payload.usage.total_tokens ?? 0
+        }
+      });
     }
 
     return decision;
@@ -130,6 +148,7 @@ export function createGroqBluePassRouterClient(
       callChatCompletionRouter({
         url: "https://api.groq.com/openai/v1/chat/completions",
         apiKey,
+        provider: "groq",
         model,
         timeoutMs,
         maxOutputTokens: defaultRouterMaxOutputTokens,
@@ -155,6 +174,7 @@ export function createOpenAiBluePassRouterClient(
       callChatCompletionRouter({
         url: "https://api.openai.com/v1/chat/completions",
         apiKey,
+        provider: "openai",
         model,
         timeoutMs,
         maxOutputTokens: defaultRouterMaxOutputTokens,
