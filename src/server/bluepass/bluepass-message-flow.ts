@@ -245,25 +245,48 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   }
 
   const regexMissingFields = getMissingBluePassInquiryFields(regexIntent);
-  const routerDecision = await resolveBluePassRouterDecision({
-    routerClient: input.routerClient ?? null,
+  const overviewYacht =
+    latestMentionedYachts[0] ??
+    (isBluePassYachtFollowUpInformationRequest(input.content) ? historyMentionedYachts[0] ?? null : null);
+  const regexSeasonDestination = resolveSeasonDestination(input.content);
+
+  const fallbackAction = resolveFallbackBluePassRouterAction({
     content: input.content,
-    priorTravellerMessages: input.priorTravellerMessages,
-    knownIntent: regexIntent,
-    missingFields: regexMissingFields,
-    hasSelectedYacht: Boolean(selectedYacht),
-    mentionedYachtNames: latestMentionedYachts.map((yacht) => yacht.name)
+    intent: regexIntent,
+    selectedYacht,
+    latestMentionedYachts,
+    overviewYacht,
+    seasonDestination: regexSeasonDestination,
+    missingFields: regexMissingFields
   });
+  const shouldCallRouterLlm = shouldEscalateBluePassRouterToLlm({
+    fallbackAction,
+    content: input.content,
+    intent: regexIntent,
+    selectedYacht
+  });
+  console.log(shouldCallRouterLlm ? "bluepass_llm.router_call_made" : "bluepass_llm.router_call_skipped", {
+    fallbackAction,
+    hasRouterClient: Boolean(input.routerClient)
+  });
+
+  const routerDecision = shouldCallRouterLlm
+    ? await resolveBluePassRouterDecision({
+        routerClient: input.routerClient ?? null,
+        content: input.content,
+        priorTravellerMessages: input.priorTravellerMessages,
+        knownIntent: regexIntent,
+        missingFields: regexMissingFields,
+        hasSelectedYacht: Boolean(selectedYacht),
+        mentionedYachtNames: latestMentionedYachts.map((yacht) => yacht.name)
+      })
+    : null;
 
   const intent = routerDecision ? mergeBluePassInquiryIntent(regexIntent, routerDecision.intent) : regexIntent;
   const bluepassMatches = searchBluePassYachts(intent, catalog);
   const missingFields = getMissingBluePassInquiryFields(intent);
-  const overviewYacht =
-    latestMentionedYachts[0] ??
-    (isBluePassYachtFollowUpInformationRequest(input.content) ? historyMentionedYachts[0] ?? null : null);
   const seasonDestination =
-    (routerDecision?.action === "SEASON_QUESTION" ? routerDecision.seasonDestination : null) ??
-    resolveSeasonDestination(input.content);
+    (routerDecision?.action === "SEASON_QUESTION" ? routerDecision.seasonDestination : null) ?? regexSeasonDestination;
 
   const action = resolveFinalBluePassRouterAction({
     llmAction: routerDecision?.action ?? null,
@@ -651,6 +674,39 @@ function resolveFallbackBluePassRouterAction(input: {
 
   if (!isBluePassInquirySubmissionRequest(content)) return "CONFIRM_INQUIRY";
   return "SUBMIT_INQUIRY";
+}
+
+// Actions the fallback cascade only reaches through a specific, deliberate regex trigger (season
+// phrasing, "compare"/"vs", explicit "tell me about" requests, etc.) - trusted without spending an
+// LLM call. GENERAL_QUESTION is always escalated (it is the cascade's own catch-all for "no pattern
+// matched"). Everything else (RECOMMENDATION / BROWSE_OPTIONS / TRAVEL_INSPIRATION /
+// REQUEST_MISSING_FIELDS / CONFIRM_INQUIRY / SUBMIT_INQUIRY) can be triggered by bare generic words
+// ("boat", "trip", "options") with no real trip signal - e.g. "does the boat have wifi?" matches
+// RECOMMENDATION's `\bboats?\b` check - so those get an independent re-check with the same helper
+// the cascade itself uses before being trusted as "confident enough to skip the LLM."
+const bluepassHighConfidenceFallbackActions = new Set<BluePassRouterAction>([
+  "VALUE_QUESTION",
+  "SMALL_TALK",
+  "SEASON_QUESTION",
+  "DESTINATION_COMPARISON",
+  "YACHT_COMPARISON",
+  "YACHT_INFO"
+]);
+
+export function shouldEscalateBluePassRouterToLlm(input: {
+  fallbackAction: BluePassRouterAction;
+  content: string;
+  intent: BluePassInquiryIntent;
+  selectedYacht: BluePassYachtCatalogItem | null;
+}): boolean {
+  if (input.fallbackAction === "GENERAL_QUESTION") return true;
+  if (bluepassHighConfidenceFallbackActions.has(input.fallbackAction)) return false;
+
+  return isBluePassOpenGeneralQuestion({
+    content: input.content,
+    intent: input.intent,
+    selectedYacht: input.selectedYacht
+  });
 }
 
 function buildBluePassInspirationMatches(catalog: BluePassYachtCatalogItem[]) {

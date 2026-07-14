@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { handleBluePassMarketplaceMessage } from "./bluepass-message-flow";
+import { handleBluePassMarketplaceMessage, shouldEscalateBluePassRouterToLlm } from "./bluepass-message-flow";
 import { prisma } from "@/lib/prisma";
+import type { BluePassInquiryIntent } from "@/core/bluepass/intent";
+import type { BluePassYachtCatalogItem } from "@/core/bluepass/catalog";
 
 const originalEnv = { ...process.env };
 const isolatedWhatsAppEnvKeys = [
@@ -1186,7 +1188,7 @@ describe("handleBluePassMarketplaceMessage with an LLM router client", () => {
     gratitude?: boolean;
   }) {
     return {
-      route: async () => ({
+      route: vi.fn(async () => ({
         action: decision.action as never,
         intent: {
           ...(decision.destination ? { destination: decision.destination } : {}),
@@ -1194,83 +1196,175 @@ describe("handleBluePassMarketplaceMessage with an LLM router client", () => {
         },
         seasonDestination: decision.seasonDestination ?? null,
         gratitude: decision.gratitude ?? false
-      })
+      }))
     };
   }
+
+  it("escalates a generic yacht amenity question to the LLM instead of misreading it as a recommendation request", async () => {
+    // "does the boat have wifi?" matches RECOMMENDATION's generic \bboats?\b keyword in the regex
+    // fallback with zero real trip signal - shouldEscalateBluePassRouterToLlm must still send this
+    // to the LLM so it can be correctly classified as a general question, not a yacht recommendation.
+    const routerClient = fakeRouterClient({ action: "GENERAL_QUESTION" });
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "does the boat have wifi?",
+      priorTravellerMessages: [],
+      routerClient
+    });
+
+    expect(routerClient.route).toHaveBeenCalled();
+    expect(result.bluepassMatches).toEqual([]);
+  });
 
   it("lets the LLM router classify a message the regex cascade cannot recognize as a general question", async () => {
     // No regex pattern in the fallback cascade matches this phrasing at all - proving the LLM
     // decision, not the regex fallback, is what drives the branch here.
+    const routerClient = fakeRouterClient({ action: "GENERAL_QUESTION" });
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
       conversationId: `conversation_${randomUUID()}`,
       content: "zxqv nonsense phrase with no matching pattern",
       priorTravellerMessages: [],
-      routerClient: fakeRouterClient({ action: "GENERAL_QUESTION" })
+      routerClient
     });
 
+    expect(routerClient.route).toHaveBeenCalled();
     expect(result.replyMode).toBe("CONCIERGE");
     expect(result.assistantContent).toContain("Happy to help");
   });
 
   it("lets the LLM router resolve the destination the regex intent extractor missed", async () => {
+    // "show me options please" has no trip signal yet, so it still escalates even though the
+    // regex fallback alone would confidently (but genericly) resolve to RECOMMENDATION.
+    const routerClient = fakeRouterClient({ action: "RECOMMENDATION", destination: "Raja Ampat" });
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
       conversationId: `conversation_${randomUUID()}`,
       content: "show me options please",
       priorTravellerMessages: [],
-      routerClient: fakeRouterClient({ action: "RECOMMENDATION", destination: "Raja Ampat" })
+      routerClient
     });
 
+    expect(routerClient.route).toHaveBeenCalled();
     expect(result.assistantContent).toContain("Raja Ampat");
     expect(result.assistantContent).not.toContain("Komodo");
   });
 
-  it("falls back to the regex cascade when the LLM claims a yacht comparison with only one yacht in context", async () => {
+  it("never consults the LLM for a yacht-info question the regex cascade already resolves confidently", async () => {
+    const routerClient = fakeRouterClient({ action: "YACHT_COMPARISON" });
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
       conversationId: `conversation_${randomUUID()}`,
       content: "tell me about Alila Purnama",
       priorTravellerMessages: [],
-      routerClient: fakeRouterClient({ action: "YACHT_COMPARISON" })
+      routerClient
     });
 
-    // Only one yacht is in context, so the hard precondition guard rejects the LLM's verdict and
-    // the regex cascade takes over, correctly resolving this as a yacht info request instead.
+    // YACHT_INFO is a high-confidence fallback action, so the router LLM is never called at all -
+    // the regex cascade alone (not a rejected LLM verdict) is what resolves this as yacht info.
+    expect(routerClient.route).not.toHaveBeenCalled();
     expect(result.assistantContent).toContain("Alila Purnama");
     expect(result.assistantContent).not.toContain("versus");
   });
 
-  it("never creates an inquiry when the LLM claims SUBMIT_INQUIRY but required fields are still missing", async () => {
+  it("never consults the LLM to submit an inquiry once a destination is already known from history", async () => {
+    const routerClient = fakeRouterClient({ action: "SUBMIT_INQUIRY" });
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
       conversationId: `conversation_${randomUUID()}`,
       content: "yes go ahead",
       priorTravellerMessages: ["in komodo please"],
-      routerClient: fakeRouterClient({ action: "SUBMIT_INQUIRY" })
+      routerClient
     });
 
-    // No name/email/phone/guests/dates were ever provided - trusting the LLM here would create a
-    // live operator inquiry with missing contact details, so the hard precondition guard must
-    // reject SUBMIT_INQUIRY and fall back to the deterministic missing-fields gate instead.
+    // The regex fallback confidently resolves this to BROWSE_OPTIONS (destination is already known
+    // from history, so it is not treated as an open general question) - the router LLM claiming
+    // SUBMIT_INQUIRY is never even consulted, so there is nothing to reject here. No inquiry is
+    // created either way, since name/email/phone/guests/dates were never provided.
+    expect(routerClient.route).not.toHaveBeenCalled();
     expect(result.bluepassInquiry).toBeNull();
     expect(result.bluepassDispatch).toBeNull();
   });
 
   it("falls back to the regex cascade when the router client throws", async () => {
+    // Content chosen so the regex fallback resolves to GENERAL_QUESTION (no trip signal at all),
+    // which always escalates - otherwise the throwing client would never actually be invoked.
+    const routerClient = { route: vi.fn(async () => { throw new Error("network timeout"); }) };
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
       conversationId: `conversation_${randomUUID()}`,
-      content: "what is bluepass?",
+      content: "why is the sky blue",
       priorTravellerMessages: [],
-      routerClient: {
-        route: async () => {
-          throw new Error("network timeout");
-        }
-      }
+      routerClient
     });
 
-    expect(result.assistantContent).toContain("BluePass");
-    expect(result.assistantContent).toContain("conservation");
+    expect(routerClient.route).toHaveBeenCalled();
+    expect(result.replyMode).toBe("CONCIERGE");
+  });
+});
+
+describe("shouldEscalateBluePassRouterToLlm", () => {
+  const emptyIntent = {} as BluePassInquiryIntent;
+
+  it("always escalates when the regex fallback itself is a general question", () => {
+    expect(
+      shouldEscalateBluePassRouterToLlm({
+        fallbackAction: "GENERAL_QUESTION",
+        content: "does the boat have wifi?",
+        intent: emptyIntent,
+        selectedYacht: null
+      })
+    ).toBe(true);
+  });
+
+  it("escalates a recommendation-shaped message with no real trip signal", () => {
+    // Same trap as "does the boat have wifi?" - a generic keyword collision, not a real
+    // recommendation request, so it must not be trusted without an LLM check.
+    expect(
+      shouldEscalateBluePassRouterToLlm({
+        fallbackAction: "RECOMMENDATION",
+        content: "does the boat have wifi?",
+        intent: emptyIntent,
+        selectedYacht: null
+      })
+    ).toBe(true);
+  });
+
+  it("does not escalate a recommendation-shaped message once a destination is already known", () => {
+    expect(
+      shouldEscalateBluePassRouterToLlm({
+        fallbackAction: "RECOMMENDATION",
+        content: "show me options please",
+        intent: { destination: "Komodo" } as BluePassInquiryIntent,
+        selectedYacht: null
+      })
+    ).toBe(false);
+  });
+
+  it("does not escalate a high-confidence fallback action like a direct value question", () => {
+    expect(
+      shouldEscalateBluePassRouterToLlm({
+        fallbackAction: "VALUE_QUESTION",
+        content: "what is bluepass?",
+        intent: emptyIntent,
+        selectedYacht: null
+      })
+    ).toBe(false);
+  });
+
+  it("named residual gap: does not escalate once a yacht is already selected, even with no other trip signal", () => {
+    // isBluePassOpenGeneralQuestion short-circuits to false whenever a yacht is already selected,
+    // so a mid-conversation "does the boat have wifi?" about an already-selected yacht is not caught
+    // by this trigger - a pre-existing gap in the regex itself, not something this function can close.
+    const selectedYacht = { slug: "alila-purnama" } as BluePassYachtCatalogItem;
+    expect(
+      shouldEscalateBluePassRouterToLlm({
+        fallbackAction: "RECOMMENDATION",
+        content: "does the boat have wifi?",
+        intent: emptyIntent,
+        selectedYacht
+      })
+    ).toBe(false);
   });
 });

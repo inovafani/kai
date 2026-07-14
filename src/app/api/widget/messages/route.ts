@@ -18,6 +18,7 @@ import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
 import { buildBookingFailureManualInquiry } from "@/server/conversation/manual-inquiry-fallback";
 import { handleBluePassMarketplaceMessage } from "@/server/bluepass/bluepass-message-flow";
 import { composeBluePassMarketplaceAssistantReply } from "@/server/bluepass/bluepass-marketplace-reply-composer";
+import { shouldPolishBluePassMarketplaceReply } from "@/server/bluepass/bluepass-marketplace-reply-gate";
 import type { BluePassCatalogSnapshotItem } from "@/core/bluepass/catalog";
 import { resolveTenantBusinessPack } from "@/server/business-pack/resolve-tenant-business-pack";
 import { getPmsAdapter } from "@/server/pms/pms-adapter-registry";
@@ -128,11 +129,17 @@ export async function POST(request: NextRequest) {
       tenantId: resolved.tenant.id,
       conversationId: conversation.id
     });
+    const shouldPolish = shouldPolishBluePassMarketplaceReply({ replyMode: bluepassResult.replyMode });
+    console.log(shouldPolish ? "bluepass_llm.polish_call_made" : "bluepass_llm.polish_call_skipped", {
+      channel: "widget",
+      replyMode: bluepassResult.replyMode
+    });
+
     const composedBluePassReply = await composeBluePassMarketplaceAssistantReply({
       deterministicReply: bluepassResult.assistantContent,
       latestMessage: content,
       conversationHistory: priorConversationMessages,
-      llmClient: createAssistantLlmClient(process.env),
+      llmClient: shouldPolish ? createAssistantLlmClient(process.env) : null,
       marketplaceResult: bluepassResult
     });
 

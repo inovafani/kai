@@ -24,6 +24,7 @@ import {
   resolveBluePassPartnerDirectoryIdentityByPhone
 } from "./bluepass-operator-directory";
 import { composeBluePassMarketplaceAssistantReply } from "./bluepass-marketplace-reply-composer";
+import { shouldPolishBluePassMarketplaceReply } from "./bluepass-marketplace-reply-gate";
 
 type BluePassWhatsAppInboundResult = {
   handled: boolean;
@@ -293,7 +294,13 @@ async function composeBluePassMarketplaceWhatsAppReply(input: {
   latestMessage: string;
   marketplaceResult: Awaited<ReturnType<typeof handleBluePassMarketplaceMessage>>;
 }) {
-  const llmClient = createAssistantLlmClient(process.env);
+  const shouldPolish = shouldPolishBluePassMarketplaceReply({ replyMode: input.marketplaceResult.replyMode });
+  console.log(shouldPolish ? "bluepass_llm.polish_call_made" : "bluepass_llm.polish_call_skipped", {
+    channel: "whatsapp",
+    replyMode: input.marketplaceResult.replyMode
+  });
+
+  const llmClient = shouldPolish ? createAssistantLlmClient(process.env) : null;
   const history = await listRecentConversationMessages({
     tenantId: input.tenantId,
     conversationId: input.conversationId
