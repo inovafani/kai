@@ -63,7 +63,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorName: "Alila Purnama",
     operatorPhone: "+6281234567001",
     productUrl: "https://bluepass.co/yachts/alila-purnama",
-    imageUrl: "https://bluepass.co/yachts/alila-purnama/hero.webp",
+    imageUrl: "https://bluepass.co/yachts/alila-purnama/hero.jpg",
     interests: ["dive", "luxury", "phinisi", "private"]
   },
   {
@@ -79,7 +79,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorName: "Alexa Charters",
     operatorPhone: "+6281234567890",
     productUrl: "https://bluepass.co/yachts/alexa",
-    imageUrl: "https://bluepass.co/yachts/alexa/hero.webp",
+    imageUrl: "https://bluepass.co/yachts/alexa/hero.jpg",
     interests: ["private", "couples", "luxury"]
   },
   {
@@ -111,7 +111,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorName: "Anne Bonny",
     operatorPhone: "+6281234567005",
     productUrl: "https://bluepass.co/yachts/anne-bonny",
-    imageUrl: "https://bluepass.co/yachts/anne-bonny/hero.webp",
+    imageUrl: "https://bluepass.co/yachts/anne-bonny/hero.jpg",
     interests: ["dive", "phinisi", "private", "explorer"],
     about:
       "Anne Bonny is a 30-metre liveaboard with 3 cabins for up to 8 guests, focused on accessible private charter adventures in Komodo with seasonal Raja Ampat itineraries."
@@ -145,7 +145,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorName: "Dunia Baru",
     operatorPhone: "+6281234567007",
     productUrl: "https://bluepass.co/yachts/dunia-baru",
-    imageUrl: "https://bluepass.co/yachts/dunia-baru/hero.webp",
+    imageUrl: "https://bluepass.co/yachts/dunia-baru/hero.jpg",
     interests: ["dive", "luxury", "phinisi", "private"]
   },
   {
@@ -193,7 +193,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorName: "Mischief",
     operatorPhone: "+6281234567010",
     productUrl: "https://bluepass.co/yachts/mischief",
-    imageUrl: "https://bluepass.co/yachts/mischief/hero.webp",
+    imageUrl: "https://bluepass.co/yachts/mischief/hero.jpg",
     interests: ["private", "luxury", "phinisi"]
   },
   {
@@ -209,7 +209,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorName: "Mutiara Laut",
     operatorPhone: "+6281234567011",
     productUrl: "https://bluepass.co/yachts/mutiara-laut",
-    imageUrl: "https://bluepass.co/yachts/mutiara-laut/hero.webp",
+    imageUrl: "https://bluepass.co/yachts/mutiara-laut/hero.jpg",
     interests: ["dive", "phinisi", "private"]
   },
   {
@@ -225,7 +225,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorName: "Aliikai Expeditions",
     operatorPhone: "+6281234567002",
     productUrl: "https://bluepass.co/yachts/aliikai",
-    imageUrl: "https://bluepass.co/yachts/aliikai/hero.webp",
+    imageUrl: "https://bluepass.co/yachts/aliikai/hero.jpg",
     interests: ["dive", "phinisi", "cabin"]
   },
   {
@@ -273,7 +273,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorName: "Majik",
     operatorPhone: "+6281234567014",
     productUrl: "https://bluepass.co/yachts/majik",
-    imageUrl: "https://bluepass.co/yachts/majik/hero.webp",
+    imageUrl: "https://bluepass.co/yachts/majik/hero.jpg",
     interests: ["dive", "private", "explorer"]
   },
   {
@@ -289,7 +289,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorName: "Amandira",
     operatorPhone: "+6281234567003",
     productUrl: "https://bluepass.co/yachts/amandira",
-    imageUrl: "https://bluepass.co/yachts/amandira/hero.webp",
+    imageUrl: "https://bluepass.co/yachts/amandira/hero.jpg",
     interests: ["dive", "luxury", "private"]
   }
 ];
