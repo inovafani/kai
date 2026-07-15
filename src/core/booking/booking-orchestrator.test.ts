@@ -2523,6 +2523,35 @@ describe("handleTravellerBookingMessage with a generic booking router client", (
     expect(result.action).not.toBe("AVAILABILITY_CHECKED");
     expect(result.action).toBe("BOOKING_DETAILS_REQUIRED");
   });
+
+  it("regression: a stale 'options' keyword from an earlier turn does not loop a typo'd detail reply back to product selection", async () => {
+    // Reproduces a second real production regression, same root cause as the test above (context
+    // widening), different branch: once a product is already selected, a typo'd detail reply (e.g.
+    // "22july for 2 poeple" - "poeple" fails guest extraction) falls through to GENERAL_QUESTION on
+    // its own, triggering context-widening. bookingMemoryToContext re-embeds the selected product's
+    // name, AND the word "options" survives from an much earlier "what options do you have?" message
+    // still in priorTravellerMessages - together these misclassify the reply as
+    // PRODUCT_RECOMMENDATION, which used to loop the traveller back to product info/selection
+    // instead of asking for just the missing guest count.
+    const result = await handleTravellerBookingMessage({
+      message: "22july for 2 poeple",
+      priorTravellerMessages: ["what options do you have?", "1"],
+      bookingMemory: {
+        productExternalId: "mock-komodo-day-trip",
+        productTitle: "Komodo Day Trip",
+        dateText: null,
+        guests: null
+      },
+      pmsAdapter: new MockPmsAdapter()
+    });
+
+    expect(result.action).not.toBe("PRODUCT_RECOMMENDATION");
+    expect(result.action).not.toBe("PRODUCT_LINK");
+    expect(result.action).toBe("NEEDS_MORE_DETAILS");
+    expect(result.reply).toContain("Komodo Day Trip");
+    expect(result.reply).toContain("2026-07-22");
+    expect(result.reply).toContain("guests");
+  });
 });
 
 describe("shouldEscalateGenericBookingRouterToLlm", () => {

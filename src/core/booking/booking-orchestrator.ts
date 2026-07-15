@@ -1570,7 +1570,19 @@ export async function handleTravellerBookingMessage(
     });
   }
 
-  if (resolvedIntent === "PRODUCT_RECOMMENDATION") {
+  // Once a product is already selected, only re-enter product-recommendation handling when the
+  // traveller's CURRENT message (not the context-widened `analysis`) itself asks for one.
+  // bookingMemoryToContext re-embeds the already-selected product's name into every context-widened
+  // re-analysis, and old conversation history can carry stale keywords (e.g. "options" from an
+  // earlier "what options do you have?") - together these can misclassify a typo'd detail reply
+  // (e.g. "22july for 2 poeple", where "poeple" fails guest extraction) as PRODUCT_RECOMMENDATION,
+  // looping the traveller back to product selection/info instead of progressing toward the missing
+  // detail or availability check below.
+  const shouldTreatAsProductRecommendation =
+    resolvedIntent === "PRODUCT_RECOMMENDATION" &&
+    (!input.bookingMemory?.productTitle || currentMessageAnalysis.intent === "PRODUCT_RECOMMENDATION");
+
+  if (shouldTreatAsProductRecommendation) {
     const products = await listProducts();
 
     if (analysis.slots.productHint) {
