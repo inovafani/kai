@@ -1,6 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MockPmsAdapter } from "@/core/pms/mock-pms-adapter";
-import { handleTravellerBookingMessage } from "./booking-orchestrator";
+import {
+  handleTravellerBookingMessage,
+  resolveFinalGenericBookingIntent,
+  shouldEscalateGenericBookingRouterToLlm
+} from "./booking-orchestrator";
+import type { GenericBookingRouterLlmClient } from "@/core/llm/generic-booking-router";
 
 describe("booking orchestrator", () => {
   it("checks PMS availability when product, date, and guests are known", async () => {
@@ -2426,6 +2431,236 @@ describe("booking orchestrator", () => {
     });
   });
 
+});
+
+function fakeRouterClient(intent: string) {
+  return {
+    route: vi.fn().mockResolvedValue({ intent })
+  } as unknown as GenericBookingRouterLlmClient & { route: ReturnType<typeof vi.fn> };
+}
+
+describe("handleTravellerBookingMessage with a generic booking router client", () => {
+  it("escalates a novel question the regex cascade cannot classify and honors the router's reclassification", async () => {
+    const routerClient = fakeRouterClient("HUMAN_HANDOFF");
+
+    const result = await handleTravellerBookingMessage({
+      message: "is this suitable for kids?",
+      pmsAdapter: new MockPmsAdapter(),
+      routerClient
+    });
+
+    expect(routerClient.route).toHaveBeenCalledTimes(1);
+    expect(result.action).toBe("HUMAN_HANDOFF");
+  });
+
+  it("never calls the router when product, date, and guests are already fully known", async () => {
+    const routerClient = fakeRouterClient("GENERAL_QUESTION");
+
+    await handleTravellerBookingMessage({
+      message: "Can you check Komodo Day Trip for 3 guests tomorrow?",
+      pmsAdapter: new MockPmsAdapter(),
+      routerClient
+    });
+
+    expect(routerClient.route).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the regex result when the router throws", async () => {
+    const routerClient: GenericBookingRouterLlmClient = {
+      route: vi.fn().mockRejectedValue(new Error("network timeout"))
+    };
+
+    const result = await handleTravellerBookingMessage({
+      message: "is this suitable for kids?",
+      pmsAdapter: new MockPmsAdapter(),
+      routerClient
+    });
+
+    expect(result.action).toBe("GENERAL_REPLY");
+  });
+
+  it("never trusts a hallucinated BOOKING_INQUIRY over an independent CHECK_AVAILABILITY regex match, keeping capture suppressed", async () => {
+    const routerClient = fakeRouterClient("BOOKING_INQUIRY");
+
+    // Guest count is deliberately left out so all 3 slots are NOT known - only then does
+    // shouldEscalateGenericBookingRouterToLlm actually call the router for a CHECK_AVAILABILITY
+    // regex match, letting this test exercise the hallucination guard through the real orchestrator
+    // rather than only the isolated resolveFinalGenericBookingIntent unit test below.
+    const result = await handleTravellerBookingMessage({
+      message: "any availability for Komodo Day Trip tomorrow?",
+      pmsAdapter: new MockPmsAdapter(),
+      routerClient
+    });
+
+    expect(routerClient.route).toHaveBeenCalledTimes(1);
+    expect(result.action).toBe("NEEDS_MORE_DETAILS");
+    expect(result.reply).not.toContain("name");
+    expect(result.reply).not.toContain("email");
+  });
+
+  it("regression: a router misreading a bare 'yes' as CHECK_AVAILABILITY does not stall an already-active booking capture", async () => {
+    // Reproduces a real production regression: with product/date/guests already known and an
+    // active capture in progress, a traveller replying with a bare "yes" (no "book"/"please"/etc.,
+    // so the regex cascade itself resolves to GENERAL_QUESTION) used to correctly advance to
+    // contact collection. Once the router could feed shouldHandleCapture, a router that guesses
+    // CHECK_AVAILABILITY for this ambiguous "yes" silently re-triggered the availability check
+    // instead - the traveller got stuck being told "availability confirmed, would you like to
+    // proceed?" forever. shouldHandleCapture must stay regex-only for this exact reason.
+    const routerClient = fakeRouterClient("CHECK_AVAILABILITY");
+
+    const result = await handleTravellerBookingMessage({
+      message: "yes",
+      bookingMemory: {
+        productExternalId: "mock-komodo-day-trip",
+        productTitle: "Komodo Day Trip",
+        dateText: "tomorrow",
+        guests: 3
+      },
+      pmsAdapter: new MockPmsAdapter(),
+      routerClient
+    });
+
+    expect(result.action).not.toBe("AVAILABILITY_CHECKED");
+    expect(result.action).toBe("BOOKING_DETAILS_REQUIRED");
+  });
+});
+
+describe("shouldEscalateGenericBookingRouterToLlm", () => {
+  it("always escalates the regex cascade's own catch-all", () => {
+    expect(
+      shouldEscalateGenericBookingRouterToLlm({
+        regexResult: {
+          intent: "GENERAL_QUESTION",
+          confidence: "HIGH",
+          slots: { productHint: null, dateText: null, guests: null },
+          missingSlots: []
+        }
+      })
+    ).toBe(true);
+  });
+
+  it("always escalates HUMAN_HANDOFF, since its regex still collides with bare guest-count phrasing", () => {
+    expect(
+      shouldEscalateGenericBookingRouterToLlm({
+        regexResult: {
+          intent: "HUMAN_HANDOFF",
+          confidence: "HIGH",
+          slots: { productHint: null, dateText: null, guests: null },
+          missingSlots: []
+        }
+      })
+    ).toBe(true);
+  });
+
+  it("skips the LLM for a cleanly slotted CHECK_AVAILABILITY match", () => {
+    expect(
+      shouldEscalateGenericBookingRouterToLlm({
+        regexResult: {
+          intent: "CHECK_AVAILABILITY",
+          confidence: "HIGH",
+          slots: { productHint: "Komodo Day Trip", dateText: "tomorrow", guests: 3 },
+          missingSlots: []
+        }
+      })
+    ).toBe(false);
+  });
+
+  it("escalates a partially slotted CHECK_AVAILABILITY match", () => {
+    expect(
+      shouldEscalateGenericBookingRouterToLlm({
+        regexResult: {
+          intent: "CHECK_AVAILABILITY",
+          confidence: "MEDIUM",
+          slots: { productHint: "Komodo Day Trip", dateText: null, guests: null },
+          missingSlots: ["date", "guests"]
+        }
+      })
+    ).toBe(true);
+  });
+
+  it("skips the LLM for a PRODUCT_RECOMMENDATION that already names a specific product", () => {
+    expect(
+      shouldEscalateGenericBookingRouterToLlm({
+        regexResult: {
+          intent: "PRODUCT_RECOMMENDATION",
+          confidence: "HIGH",
+          slots: { productHint: "Komodo Day Trip", dateText: null, guests: null },
+          missingSlots: []
+        }
+      })
+    ).toBe(false);
+  });
+
+  it("escalates a PRODUCT_RECOMMENDATION with no named product", () => {
+    expect(
+      shouldEscalateGenericBookingRouterToLlm({
+        regexResult: {
+          intent: "PRODUCT_RECOMMENDATION",
+          confidence: "HIGH",
+          slots: { productHint: null, dateText: null, guests: null },
+          missingSlots: []
+        }
+      })
+    ).toBe(true);
+  });
+});
+
+describe("resolveFinalGenericBookingIntent", () => {
+  it("returns the regex intent when there is no LLM decision", () => {
+    expect(
+      resolveFinalGenericBookingIntent({
+        llmIntent: null,
+        regexResult: {
+          intent: "CHECK_AVAILABILITY",
+          confidence: "HIGH",
+          slots: { productHint: null, dateText: null, guests: null },
+          missingSlots: []
+        }
+      })
+    ).toBe("CHECK_AVAILABILITY");
+  });
+
+  it("trusts the LLM's re-classification for non-BOOKING_INQUIRY intents", () => {
+    expect(
+      resolveFinalGenericBookingIntent({
+        llmIntent: "HUMAN_HANDOFF",
+        regexResult: {
+          intent: "GENERAL_QUESTION",
+          confidence: "HIGH",
+          slots: { productHint: null, dateText: null, guests: null },
+          missingSlots: []
+        }
+      })
+    ).toBe("HUMAN_HANDOFF");
+  });
+
+  it("rejects a hallucinated BOOKING_INQUIRY when the regex cascade disagrees", () => {
+    expect(
+      resolveFinalGenericBookingIntent({
+        llmIntent: "BOOKING_INQUIRY",
+        regexResult: {
+          intent: "CHECK_AVAILABILITY",
+          confidence: "HIGH",
+          slots: { productHint: "Komodo Day Trip", dateText: "tomorrow", guests: 3 },
+          missingSlots: []
+        }
+      })
+    ).toBe("CHECK_AVAILABILITY");
+  });
+
+  it("trusts BOOKING_INQUIRY when the regex cascade independently agrees", () => {
+    expect(
+      resolveFinalGenericBookingIntent({
+        llmIntent: "BOOKING_INQUIRY",
+        regexResult: {
+          intent: "BOOKING_INQUIRY",
+          confidence: "HIGH",
+          slots: { productHint: "Komodo Day Trip", dateText: null, guests: null },
+          missingSlots: ["date", "guests"]
+        }
+      })
+    ).toBe("BOOKING_INQUIRY");
+  });
 });
 
 

@@ -44,6 +44,27 @@ describe("booking capture", () => {
     expect(result.missingContactSlots).toEqual(["name", "email", "phone"]);
   });
 
+  it("starts capture from a bare 'yes' after availability is known", () => {
+    const result = evaluateBookingCapture({
+      message: "yes",
+      bookingMemory,
+      priorTravellerMessages: ["Gold Coast Whale Escape is available for 2 guests on 2026-06-23."]
+    });
+
+    expect(result.active).toBe(true);
+    expect(result.missingContactSlots).toEqual(["name", "email", "phone"]);
+  });
+
+  it("does not treat 'yes' embedded in a longer unrelated sentence as a booking confirmation", () => {
+    const result = evaluateBookingCapture({
+      message: "yes but what time does the boat leave",
+      bookingMemory: null,
+      priorTravellerMessages: []
+    });
+
+    expect(result.active).toBe(false);
+  });
+
   it("continues capture across messages and becomes ready when contact details are present", () => {
     const result = evaluateBookingCapture({
       message: "My name is Maya Chen, email maya@example.com, phone +61 400 111 222",

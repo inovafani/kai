@@ -1,10 +1,16 @@
 import { bookingMemoryToContext, type BookingMemoryState } from "./booking-memory";
-import { analyzeTravellerBookingMessage, composeBookingBrainReply } from "./booking-brain";
+import {
+  analyzeTravellerBookingMessage,
+  composeBookingBrainReply,
+  type BookingBrainIntent,
+  type BookingBrainResult
+} from "./booking-brain";
 import {
   composeBookingCaptureReply,
   evaluateBookingCapture,
   type BookingCaptureDetails
 } from "./booking-capture";
+import type { GenericBookingRouterLlmClient } from "@/core/llm/generic-booking-router";
 import {
   beginExternalBooking,
   captureBookingDetails,
@@ -70,6 +76,7 @@ export interface HandleTravellerBookingMessageInput {
   bookingWriteEnabled?: boolean;
   allowUnpaidExternalBooking?: boolean;
   llmClient?: AssistantLlmClient | null;
+  routerClient?: GenericBookingRouterLlmClient | null;
   tenantContext?: AssistantTenantContext | null;
 }
 
@@ -110,6 +117,74 @@ async function composeReplyResult(input: {
     reply: composed.reply,
     replySource: composed.source
   };
+}
+
+async function resolveGenericBookingRouterDecision(input: {
+  routerClient: GenericBookingRouterLlmClient | null;
+  tenantName: string;
+  pmsProvider: string;
+  latestMessage: string;
+  priorTravellerMessages: string[];
+  productTitles: string[];
+  knownProductHint: string | null;
+  knownDateText: string | null;
+  knownGuests: number | null;
+  missingSlots: string[];
+}): Promise<BookingBrainIntent | null> {
+  if (!input.routerClient) return null;
+
+  try {
+    const decision = await input.routerClient.route({
+      tenantName: input.tenantName,
+      pmsProvider: input.pmsProvider,
+      latestMessage: input.latestMessage,
+      priorTravellerMessages: input.priorTravellerMessages,
+      productTitles: input.productTitles,
+      knownProductHint: input.knownProductHint,
+      knownDateText: input.knownDateText,
+      knownGuests: input.knownGuests,
+      missingSlots: input.missingSlots
+    });
+    return decision.intent;
+  } catch (error) {
+    console.error("generic_booking_router.llm_call_failed", {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return null;
+  }
+}
+
+// Trivially-matched intents skip the LLM call entirely: a cleanly slotted availability/booking
+// check or a specifically-named product is trusted outright (mirrors BluePass's high-confidence
+// fallback actions). GENERAL_QUESTION (the cascade's own catch-all) and HUMAN_HANDOFF (whose regex
+// still collides with bare guest-count phrasing, e.g. "2 person") always escalate.
+export function shouldEscalateGenericBookingRouterToLlm(input: { regexResult: BookingBrainResult }): boolean {
+  const { intent, slots } = input.regexResult;
+
+  if (intent === "GENERAL_QUESTION" || intent === "HUMAN_HANDOFF") return true;
+  if (intent === "PRODUCT_RECOMMENDATION") return !slots.productHint;
+
+  return !(slots.productHint && slots.dateText && slots.guests);
+}
+
+// The only LLM verdict with a real side effect beyond reply text: BOOKING_INQUIRY is the one
+// intent that skips the CHECK_AVAILABILITY capture-suppression guard below and, with
+// bookingWriteEnabled on, can reach an unattended PMS booking write. Never trust it from the LLM
+// alone - only when the deterministic cascade independently agrees. Every other intent (including
+// a hallucinated CHECK_AVAILABILITY, which only ever makes capture more conservative) is safe to
+// trust, since availability/price stay deterministic and requiredFacts still guards the polish step.
+export function resolveFinalGenericBookingIntent(input: {
+  llmIntent: BookingBrainIntent | null;
+  regexResult: BookingBrainResult;
+}): BookingBrainIntent {
+  const { llmIntent, regexResult } = input;
+  if (!llmIntent) return regexResult.intent;
+
+  if (llmIntent === "BOOKING_INQUIRY" && regexResult.intent !== "BOOKING_INQUIRY") {
+    return regexResult.intent;
+  }
+
+  return llmIntent;
 }
 
 function formatProductOptions(products: Pick<PmsProduct, "title">[]) {
@@ -948,6 +1023,28 @@ export async function handleTravellerBookingMessage(
     effectiveSlots.dateText ? null : "date",
     effectiveSlots.guests ? null : "guests"
   ].filter((slot): slot is "product" | "date" | "guests" => Boolean(slot));
+
+  const shouldCallGenericBookingRouter = shouldEscalateGenericBookingRouterToLlm({ regexResult: analysis });
+  console.log(shouldCallGenericBookingRouter ? "generic_booking_router.call_made" : "generic_booking_router.call_skipped", {
+    regexIntent: analysis.intent,
+    hasRouterClient: Boolean(input.routerClient)
+  });
+  const routerIntent = shouldCallGenericBookingRouter
+    ? await resolveGenericBookingRouterDecision({
+        routerClient: input.routerClient ?? null,
+        tenantName: input.tenantContext?.tenantName ?? "this tenant",
+        pmsProvider: input.tenantContext?.pmsProvider ?? "the configured PMS",
+        latestMessage: input.message,
+        priorTravellerMessages: input.priorTravellerMessages ?? [],
+        productTitles: input.tenantContext?.productTitles ?? [],
+        knownProductHint: effectiveSlots.productHint,
+        knownDateText: effectiveSlots.dateText,
+        knownGuests: effectiveSlots.guests,
+        missingSlots
+      })
+    : null;
+  const resolvedIntent = resolveFinalGenericBookingIntent({ llmIntent: routerIntent, regexResult: analysis });
+
   const capture = evaluateBookingCapture({
     message: input.message,
     priorTravellerMessages: input.priorTravellerMessages ?? [],
@@ -959,10 +1056,25 @@ export async function handleTravellerBookingMessage(
       guests: effectiveSlots.guests
     }
   });
+  // The context-widened `analysis` is only trustworthy for this check while a booking slot is
+  // still genuinely missing - that's the "for 2 guests" reply completing an earlier explicit
+  // "can you check availability" request, and the context-widened re-analysis correctly surfaces
+  // CHECK_AVAILABILITY from that real prior message. Once product/date/guests were ALREADY fully
+  // known before this turn, bookingMemoryToContext always embeds all three verbatim regardless of
+  // what the traveller just said, so classifyIntent's productHint&&dateText&&guests rule fires on
+  // every subsequent generic reply (a bare "yes", "ok", etc.) even with no real availability
+  // question anywhere - silently stalling an already-active capture. resolvedIntent (the router's
+  // opinion) is deliberately excluded from this whole check too: an active capture is a committed
+  // state-machine transition, not just reply-text selection, so neither a context-widening artifact
+  // nor a router guess should be able to re-suppress it.
+  const wasAlreadyFullySlotted = Boolean(
+    input.bookingMemory?.productTitle && input.bookingMemory?.dateText && input.bookingMemory?.guests
+  );
   const shouldHandleCapture =
     capture.active &&
     (capture.ready ||
-      (currentMessageAnalysis.intent !== "CHECK_AVAILABILITY" && analysis.intent !== "CHECK_AVAILABILITY"));
+      (currentMessageAnalysis.intent !== "CHECK_AVAILABILITY" &&
+        (wasAlreadyFullySlotted || analysis.intent !== "CHECK_AVAILABILITY")));
   const timeOptions = input.bookingMemory?.timeOptions ?? [];
   const rememberedTime = selectedTimeOption(input.bookingMemory?.dateText, timeOptions);
   const ticketOptions = input.bookingMemory?.ticketOptions ?? [];
@@ -1447,10 +1559,10 @@ export async function handleTravellerBookingMessage(
     };
   }
 
-  if (analysis.intent === "HUMAN_HANDOFF") {
+  if (resolvedIntent === "HUMAN_HANDOFF") {
     return composeReplyResult({
       action: "HUMAN_HANDOFF",
-      deterministicReply: composeBookingBrainReply(analysis),
+      deterministicReply: composeBookingBrainReply({ ...analysis, intent: resolvedIntent }),
       llmClient: input.llmClient,
       tenantContext: input.tenantContext,
       latestUserMessage: input.message,
@@ -1458,7 +1570,7 @@ export async function handleTravellerBookingMessage(
     });
   }
 
-  if (analysis.intent === "PRODUCT_RECOMMENDATION") {
+  if (resolvedIntent === "PRODUCT_RECOMMENDATION") {
     const products = await listProducts();
 
     if (analysis.slots.productHint) {
@@ -1480,10 +1592,10 @@ export async function handleTravellerBookingMessage(
     };
   }
 
-  if (analysis.intent === "GENERAL_QUESTION") {
+  if (resolvedIntent === "GENERAL_QUESTION") {
     return composeReplyResult({
       action: "GENERAL_REPLY",
-      deterministicReply: composeBookingBrainReply(analysis),
+      deterministicReply: composeBookingBrainReply({ ...analysis, intent: resolvedIntent }),
       llmClient: input.llmClient,
       tenantContext: input.tenantContext,
       latestUserMessage: input.message,

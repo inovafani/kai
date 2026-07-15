@@ -15,6 +15,7 @@ import {
   upsertConversationBookingState
 } from "@/server/conversation/conversation-repository";
 import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
+import { createGenericBookingRouterClient } from "@/server/llm/generic-booking-router-client";
 import { buildBookingFailureManualInquiry } from "@/server/conversation/manual-inquiry-fallback";
 import { handleBluePassMarketplaceMessage } from "@/server/bluepass/bluepass-message-flow";
 import { composeBluePassMarketplaceAssistantReply } from "@/server/bluepass/bluepass-marketplace-reply-composer";
@@ -247,6 +248,7 @@ export async function POST(request: NextRequest) {
 
   const provider = (resolved.tenant.config?.pmsProvider ?? "MOCK") as PmsProvider;
   const llmClient = createAssistantLlmClient(process.env);
+  const routerClient = createGenericBookingRouterClient(process.env);
   let assistantContent: string;
   let manualInquiry: Awaited<ReturnType<typeof createManualInquiry>> | null = null;
   let paymentRequest:
@@ -294,6 +296,7 @@ export async function POST(request: NextRequest) {
       bookingWriteEnabled: resolved.tenant.config?.bookingWriteEnabled ?? false,
       allowUnpaidExternalBooking: false,
       llmClient,
+      routerClient,
       tenantContext: {
         tenantName: resolved.tenant.name,
         brandVoice: resolved.tenant.branding?.brandVoice ?? null,

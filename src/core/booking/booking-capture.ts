@@ -27,8 +27,16 @@ export interface EvaluateBookingCaptureInput {
   bookingMemory: BookingMemoryState | null;
 }
 
+// A bare affirmative ("yes", "yep", "sure") only means booking-confirmation when it is the WHOLE
+// message - matches the same anchored pattern BluePass uses for the identical "traveller confirms
+// with a short affirmative" case (isBluePassInquirySubmissionRequest), so an unrelated "yes" used
+// mid-sentence elsewhere can't accidentally activate capture.
+const affirmativeOnlyPattern = /^(?:yes|yep|yeah|yup|ok|okay|sure|sounds good|looks good)[.! ]*$/;
+
 function hasBookingCaptureIntent(message: string) {
-  const lowerMessage = message.toLowerCase();
+  const lowerMessage = message.toLowerCase().trim();
+
+  if (affirmativeOnlyPattern.test(lowerMessage)) return true;
 
   return /\b(book it|book this|reserve it|reserve this|make the booking|confirm this|go ahead|proceed|i want (it|this|that)|want this|want that|take it|let'?s do it)\b/.test(
     lowerMessage
