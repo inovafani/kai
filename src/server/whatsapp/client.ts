@@ -28,6 +28,13 @@ export type WhatsAppTypingIndicatorMessage = {
   messageId: string;
 };
 
+export type WhatsAppInteractiveButtonsMessage = {
+  to: string;
+  role?: WhatsAppSenderRole;
+  body: string;
+  buttons: string[];
+};
+
 type WhatsAppTemplateApiPayload = {
   messaging_product: "whatsapp";
   to: string;
@@ -65,6 +72,19 @@ type WhatsAppTypingIndicatorApiPayload = {
   message_id: string;
   typing_indicator: {
     type: "text";
+  };
+};
+
+type WhatsAppInteractiveButtonsApiPayload = {
+  messaging_product: "whatsapp";
+  to: string;
+  type: "interactive";
+  interactive: {
+    type: "button";
+    body: { text: string };
+    action: {
+      buttons: Array<{ type: "reply"; reply: { id: string; title: string } }>;
+    };
   };
 };
 
@@ -151,6 +171,43 @@ export async function sendWhatsAppImage(message: WhatsAppImageMessage): Promise<
   });
 }
 
+const maxWhatsAppInteractiveButtonTitleLength = 20;
+const maxWhatsAppInteractiveButtons = 3;
+
+export async function sendWhatsAppInteractiveButtons(
+  message: WhatsAppInteractiveButtonsMessage
+): Promise<WhatsAppSendResult> {
+  const usableButtonTitles = message.buttons
+    .map((title) => title.trim())
+    .filter((title) => title.length > 0)
+    .slice(0, maxWhatsAppInteractiveButtons)
+    .map((title) =>
+      title.length > maxWhatsAppInteractiveButtonTitleLength
+        ? title.slice(0, maxWhatsAppInteractiveButtonTitleLength)
+        : title
+    );
+
+  if (usableButtonTitles.length === 0) {
+    return sendWhatsAppText({ to: message.to, role: message.role, body: message.body });
+  }
+
+  return postWhatsAppMessage(message.role ?? "kai", {
+    messaging_product: "whatsapp",
+    to: normalizeRecipientPhone(message.to),
+    type: "interactive",
+    interactive: {
+      type: "button",
+      body: { text: message.body },
+      action: {
+        buttons: usableButtonTitles.map((title) => ({
+          type: "reply" as const,
+          reply: { id: title, title }
+        }))
+      }
+    }
+  });
+}
+
 export async function sendWhatsAppTypingIndicator(message: WhatsAppTypingIndicatorMessage): Promise<void> {
   const messageId = message.messageId.trim();
   if (!messageId) return;
@@ -223,7 +280,12 @@ function maskPhoneNumber(value: string) {
 
 async function postWhatsAppMessage(
   role: WhatsAppSenderRole,
-  payload: WhatsAppTemplateApiPayload | WhatsAppTextApiPayload | WhatsAppImageApiPayload | WhatsAppTypingIndicatorApiPayload
+  payload:
+    | WhatsAppTemplateApiPayload
+    | WhatsAppTextApiPayload
+    | WhatsAppImageApiPayload
+    | WhatsAppTypingIndicatorApiPayload
+    | WhatsAppInteractiveButtonsApiPayload
 ): Promise<WhatsAppSendResult> {
   const phoneId = resolveWhatsAppPhoneId(role);
   const graphVersion = resolveMetaGraphVersion();

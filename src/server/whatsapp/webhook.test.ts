@@ -417,6 +417,37 @@ describe("extractBluePassOperatorResponsesFromWhatsAppWebhook", () => {
     ]);
   });
 
+  it("does not treat a traveller's 'Send inquiry' button tap as an operator reply", () => {
+    const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: "6285156246329",
+                    id: "wamid.traveller.send_inquiry_tap",
+                    type: "interactive",
+                    interactive: {
+                      type: "button_reply",
+                      button_reply: {
+                        id: "Send inquiry",
+                        title: "Send inquiry"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(responses).toEqual([]);
+  });
+
   it("extracts text-only button replies so the route can resolve latest operator context", () => {
     const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
       entry: [
@@ -454,6 +485,43 @@ describe("extractBluePassOperatorResponsesFromWhatsAppWebhook", () => {
 });
 
 describe("extractWhatsAppInboundTextMessagesFromWebhook", () => {
+  it("extracts a traveller's tapped interactive button reply as conversational context", () => {
+    const messages = extractWhatsAppInboundTextMessagesFromWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: "6285156246329",
+                    id: "wamid.traveller.button_tap",
+                    type: "interactive",
+                    interactive: {
+                      type: "button_reply",
+                      button_reply: {
+                        id: "Send inquiry",
+                        title: "Send inquiry"
+                      }
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(messages).toEqual([
+      {
+        from: "6285156246329",
+        providerMessageId: "wamid.traveller.button_tap",
+        body: "Send inquiry"
+      }
+    ]);
+  });
+
   it("extracts ordinary inbound WhatsApp text messages for conversational context", () => {
     const messages = extractWhatsAppInboundTextMessagesFromWebhook({
       entry: [

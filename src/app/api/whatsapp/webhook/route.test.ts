@@ -45,8 +45,8 @@ function getWhatsAppTextBodies(fetchMock: { mock: { calls: Parameters<typeof fet
   return fetchMock.mock.calls
     .filter((call) => String(call[0]).includes("graph.facebook.com"))
     .map((call) => JSON.parse(String((call[1] as RequestInit).body)))
-    .filter((body) => body.type === "text" && body.text?.body)
-    .map((body) => String(body.text.body));
+    .filter((body) => body.type === "text" || body.type === "interactive")
+    .map((body) => String(body.text?.body ?? body.interactive?.body?.text ?? ""));
 }
 
 function getLastWhatsAppTextBody(fetchMock: { mock: { calls: Parameters<typeof fetch>[] } }) {
@@ -58,7 +58,7 @@ function getLastWhatsAppTextRequestBody(fetchMock: { mock: { calls: Parameters<t
   const textCalls = fetchMock.mock.calls
     .filter((call) => String(call[0]).includes("graph.facebook.com"))
     .map((call) => JSON.parse(String((call[1] as RequestInit).body)))
-    .filter((body) => body.type === "text");
+    .filter((body) => body.type === "text" || body.type === "interactive");
 
   return textCalls.at(-1) ?? {};
 }
@@ -1034,6 +1034,155 @@ describe("/api/whatsapp/webhook", () => {
     expect(oldConversationMessages).toHaveLength(0);
   }, 20_000);
 
+  it("sends a 'Send inquiry' suggested reply button and creates the inquiry when the traveller taps it", async () => {
+    process.env.META_GRAPH_VERSION = "v20.0";
+    process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token";
+    process.env.WHATSAPP_PHONE_ID_KAI = "1115079071692326";
+
+    const tenantSlug = `bluepass-whatsapp-suggested-reply-${randomUUID()}`;
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = tenantSlug;
+    const inboundPhone = "6285156246329";
+
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({
+        messages: [{ id: "wamid.suggested.reply" }]
+      })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: tenantSlug,
+        name: "BluePass WhatsApp Suggested Reply Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE",
+        config: {
+          create: {
+            supportedChannels: ["WEB_WIDGET", "WHATSAPP"],
+            enabledFeatures: ["widget_config", "bluepass_marketplace", "operator_whatsapp_dispatch"],
+            requiredSlots: {},
+            bookingMode: "MANUAL_INQUIRY",
+            bookingWriteEnabled: false,
+            pmsProvider: "MOCK",
+            escalationRules: [],
+            responseGuardrails: [
+              "Do not confirm availability, final price, payment, or booking before operator confirmation."
+            ]
+          }
+        }
+      }
+    });
+
+    await POST(
+      new Request("http://localhost/api/whatsapp/webhook", {
+        method: "POST",
+        body: JSON.stringify({
+          entry: [
+            {
+              changes: [
+                {
+                  value: {
+                    messages: [
+                      {
+                        from: inboundPhone,
+                        id: "wamid.traveller.mention",
+                        type: "text",
+                        text: { body: "can you help me to book alila purnama?" }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      })
+    );
+
+    const confirmResponse = await POST(
+      new Request("http://localhost/api/whatsapp/webhook", {
+        method: "POST",
+        body: JSON.stringify({
+          entry: [
+            {
+              changes: [
+                {
+                  value: {
+                    messages: [
+                      {
+                        from: inboundPhone,
+                        id: "wamid.traveller.details",
+                        type: "text",
+                        text: {
+                          body: "for 29th june 2026, 4 people\n\nmy name is Eka, email is eka@gmail.com, and phone is 0876634231987"
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      })
+    );
+    const confirmRequestBody = JSON.parse(String((fetchMock.mock.calls.at(-1)?.[1] as RequestInit).body));
+
+    expect(confirmResponse.status).toBe(200);
+    expect(confirmRequestBody.type).toBe("interactive");
+    expect(confirmRequestBody.interactive.action.buttons).toEqual([
+      { type: "reply", reply: { id: "Send inquiry", title: "Send inquiry" } }
+    ]);
+
+    const submitResponse = await POST(
+      new Request("http://localhost/api/whatsapp/webhook", {
+        method: "POST",
+        body: JSON.stringify({
+          entry: [
+            {
+              changes: [
+                {
+                  value: {
+                    messages: [
+                      {
+                        from: inboundPhone,
+                        id: "wamid.traveller.button_tap",
+                        type: "interactive",
+                        interactive: {
+                          type: "button_reply",
+                          button_reply: { id: "Send inquiry", title: "Send inquiry" }
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      })
+    );
+    const submitRequestBody = JSON.parse(String((fetchMock.mock.calls.at(-1)?.[1] as RequestInit).body));
+
+    const marketplaceConversation = await prisma.conversation.findFirstOrThrow({
+      where: {
+        tenantId: tenant.id,
+        channel: "WHATSAPP",
+        travellerId: inboundPhone
+      }
+    });
+    const inquiry = await prisma.bluePassInquiry.findFirst({
+      where: { tenantId: tenant.id, conversationId: marketplaceConversation.id },
+      orderBy: { createdAt: "desc" }
+    });
+
+    expect(submitResponse.status).toBe(200);
+    expect(submitRequestBody.type).toBe("text");
+    expect(submitRequestBody.text.body).toContain("I prepared BluePass inquiry");
+    expect(inquiry).toMatchObject({ status: "OPERATOR_PENDING", selectedYachtSlug: "alila-purnama" });
+  }, 30_000);
+
   it("routes traveller recommendation requests to marketplace instead of latest inquiry status", async () => {
     process.env.META_GRAPH_VERSION = "v20.0";
     process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token";
@@ -1130,6 +1279,7 @@ describe("/api/whatsapp/webhook", () => {
     );
     const body = await response.json();
     const requestBody = getLastWhatsAppTextRequestBody(fetchMock);
+    const requestBodyText = requestBody.text?.body ?? requestBody.interactive?.body?.text ?? "";
     const messages = await prisma.message.findMany({
       where: { conversationId: whatsappConversation.id },
       orderBy: { createdAt: "asc" }
@@ -1141,14 +1291,14 @@ describe("/api/whatsapp/webhook", () => {
       contextHandled: 1,
       contextFailed: 0
     });
-    expect(requestBody.text.body).toContain("Komodo");
-    expect(requestBody.text.body).toContain("Calico Jack");
-    expect(requestBody.text.body).toContain("Alila Purnama");
-    expect(requestBody.text.body).not.toContain("Current status");
-    expect(requestBody.text.body).not.toContain("Operator Pending");
-    expect(requestBody.text.body).not.toContain("Please share your name");
-    expect(requestBody.text.body).not.toContain("email");
-    expect(requestBody.text.body).not.toContain("phone");
+    expect(requestBodyText).toContain("Komodo");
+    expect(requestBodyText).toContain("Calico Jack");
+    expect(requestBodyText).toContain("Alila Purnama");
+    expect(requestBodyText).not.toContain("Current status");
+    expect(requestBodyText).not.toContain("Operator Pending");
+    expect(requestBodyText).not.toContain("Please share your name");
+    expect(requestBodyText).not.toContain("email");
+    expect(requestBodyText).not.toContain("phone");
     expect(messages.map((message) => message.role)).toEqual(["TRAVELLER", "ASSISTANT"]);
   }, 20_000);
 
@@ -1247,11 +1397,12 @@ describe("/api/whatsapp/webhook", () => {
       })
     );
     const requestBody = JSON.parse(String((fetchMock.mock.calls.at(-1)?.[1] as RequestInit).body));
+    const requestBodyText = requestBody.text?.body ?? requestBody.interactive?.body?.text ?? "";
 
     expect(response.status).toBe(200);
-    expect(requestBody.text.body).toContain("BluePass helps travellers");
-    expect(requestBody.text.body).not.toContain("Current status");
-    expect(requestBody.text.body).not.toContain("Operator Pending");
+    expect(requestBodyText).toContain("BluePass helps travellers");
+    expect(requestBodyText).not.toContain("Current status");
+    expect(requestBodyText).not.toContain("Operator Pending");
   }, 20_000);
 
   it("uses the LLM rewrite layer for traveller WhatsApp marketplace questions", async () => {

@@ -573,8 +573,8 @@ function getLastWhatsAppTextBody(fetchMock: { mock: { calls: Parameters<typeof f
   const textCalls = fetchMock.mock.calls
     .filter((call) => String(call[0]).includes("graph.facebook.com"))
     .map((call) => JSON.parse(String((call[1] as RequestInit).body)))
-    .filter((payload) => payload.type === "text");
+    .filter((payload) => payload.type === "text" || payload.type === "interactive");
 
   const lastTextCall = textCalls.at(-1);
-  return String(lastTextCall?.text?.body ?? "");
+  return String(lastTextCall?.text?.body ?? lastTextCall?.interactive?.body?.text ?? "");
 }

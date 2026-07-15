@@ -220,7 +220,13 @@ function parseBluePassOperatorResponse(message: WhatsAppWebhookMessage): BluePas
 
 function normalizeInboundTextMessage(message: WhatsAppWebhookMessage): WhatsAppInboundTextMessage | null {
   const from = message.from?.trim();
-  const body = message.text?.body?.trim();
+  const body = (
+    message.interactive?.button_reply?.id ??
+    message.interactive?.button_reply?.title ??
+    message.button?.payload ??
+    message.button?.text ??
+    message.text?.body
+  )?.trim();
   if (!from || !body) return null;
 
   return {

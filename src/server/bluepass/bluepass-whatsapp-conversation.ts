@@ -13,7 +13,7 @@ import {
 import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
 import { createBluePassRouterClient } from "@/server/llm/bluepass-router-client";
 import type { WhatsAppInboundTextMessage } from "@/server/whatsapp/webhook";
-import { sendWhatsAppImage, sendWhatsAppText } from "@/server/whatsapp/client";
+import { sendWhatsAppImage, sendWhatsAppInteractiveButtons, sendWhatsAppText } from "@/server/whatsapp/client";
 import { handleBluePassMarketplaceMessage } from "./bluepass-message-flow";
 import {
   findLatestBluePassParticipantContext,
@@ -221,11 +221,19 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
     content: assistantContent
   });
 
-  const sendResult = await sendWhatsAppText({
-    to: input.from,
-    role: "kai",
-    body: assistantContent
-  });
+  const suggestedReplies = result?.suggestedReplies?.length ? result.suggestedReplies : null;
+  const sendResult = suggestedReplies
+    ? await sendWhatsAppInteractiveButtons({
+        to: input.from,
+        role: "kai",
+        body: assistantContent,
+        buttons: suggestedReplies
+      })
+    : await sendWhatsAppText({
+        to: input.from,
+        role: "kai",
+        body: assistantContent
+      });
 
   const featuredYacht = result?.bluepassMatches?.[0];
   console.log("bluepass_whatsapp.image_send_decision", {

@@ -65,6 +65,7 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).toContain("Komodo");
     expect(result.assistantContent).not.toContain("Please share your name");
     expect(result.assistantContent).not.toContain("prepare the inquiry");
+    expect(result.suggestedReplies).toEqual(["Komodo", "Raja Ampat"]);
   });
 
   it("keeps a registered operator in operator mode even when they ask about commission", async () => {
@@ -209,6 +210,7 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).toContain("5%");
     expect(result.assistantContent).toContain("conservation");
     expect(result.assistantContent).not.toContain("I prepared BluePass inquiry");
+    expect(result.suggestedReplies).toEqual(["Show me yachts"]);
   });
 
   it("gives destination season guidance as a concierge response", async () => {
@@ -225,6 +227,7 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).toContain("April");
     expect(result.assistantContent).toContain("November");
     expect(result.assistantContent).not.toContain("Please share your name");
+    expect(result.suggestedReplies).toBeNull();
   });
 
   it("answers Komodo browsing requests with recommendations instead of asking for contact details", async () => {
@@ -243,6 +246,11 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).not.toContain("name");
     expect(result.assistantContent).not.toContain("email");
     expect(result.assistantContent).not.toContain("phone");
+    expect(result.suggestedReplies).toEqual([
+      `Book ${result.bluepassMatches[0].name}`,
+      `Book ${result.bluepassMatches[1].name}`,
+      "Something else"
+    ]);
   });
 
   it("keeps recommendation follow-ups in concierge mode instead of contact collection", async () => {
@@ -275,6 +283,7 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).not.toContain("Please share your name");
     expect(result.assistantContent).not.toContain("email");
     expect(result.assistantContent).not.toContain("phone");
+    expect(result.suggestedReplies).toEqual(["Show me yachts"]);
   });
 
   it("treats new chat as a fresh traveller conversation instead of reusing old booking details", async () => {
@@ -333,6 +342,7 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).toContain("Anytime");
     expect(result.assistantContent).not.toContain("I can prepare a BluePass operator inquiry");
     expect(result.assistantContent).not.toContain("Please share your");
+    expect(result.suggestedReplies).toBeNull();
   });
 
   it("recommends alternatives instead of repeating the selected yacht when the traveller asks for anything else", async () => {
@@ -362,6 +372,29 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).toContain("besides Calico Jack");
     expect(result.assistantContent).toContain("Alila Purnama");
     expect(result.assistantContent).not.toContain("Calico Jack is a");
+  });
+
+  it("tapping 'Something else' still avoids the previously shown cards when no yacht was ever named, via the known-destination top-3 fallback exclusion", async () => {
+    const first = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "liveaboards in komodo",
+      priorTravellerMessages: []
+    });
+    const second = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "Something else",
+      priorTravellerMessages: ["liveaboards in komodo"]
+    });
+
+    // resolveRecommendationExcludedYachts only reads traveller-typed yacht names, so on its own it
+    // would exclude nothing here (no yacht was ever typed). But the RECOMMENDATION case has its own
+    // fallback for exactly this case: an "other options" request with an empty exclusion set and a
+    // known destination falls back to excluding that destination's top-3 default matches, so the
+    // cards shown a turn ago do not resurface.
+    const firstSlugs = new Set(first.bluepassMatches.map((match) => match.slug));
+    expect(second.bluepassMatches.some((match) => firstSlugs.has(match.slug))).toBe(false);
   });
 
   it("does not repeat the first Komodo shortlist when the traveller asks beyond those options", async () => {
@@ -425,6 +458,21 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).toContain("Komodo");
     expect(result.assistantContent).toContain("Raja Ampat");
     expect(result.assistantContent).not.toContain("I prepared BluePass inquiry");
+    expect(result.suggestedReplies).toEqual(["Book Alila Purnama", "Book Amandira"]);
+  });
+
+  it("caps suggested replies at 3 buttons when comparing three yachts", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "Can you compare Alila Purnama, Amandira, and Calico Jack?",
+      priorTravellerMessages: []
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    // Exact-name mentions all score equally, so resolveMentionedYachts breaks the tie by name
+    // length descending (Alila Purnama 13 > Calico Jack 11 > Amandira 8) - not sentence order.
+    expect(result.suggestedReplies).toEqual(["Book Alila Purnama", "Book Calico Jack", "Book Amandira"]);
   });
 
   it("compares Komodo and Raja Ampat instead of reusing a stale yacht from history", async () => {
@@ -444,6 +492,7 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).toMatch(/different|depends|rule of thumb|better/i);
     expect(result.assistantContent).not.toContain("Anne Bonny is");
     expect(result.assistantContent).not.toContain("Please share your name");
+    expect(result.suggestedReplies).toEqual(["Komodo", "Raja Ampat"]);
   });
 
   it("answers broad Indonesia destination questions instead of reusing a stale yacht", async () => {
@@ -500,6 +549,7 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).toContain("BluePass");
     expect(result.assistantContent).not.toContain("please share your");
     expect(result.assistantContent).not.toContain("date window");
+    expect(result.suggestedReplies).toEqual(["Show me yachts"]);
   });
 
   it("gives an honest answer for out-of-coverage destination questions instead of a bare boat list", async () => {
@@ -697,6 +747,7 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).toContain("Komodo");
     expect(result.assistantContent).not.toContain("I prepared BluePass inquiry");
     expect(result.assistantContent).not.toContain("queued the operator WhatsApp");
+    expect(result.suggestedReplies).toEqual(["Book Alila Purnama", "Something else"]);
   }, 20_000);
 
   it("treats a follow-up amenity question about 'the boat' as yacht info instead of a missing-fields prompt", async () => {
@@ -837,6 +888,7 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).toContain("Eka");
     expect(result.assistantContent).toContain("Before I send this to the operator");
     expect(result.assistantContent).not.toContain("I prepared BluePass inquiry");
+    expect(result.suggestedReplies).toEqual(["Send inquiry"]);
   }, 20_000);
 
   it("accepts WhatsApp number phrasing when completing selected yacht details", async () => {
@@ -951,6 +1003,25 @@ describe("handleBluePassMarketplaceMessage", () => {
     });
     expect(result.bluepassMatches).toEqual([]);
     expect(result.assistantContent).toContain("Alila Purnama");
+    expect(result.assistantContent).toContain("I prepared BluePass inquiry");
+  }, 20_000);
+
+  it("creates the inquiry directly when the traveller taps the 'Send inquiry' suggested reply button", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "Send inquiry",
+      priorTravellerMessages: [
+        "can you help me to book alila purnama?",
+        "for 29th june 2026, 4 people my name is Eka, email is eka@gmail.com, and phone is 0876634231987"
+      ]
+    });
+
+    expect(result.bluepassInquiry).toMatchObject({
+      status: "OPERATOR_PENDING",
+      destination: "Komodo",
+      selectedYachtSlug: "alila-purnama"
+    });
     expect(result.assistantContent).toContain("I prepared BluePass inquiry");
   }, 20_000);
 

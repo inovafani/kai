@@ -120,7 +120,7 @@ describe("createGroqAssistantClient", () => {
     };
     const userPrompt = body.messages[1].content;
     expect(userPrompt).toContain("Answer the traveller naturally and helpfully");
-    expect(userPrompt).toContain("knowledgeable, well-travelled Indonesia travel concierge");
+    expect(userPrompt).toContain("knowledgeable, helpful concierge for this tenant");
     expect(userPrompt).not.toContain("Preserve every required fact exactly as written.");
   });
 

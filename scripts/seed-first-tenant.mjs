@@ -104,7 +104,8 @@ const tenants = [
       escalationRules: ["private_charter", "large_group", "wedding_or_corporate_event", "human_requested"],
       responseGuardrails: [
         ...responseGuardrails,
-        "For Boattime private charters, collect details and route to operator confirmation."
+        "For Boattime private charters, collect details and route to operator confirmation.",
+        "Answer general travel and trip questions naturally using your own knowledge, even outside the PMS catalog, as long as you stay honest about what is actually live-bookable."
       ]
     }
   },

@@ -117,7 +117,7 @@ describe("createOpenAiAssistantClient", () => {
     const [, requestInit] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     const body = JSON.parse(requestInit.body as string) as { input: string };
     expect(body.input).toContain("Answer the traveller naturally and helpfully");
-    expect(body.input).toContain("knowledgeable, well-travelled Indonesia travel concierge");
+    expect(body.input).toContain("knowledgeable, helpful concierge for this tenant");
     expect(body.input).not.toContain("Preserve every required fact exactly as written.");
   });
 
