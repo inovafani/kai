@@ -16,6 +16,7 @@ import {
 } from "@/server/conversation/conversation-repository";
 import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
 import { createGenericBookingRouterClient } from "@/server/llm/generic-booking-router-client";
+import { createBluePassRouterClient } from "@/server/llm/bluepass-router-client";
 import { buildBookingFailureManualInquiry } from "@/server/conversation/manual-inquiry-fallback";
 import { handleBluePassMarketplaceMessage } from "@/server/bluepass/bluepass-message-flow";
 import { composeBluePassMarketplaceAssistantReply } from "@/server/bluepass/bluepass-marketplace-reply-composer";
@@ -23,6 +24,7 @@ import { shouldPolishBluePassMarketplaceReply } from "@/server/bluepass/bluepass
 import type { BluePassCatalogSnapshotItem } from "@/core/bluepass/catalog";
 import { resolveTenantBusinessPack } from "@/server/business-pack/resolve-tenant-business-pack";
 import { getPmsAdapter } from "@/server/pms/pms-adapter-registry";
+import { resolveTenantPmsEnv } from "@/server/pms/tenant-pms-credentials";
 import { getWidgetRequestOrigin } from "@/server/widget/request-origin";
 import { resolveWidgetRequest } from "@/server/widget/resolve-widget-request";
 import { shouldUseGenericBookingFlow } from "./business-pack-gate";
@@ -124,7 +126,8 @@ export async function POST(request: NextRequest) {
       content,
       priorTravellerMessages,
       referral: body.referral ?? null,
-      catalog: body.bluepassCatalog
+      catalog: body.bluepassCatalog,
+      routerClient: createBluePassRouterClient(process.env)
     });
     const priorConversationMessages = await listRecentConversationMessages({
       tenantId: resolved.tenant.id,
@@ -270,7 +273,8 @@ export async function POST(request: NextRequest) {
     | null = null;
 
   try {
-    const sourcePmsAdapter = getPmsAdapter(provider, process.env, fetch, resolved.tenant.slug);
+    const tenantPmsEnv = await resolveTenantPmsEnv(resolved.tenant.id, provider, process.env);
+    const sourcePmsAdapter = getPmsAdapter(provider, tenantPmsEnv, fetch, resolved.tenant.slug);
     const publicProductCatalog = parsePublicProductCatalog(resolved.tenant.config?.publicProductCatalog);
     const pmsAdapter =
       publicProductCatalog.length > 0 ? new MappedPmsAdapter(sourcePmsAdapter, publicProductCatalog) : sourcePmsAdapter;

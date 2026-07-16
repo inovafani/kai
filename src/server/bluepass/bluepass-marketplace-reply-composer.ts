@@ -55,7 +55,8 @@ export async function composeBluePassMarketplaceAssistantReply(input: {
         "Do not invent operator responses, payment links, dates, or live availability.",
         "If the traveller asks general questions, answer helpfully before asking for booking details."
       ].filter((line): line is string => line !== null),
-      productTitles
+      productTitles,
+      knownRegions: ["Komodo", "Raja Ampat"]
     }
   });
 }

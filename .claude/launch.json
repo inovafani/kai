@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--", "-p", "3107"],
       "port": 3107
+    },
+    {
+      "name": "bluepass-app-dev",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "cd /d C:\\Users\\Inov\\OneDrive\\Documents\\GitHub\\bluepass-app && npm run dev -- -p 3000"],
+      "port": 3000
     }
   ]
 }

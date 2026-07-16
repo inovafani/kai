@@ -52,12 +52,13 @@ export function resolveBusinessPack(
 
   const instantBookingAllowed =
     input.bookingWriteEnabled && input.bookingMode === "AUTO_BOOKING";
-  const boattimeRezdyWrite =
-    input.slug === "boattime" &&
-    input.bookingWriteEnabled &&
-    input.pmsProvider === "REZDY";
+  // Any Rezdy tenant with booking-write on gets instant-booking tools, not just "boattime" -
+  // future operators onboarded the same way (their own tenant, their own Rezdy credentials) get
+  // this automatically, with no registry change needed per operator.
+  const rezdyInstantWrite =
+    input.bookingWriteEnabled && input.pmsProvider === "REZDY";
   const tools =
-    instantBookingAllowed || boattimeRezdyWrite
+    instantBookingAllowed || rezdyInstantWrite
       ? operatorInstantTools
       : operatorInquiryTools;
 

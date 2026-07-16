@@ -168,6 +168,34 @@ describe("assistant reply composer", () => {
     });
   });
 
+  it("accepts an LLM rewrite that mentions a region the tenant declares as its own known scope", async () => {
+    // Regression: the Komodo check above is a real bug against a Gold Coast tenant hallucinating
+    // an unrelated region, but BluePass's own real scope IS Komodo/Raja Ampat - a natural,
+    // accurate concierge answer mentioning Komodo must not be rejected just because it doesn't also
+    // name one specific yacht.
+    const deterministicReply = "I can help you compare BluePass options.";
+
+    const result = await composeAssistantReply({
+      deterministicReply,
+      tenantContext: {
+        tenantName: "BluePass",
+        productTitles: ["Alila Purnama", "Calico Jack"],
+        knownRegions: ["Komodo", "Raja Ampat"]
+      },
+      llmClient: {
+        async composeReply() {
+          return "Diving in Komodo is generally safe for beginners, with calm sites and discovery dives available through several liveaboard operators.";
+        }
+      }
+    });
+
+    expect(result).toEqual({
+      source: "LLM",
+      reply:
+        "Diving in Komodo is generally safe for beginners, with calm sites and discovery dives available through several liveaboard operators."
+    });
+  });
+
   it("removes repeated greetings from LLM rewrites after the welcome message", async () => {
     const result = await composeAssistantReply({
       deterministicReply:

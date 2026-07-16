@@ -5,6 +5,7 @@ import type { PmsProvider } from "@/core/tenant/types";
 import { findConversationBookingState, findTenantConversation, upsertConversationBookingState } from "@/server/conversation/conversation-repository";
 import { parsePublicProductCatalog } from "@/core/pms/public-product-catalog";
 import { getPmsAdapter } from "@/server/pms/pms-adapter-registry";
+import { resolveTenantPmsEnv } from "@/server/pms/tenant-pms-credentials";
 import { hasRezdyBookingWriteConfig } from "@/server/payments/rezdy-pay";
 import { confirmRezdyPaymentBooking } from "@/server/payments/confirm-rezdy-payment";
 import { getWidgetRequestOrigin } from "@/server/widget/request-origin";
@@ -91,7 +92,8 @@ export async function POST(request: NextRequest) {
   }
 
   const provider = (resolved.tenant.config?.pmsProvider ?? "MOCK") as PmsProvider;
-  const sourcePmsAdapter = getPmsAdapter(provider, process.env, fetch, resolved.tenant.slug);
+  const tenantPmsEnv = await resolveTenantPmsEnv(resolved.tenant.id, provider, process.env);
+  const sourcePmsAdapter = getPmsAdapter(provider, tenantPmsEnv, fetch, resolved.tenant.slug);
   const publicProductCatalog = parsePublicProductCatalog(resolved.tenant.config?.publicProductCatalog);
   const pmsAdapter =
     publicProductCatalog.length > 0 ? new MappedPmsAdapter(sourcePmsAdapter, publicProductCatalog) : sourcePmsAdapter;

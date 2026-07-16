@@ -35,6 +35,44 @@ describe("resolveBusinessPack", () => {
     });
   });
 
+  it("grants instant booking tools to any Rezdy + booking-write tenant, not just boattime", () => {
+    const pack = resolveBusinessPack({
+      tenantId: "tenant_reef_tours_au",
+      slug: "reef-tours-au",
+      name: "Reef Tours Australia",
+      enabledFeatures: ["widget_config"],
+      bookingMode: "MANUAL_INQUIRY",
+      bookingWriteEnabled: true,
+      pmsProvider: "REZDY",
+    });
+
+    expect(pack.kind).toBe("operator_direct");
+    expect(pack.tools).toContain("create_instant_booking");
+    expect(pack.tools).toContain("capture_payment");
+    expect(pack.paymentPolicy).toBe("instant_payment_allowed");
+    expect(pack.truthPolicy).toEqual({
+      availabilitySource: "pms_live",
+      priceSource: "pms_live",
+      bookingConfirmationSource: "pms_write_back",
+    });
+  });
+
+  it("does not grant instant booking tools to a Rezdy tenant with booking-write off", () => {
+    const pack = resolveBusinessPack({
+      tenantId: "tenant_reef_tours_au",
+      slug: "reef-tours-au",
+      name: "Reef Tours Australia",
+      enabledFeatures: ["widget_config"],
+      bookingMode: "MANUAL_INQUIRY",
+      bookingWriteEnabled: false,
+      pmsProvider: "REZDY",
+    });
+
+    expect(pack.tools).not.toContain("create_instant_booking");
+    expect(pack.tools).not.toContain("capture_payment");
+    expect(pack.paymentPolicy).toBe("no_payment_in_kai");
+  });
+
   it("resolves BluePass as a marketplace pack with inquiry and referral tools only", () => {
     const pack = resolveBusinessPack({
       tenantId: "tenant_bluepass",

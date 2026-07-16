@@ -10,7 +10,7 @@ const allowedProviders = new Set<PmsProvider>(["MOCK", "REZDY", "INSEANQ", "FARE
 
 function parseList(value: FormDataEntryValue | null) {
   return String(value ?? "")
-    .split(/\r?\n|,/)
+    .split(/\r?\n/)
     .map((item) => item.trim())
     .filter(Boolean);
 }

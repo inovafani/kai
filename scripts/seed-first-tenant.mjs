@@ -149,6 +149,81 @@ const tenants = [
         "Position BluePass Protection and conservation contribution only when relevant to the traveller decision."
       ]
     }
+  },
+  {
+    // Pilot tenant proving the generic Rezdy instant-booking pattern (see registry.ts) works for a
+    // second, distinct tenant under a BluePass brand voice - not a real second AU operator yet.
+    // Deliberately reuses boattime's own real Rezdy sandbox account (see scripts/link-rezdy-credentials.mjs),
+    // wired through the per-tenant TenantIntegration path rather than the shared global env vars, so
+    // onboarding a real distinct AU operator later is a credentials-only change.
+    slug: "bluepass-au",
+    name: "BluePass Australia (Rezdy pilot)",
+    widgetPublicKey: "pk_test_bluepass_au",
+    // localhost:3107 for the /embed/kai iframe pattern; bluepass.co for the server-to-server
+    // proxy pattern (bluepass-app's homepage widget), which sends an explicit origin header.
+    allowedOrigins: [
+      "http://localhost:3107",
+      "http://127.0.0.1:3107",
+      "https://bluepass.co",
+      "https://www.bluepass.co"
+    ],
+    defaultLocale: "en-AU",
+    branding: {
+      logoUrl: null,
+      primaryColor: "#0f766e",
+      widgetTitle: "Kai",
+      welcomeMessage: "Ask me about Gold Coast charter trips - I can check live availability and book instantly.",
+      brandVoice: "Trustworthy, concierge-like BluePass voice, proving instant Gold Coast charter booking ahead of a full Australia operator rollout."
+    },
+    config: {
+      supportedChannels: ["WEB_WIDGET"],
+      enabledFeatures: ["widget_config", "mock_pms"],
+      requiredSlots,
+      bookingMode: "AUTO_BOOKING",
+      bookingWriteEnabled: true,
+      pmsProvider: "REZDY",
+      publicProductCatalog: [
+        {
+          publicTitle: "Gold Coast Whale Escape",
+          publicDescription: "Luxury whale watching cruise",
+          productUrl: "http://localhost:3000/kai-au-demo#gold-coast-whale-escape",
+          pmsProductId: "PGG8QT",
+          bookingMode: "AUTO_BOOKING",
+          extraOptions: [
+            { label: "Corona Bucket", unitPriceCents: 3000 },
+            { label: "Sparkling for 2", unitPriceCents: 4000 },
+            { label: "Cheese Platter for 2", unitPriceCents: 1000 }
+          ]
+        },
+        {
+          publicTitle: "Twilight Drift",
+          publicDescription: "Broadwater sunset tour and scenic cruise",
+          productUrl: "http://localhost:3000/kai-au-demo#twilight-drift",
+          pmsProductId: "P4APMF",
+          bookingMode: "AUTO_BOOKING"
+        },
+        {
+          publicTitle: "Broadwater Twilight Dining",
+          publicDescription: "Gold Coast buffet dinner cruise",
+          productUrl: "http://localhost:3000/kai-au-demo#broadwater-twilight-dining",
+          pmsProductId: "P1D0SB",
+          bookingMode: "AUTO_BOOKING"
+        },
+        {
+          publicTitle: "Coastal Lunch Escape",
+          publicDescription: "Gold Coast daytime dining cruise",
+          productUrl: "http://localhost:3000/kai-au-demo#coastal-lunch-escape",
+          pmsProductId: "PJEJ0P",
+          bookingMode: "AUTO_BOOKING"
+        }
+      ],
+      escalationRules: ["large_group", "wedding_or_corporate_event", "human_requested"],
+      responseGuardrails: [
+        ...responseGuardrails,
+        "Answer general travel and trip questions naturally using your own knowledge, even outside the PMS catalog, as long as you stay honest about what is actually live-bookable.",
+        "This is a BluePass Australia pilot backed by real Gold Coast Rezdy inventory only - be honest that other Australian regions (Great Barrier Reef, Whitsundays, Ningaloo Coast) are not yet live-bookable through this pilot, even if asked about them."
+      ]
+    }
   }
 ];
 

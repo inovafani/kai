@@ -16,6 +16,9 @@ export interface AssistantTenantContext {
   pmsProvider?: string | null;
   responseGuardrails?: string[];
   productTitles?: string[];
+  /** Regions/destinations this tenant genuinely operates in - mentioning one is never treated as
+   * an invented product, even without also naming a specific catalog item. */
+  knownRegions?: string[];
   systemPrompt?: string | null;
 }
 
@@ -67,8 +70,13 @@ function respectsTenantProductContext(reply: string, tenantContext?: AssistantTe
   }
 
   const lowerReply = reply.toLowerCase();
+  const knownRegions = (tenantContext?.knownRegions ?? []).map((region) => region.toLowerCase());
   const knownProductMentioned = productTitles.some((title) => lowerReply.includes(title.toLowerCase()));
-  const mentionsKomodo = /\bkomodo\b/i.test(reply);
+  // "Komodo" is used here as the one hardcoded example of an out-of-scope destination (this guard
+  // was written against a real bug: an LLM rewrite claiming a Gold Coast tenant offered "Komodo
+  // tours"). That example is backwards for a tenant whose real scope IS Komodo/Raja Ampat, so a
+  // tenant's own knownRegions always wins over this hardcoded check.
+  const mentionsKomodo = /\bkomodo\b/i.test(reply) && !knownRegions.includes("komodo");
 
   if (mentionsKomodo && !knownProductMentioned && !productTitles.some((title) => /\bkomodo\b/i.test(title))) {
     return false;
