@@ -111,12 +111,13 @@ function toJsonArray<T extends object>(value: T[] | null | undefined) {
   return value ? (value as unknown as Prisma.InputJsonArray) : undefined;
 }
 
-export async function createWidgetConversation(input: { tenantId: string }) {
+export async function createWidgetConversation(input: { tenantId: string; travellerId?: string }) {
   return prisma.conversation.create({
     data: {
       tenantId: input.tenantId,
       channel: "WEB_WIDGET",
-      controlMode: "AI"
+      controlMode: "AI",
+      ...(input.travellerId ? { travellerId: input.travellerId } : {})
     }
   });
 }
@@ -127,6 +128,24 @@ export async function findTenantConversation(input: { tenantId: string; conversa
       id: input.conversationId,
       tenantId: input.tenantId
     }
+  });
+}
+
+// Lets a logged-in traveller's Kai memory follow their account instead of one browser's local
+// storage: the widget session endpoint uses this to resume their most recent conversation with a
+// tenant (if any) rather than always starting fresh, so switching devices/browsers while logged in
+// doesn't lose context.
+export async function findRecentWidgetConversationForTraveller(input: {
+  tenantId: string;
+  travellerId: string;
+}) {
+  return prisma.conversation.findFirst({
+    where: {
+      tenantId: input.tenantId,
+      channel: "WEB_WIDGET",
+      travellerId: input.travellerId
+    },
+    orderBy: { updatedAt: "desc" }
   });
 }
 
