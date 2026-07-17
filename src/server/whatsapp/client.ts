@@ -1,4 +1,5 @@
 import type { WhatsAppTemplateComponent } from "./operator-dispatch";
+import { normalizeLocalPhone } from "@/server/phone/normalize-local-phone";
 
 export type WhatsAppSenderRole = "kai" | "ops";
 
@@ -260,13 +261,9 @@ function resolveMetaGraphVersion() {
 }
 
 function normalizeRecipientPhone(value: string) {
-  const digits = value.trim().replace(/[^\d]/g, "");
+  const digits = normalizeLocalPhone(value);
   if (!digits) {
     throw new Error("WhatsApp recipient phone number is required.");
-  }
-
-  if (digits.startsWith("0")) {
-    return `62${digits.slice(1)}`;
   }
 
   return digits;

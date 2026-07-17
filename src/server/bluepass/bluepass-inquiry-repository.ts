@@ -12,6 +12,7 @@ import {
   listRecentConversationMessages
 } from "@/server/conversation/conversation-repository";
 import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
+import { internationalToLocalPhone, normalizeLocalPhone } from "@/server/phone/normalize-local-phone";
 import { sendTemplateMessage, sendWhatsAppText } from "@/server/whatsapp/client";
 import { resolveBluePassOperatorDirectoryPhone } from "./bluepass-operator-directory";
 import { createBluePassQuoteDraftForOperatorResponse, getBluePassQuote } from "./bluepass-quote";
@@ -870,8 +871,8 @@ function buildParticipantPhoneCandidates(value?: string | null) {
   if (!raw) return [];
 
   const digits = raw.replace(/\D/g, "");
-  const indonesiaLocal = digits.startsWith("62") ? `0${digits.slice(2)}` : null;
-  const indonesiaInternational = digits.startsWith("0") ? `62${digits.slice(1)}` : null;
+  const indonesiaLocal = internationalToLocalPhone(digits);
+  const indonesiaInternational = digits.startsWith("0") ? normalizeLocalPhone(digits) : null;
   const candidates = [
     raw,
     digits,

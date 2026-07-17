@@ -3,6 +3,7 @@ import {
   type AssistantConversationMessage,
   type AssistantLlmClient
 } from "@/core/llm/assistant-reply-composer";
+import { resolveBluePassCatalog, type BluePassCatalogSnapshotItem } from "@/core/bluepass/catalog";
 
 type BluePassMarketplaceComposerResult = {
   reply: string;
@@ -28,10 +29,16 @@ export async function composeBluePassMarketplaceAssistantReply(input: {
   marketplaceResult: BluePassMarketplaceResultLike;
   conversationHistory: AssistantConversationMessage[];
   llmClient?: AssistantLlmClient | null;
+  catalogInput?: BluePassCatalogSnapshotItem[];
 }): Promise<BluePassMarketplaceComposerResult> {
   const conciergeMode = input.marketplaceResult.replyMode === "CONCIERGE";
   const productTitles = buildMarketplaceProductTitles(input.marketplaceResult);
   const requiredFacts = conciergeMode ? [] : buildMarketplaceRequiredFacts(input.marketplaceResult, input.deterministicReply);
+  // Derived from the actual resolved catalog (not a hardcoded literal) so it's self-updating as
+  // soon as a real catalog snapshot carries new regions - no code change needed for the next one.
+  const knownRegions = Array.from(
+    new Set(resolveBluePassCatalog(input.catalogInput).map((item) => item.region))
+  );
 
   return composeAssistantReply({
     deterministicReply: input.deterministicReply,
@@ -56,7 +63,7 @@ export async function composeBluePassMarketplaceAssistantReply(input: {
         "If the traveller asks general questions, answer helpfully before asking for booking details."
       ].filter((line): line is string => line !== null),
       productTitles,
-      knownRegions: ["Komodo", "Raja Ampat"]
+      knownRegions
     }
   });
 }

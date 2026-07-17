@@ -49,7 +49,7 @@ export function buildBluePassPartnerReply(input: { latestMessage: string }) {
   }
 
   if (/\b(?:komodo|raja ampat|catalog|catalogue|operators|boats|yachts)\b/.test(normalized)) {
-    return "For partners, Kai can explain Komodo and Raja Ampat options, shortlist suitable BluePass yachts for a client, and prepare the operator inquiry once dates, group size, and traveller contact details are ready.";
+    return "For partners, Kai can walk through the current BluePass regions and options, shortlist suitable yachts for a client, and prepare the operator inquiry once dates, group size, and traveller contact details are ready.";
   }
 
   if (/\b(?:claim|link|founding|terms)\b/.test(normalized)) {

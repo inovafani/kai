@@ -12,7 +12,9 @@ import {
 } from "@/core/bluepass/conversation-intent";
 import {
   extractBluePassInquiryIntent,
+  extractKnownDestination,
   getMissingBluePassInquiryFields,
+  isRegionMentioned,
   mergeBluePassInquiryIntent,
   type BluePassInquiryIntent,
   type BluePassRequiredInquiryField
@@ -133,8 +135,9 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   }
 
   const catalog = resolveBluePassCatalog(input.catalog);
-  const historyIntent = extractBluePassInquiryIntent(input.priorTravellerMessages);
-  const messageIntent = extractBluePassInquiryIntent([input.content]);
+  const knownRegions = Array.from(new Set(catalog.map((item) => item.region)));
+  const historyIntent = extractBluePassInquiryIntent(input.priorTravellerMessages, knownRegions);
+  const messageIntent = extractBluePassInquiryIntent([input.content], knownRegions);
   const latestMentionedYachts = resolveMentionedYachts(input.content, catalog);
   const historyMentionedYachts = resolveMentionedYachts(input.priorTravellerMessages.join("\n"), catalog);
   const selectedYacht =
@@ -142,7 +145,8 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     (shouldCarryBluePassHistoryYacht({
       content: input.content,
       messageIntent,
-      priorTravellerMessages: input.priorTravellerMessages
+      priorTravellerMessages: input.priorTravellerMessages,
+      knownRegions
     })
       ? historyMentionedYachts[0] ?? null
       : null);
@@ -256,7 +260,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   const overviewYacht =
     latestMentionedYachts[0] ??
     (isBluePassYachtFollowUpInformationRequest(input.content) ? historyMentionedYachts[0] ?? null : null);
-  const regexSeasonDestination = resolveSeasonDestination(input.content);
+  const regexSeasonDestination = resolveSeasonDestination(input.content, knownRegions);
 
   const fallbackAction = resolveFallbackBluePassRouterAction({
     content: input.content,
@@ -265,13 +269,15 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     latestMentionedYachts,
     overviewYacht,
     seasonDestination: regexSeasonDestination,
-    missingFields: regexMissingFields
+    missingFields: regexMissingFields,
+    knownRegions
   });
   const shouldCallRouterLlm = shouldEscalateBluePassRouterToLlm({
     fallbackAction,
     content: input.content,
     intent: regexIntent,
-    selectedYacht
+    selectedYacht,
+    knownRegions
   });
   console.log(shouldCallRouterLlm ? "bluepass_llm.router_call_made" : "bluepass_llm.router_call_skipped", {
     fallbackAction,
@@ -325,8 +331,15 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     case "SEASON_QUESTION":
       return buildConciergeResponse(persona, buildBluePassSeasonReply(seasonDestination as string));
 
-    case "DESTINATION_COMPARISON":
-      return buildConciergeResponse(persona, buildBluePassDestinationComparisonReply(), [], destinationSuggestedReplies);
+    case "DESTINATION_COMPARISON": {
+      const comparedRegions = knownRegions.filter((region) => isRegionMentioned(input.content, region));
+      return buildConciergeResponse(
+        persona,
+        buildBluePassDestinationComparisonReply(comparedRegions.length >= 2 ? comparedRegions : knownRegions),
+        [],
+        knownRegions
+      );
+    }
 
     case "YACHT_COMPARISON":
       return buildConciergeResponse(
@@ -340,7 +353,8 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
       const recommendationDestination = resolveRecommendationDestination({
         content: input.content,
         intentDestination: intent.destination,
-        priorTravellerMessages: input.priorTravellerMessages
+        priorTravellerMessages: input.priorTravellerMessages,
+        knownRegions
       });
       const excludedYachts = resolveRecommendationExcludedYachts({
         content: input.content,
@@ -384,7 +398,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     }
 
     case "TRAVEL_INSPIRATION": {
-      const inspirationMatches = buildBluePassInspirationMatches(catalog);
+      const inspirationMatches = buildBluePassInspirationMatches(catalog, knownRegions);
 
       return buildConciergeResponse(
         persona,
@@ -392,7 +406,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
           matches: inspirationMatches
         }),
         inspirationMatches,
-        destinationSuggestedReplies
+        knownRegions
       );
     }
 
@@ -593,7 +607,6 @@ function levenshteinDistance(a: string, b: string) {
 }
 
 const showYachtsSuggestedReplies = ["Show me yachts"];
-const destinationSuggestedReplies = ["Komodo", "Raja Ampat"];
 
 function buildBrowsingSuggestedReplies(matches: BluePassYachtCard[]) {
   if (matches.length === 0) return null;
@@ -697,13 +710,15 @@ function resolveFallbackBluePassRouterAction(input: {
   overviewYacht: BluePassYachtCatalogItem | null;
   seasonDestination: string | null;
   missingFields: BluePassRequiredInquiryField[];
+  knownRegions?: string[];
 }): BluePassRouterAction {
   const { content } = input;
+  const knownRegions = input.knownRegions ?? ["Komodo", "Raja Ampat"];
 
   if (isBluePassValueQuestion(content)) return "VALUE_QUESTION";
   if (isBluePassSmallTalkRequest(content)) return "SMALL_TALK";
   if (input.seasonDestination) return "SEASON_QUESTION";
-  if (isBluePassDestinationComparisonRequest(content)) return "DESTINATION_COMPARISON";
+  if (isBluePassDestinationComparisonRequest(content, knownRegions)) return "DESTINATION_COMPARISON";
   if (isBluePassYachtComparisonRequest(content) && input.latestMentionedYachts.length >= 2) return "YACHT_COMPARISON";
   if (isBluePassRecommendationRequest(content) && !isBluePassInquirySubmissionRequest(content)) return "RECOMMENDATION";
   if (isBluePassTravelInspirationRequest(content) && !isBluePassInquirySubmissionRequest(content)) {
@@ -712,7 +727,9 @@ function resolveFallbackBluePassRouterAction(input: {
   if (input.overviewYacht && isBluePassYachtInformationRequest(content)) return "YACHT_INFO";
 
   if (input.missingFields.length > 0) {
-    if (isBluePassOpenGeneralQuestion({ content, intent: input.intent, selectedYacht: input.selectedYacht })) {
+    if (
+      isBluePassOpenGeneralQuestion({ content, intent: input.intent, selectedYacht: input.selectedYacht, knownRegions })
+    ) {
       return "GENERAL_QUESTION";
     }
     if (!input.selectedYacht && !hasBluePassBookingLanguage(content) && !isBluePassInquirySubmissionRequest(content)) {
@@ -747,6 +764,7 @@ export function shouldEscalateBluePassRouterToLlm(input: {
   content: string;
   intent: BluePassInquiryIntent;
   selectedYacht: BluePassYachtCatalogItem | null;
+  knownRegions?: string[];
 }): boolean {
   if (input.fallbackAction === "GENERAL_QUESTION") return true;
   if (bluepassHighConfidenceFallbackActions.has(input.fallbackAction)) return false;
@@ -754,17 +772,18 @@ export function shouldEscalateBluePassRouterToLlm(input: {
   return isBluePassOpenGeneralQuestion({
     content: input.content,
     intent: input.intent,
-    selectedYacht: input.selectedYacht
+    selectedYacht: input.selectedYacht,
+    knownRegions: input.knownRegions
   });
 }
 
-function buildBluePassInspirationMatches(catalog: BluePassYachtCatalogItem[]) {
-  const komodoMatches = searchBluePassYachts({ destination: "Komodo" }, catalog, 2);
-  const rajaAmpatMatches = searchBluePassYachts({ destination: "Raja Ampat" }, catalog, 2);
+function buildBluePassInspirationMatches(catalog: BluePassYachtCatalogItem[], knownRegions: string[]) {
   const merged = new Map<string, BluePassYachtCard>();
 
-  for (const yacht of [...rajaAmpatMatches, ...komodoMatches]) {
-    merged.set(yacht.slug, yacht);
+  for (const region of knownRegions) {
+    for (const yacht of searchBluePassYachts({ destination: region }, catalog, 2)) {
+      merged.set(yacht.slug, yacht);
+    }
   }
 
   return Array.from(merged.values()).slice(0, 4);
@@ -860,10 +879,11 @@ function isBluePassOpenGeneralQuestion(input: {
   content: string;
   intent: BluePassInquiryIntent;
   selectedYacht: BluePassYachtCatalogItem | null;
+  knownRegions?: string[];
 }) {
   if (input.selectedYacht) return false;
   if (hasBluePassBookingLanguage(input.content)) return false;
-  if (mentionsOffCatalogDestination(input.content)) return true;
+  if (mentionsOffCatalogDestination(input.content, input.knownRegions)) return true;
 
   const hasAnyTripSignal = Boolean(
     input.intent.destination ||
@@ -886,9 +906,9 @@ function isBluePassOpenGeneralQuestion(input: {
 const offCatalogDestinationPattern =
   /\b(?:bali|lombok|sulawesi|sumatra|jakarta|bandung|yogyakarta|jogja|bunaken|wakatobi|gili|sumba|nusa\s+penida|banda|alor|derawan|belitung|bromo|ubud|manado|makassar|bintan|batam|karimunjawa)\b/;
 
-function mentionsOffCatalogDestination(content: string) {
+function mentionsOffCatalogDestination(content: string, knownRegions: string[] = ["Komodo", "Raja Ampat"]) {
   const normalized = content.toLowerCase();
-  if (/\b(?:komodo|raja\s+ampat|labuan\s+bajo)\b/.test(normalized)) return false;
+  if (knownRegions.some((region) => isRegionMentioned(normalized, region))) return false;
 
   return offCatalogDestinationPattern.test(normalized);
 }
@@ -932,7 +952,7 @@ function isBluePassInquiryStatusQuestion(content: string) {
   return /\b(?:status|update|operator replied|operator response|confirmed yet|any news|what happened)\b/i.test(content);
 }
 
-function resolveSeasonDestination(content: string) {
+function resolveSeasonDestination(content: string, knownRegions: string[] = ["Komodo", "Raja Ampat"]) {
   const normalized = content.toLowerCase();
   const asksTiming =
     /\b(?:best|good|ideal|recommended)\s+(?:time|season|month)\b/.test(normalized) ||
@@ -942,22 +962,21 @@ function resolveSeasonDestination(content: string) {
   if (/\b(?:raja\s+ampat|misool|sorong|wayag)\b/.test(normalized)) return "Raja Ampat";
   if (/\b(?:komodo|labuan\s+bajo|flores)\b/.test(normalized)) return "Komodo";
 
-  return null;
+  return extractKnownDestination(content, knownRegions.filter((region) => region !== "Komodo" && region !== "Raja Ampat")) ?? null;
 }
 
 function isBluePassYachtComparisonRequest(content: string) {
   return /\b(?:compare|versus|vs\.?|difference|which is better)\b/i.test(content);
 }
 
-function isBluePassDestinationComparisonRequest(content: string) {
+function isBluePassDestinationComparisonRequest(content: string, knownRegions: string[] = ["Komodo", "Raja Ampat"]) {
   const normalized = content.toLowerCase();
-  const mentionsKomodo = /\bkomodo\b/.test(normalized);
-  const mentionsRajaAmpat = /\braja\s+ampat\b/.test(normalized);
+  const mentionedRegions = knownRegions.filter((region) => isRegionMentioned(normalized, region));
   const asksComparison =
     /\b(?:compare|versus|vs\.?|difference|which is better|what'?s better|whats better|better)\b/.test(normalized) ||
-    /\b(?:komodo|raja\s+ampat)\b.*\b(?:or|and)\b.*\b(?:komodo|raja\s+ampat)\b/.test(normalized);
+    (mentionedRegions.length >= 2 && /\b(?:or|and)\b/.test(normalized));
 
-  return mentionsKomodo && mentionsRajaAmpat && asksComparison;
+  return mentionedRegions.length >= 2 && asksComparison;
 }
 
 function isBluePassYachtInformationRequest(content: string) {
@@ -1038,13 +1057,14 @@ function shouldCarryBluePassHistoryYacht(input: {
   content: string;
   messageIntent: BluePassInquiryIntent;
   priorTravellerMessages: string[];
+  knownRegions?: string[];
 }) {
   const normalized = input.content.toLowerCase();
 
   if (isBluePassValueQuestion(input.content)) return false;
   if (isBluePassSmallTalkRequest(input.content)) return false;
-  if (resolveSeasonDestination(input.content)) return false;
-  if (isBluePassDestinationComparisonRequest(input.content)) return false;
+  if (resolveSeasonDestination(input.content, input.knownRegions)) return false;
+  if (isBluePassDestinationComparisonRequest(input.content, input.knownRegions)) return false;
   if (isBluePassTravelInspirationRequest(input.content) && !isBluePassInquirySubmissionRequest(input.content)) {
     return false;
   }
@@ -1075,28 +1095,41 @@ function shouldCarryBluePassHistoryYacht(input: {
   return hasBookingLanguage || hasTripOrContactDetails || (priorHasBookingLanguage && Boolean(input.messageIntent.destination));
 }
 
+function otherKnownRegion(current: string, knownRegions: string[]): string | undefined {
+  return knownRegions.find((region) => region !== current);
+}
+
+function escapeForRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function mentionsWantingDifferentRegion(normalized: string, knownRegions: string[]) {
+  if (/\b(?:somewhere else|another destination|other destination|outside)\b/.test(normalized)) return true;
+
+  return knownRegions.some((region) =>
+    new RegExp(`\\b(?:instead of|rather than|besides)\\s+${escapeForRegex(region.toLowerCase())}\\b`).test(normalized)
+  );
+}
+
 function resolveRecommendationDestination(input: {
   content: string;
   intentDestination?: string;
   priorTravellerMessages: string[];
+  knownRegions?: string[];
 }) {
+  const knownRegions = input.knownRegions ?? ["Komodo", "Raja Ampat"];
   const normalized = input.content.toLowerCase();
-  const asksForDifferentDestination =
-    /\b(?:somewhere else|another destination|other destination|outside)\b/.test(normalized) ||
-    /\b(?:instead of|rather than|besides)\s+(?:komodo|raja\s+ampat)\b/.test(normalized);
+  const mentionedRegion = extractKnownDestination(input.content, knownRegions);
+  const asksForDifferentDestination = mentionsWantingDifferentRegion(normalized, knownRegions);
 
-  if (/\braja\s+ampat\b/.test(normalized)) {
-    return asksForDifferentDestination ? "Komodo" : "Raja Ampat";
-  }
-
-  if (/\bkomodo\b/.test(normalized)) {
-    return asksForDifferentDestination ? "Raja Ampat" : "Komodo";
+  if (mentionedRegion) {
+    return asksForDifferentDestination ? otherKnownRegion(mentionedRegion, knownRegions) ?? mentionedRegion : mentionedRegion;
   }
 
   if (asksForDifferentDestination) {
-    const priorText = input.priorTravellerMessages.join("\n").toLowerCase();
-    if (input.intentDestination === "Komodo" || /\bkomodo\b/.test(priorText)) return "Raja Ampat";
-    if (input.intentDestination === "Raja Ampat" || /\braja\s+ampat\b/.test(priorText)) return "Komodo";
+    const priorText = input.priorTravellerMessages.join("\n");
+    const priorRegion = extractKnownDestination(priorText, knownRegions) ?? input.intentDestination;
+    if (priorRegion) return otherKnownRegion(priorRegion, knownRegions) ?? priorRegion;
   }
 
   return input.intentDestination;

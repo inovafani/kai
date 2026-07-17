@@ -112,13 +112,13 @@ export function buildBluePassRecommendationReply(input: {
 
   const intro = input.destination
     ? `Good BluePass liveaboard options${destination}${excluded}:`
-    : `I do not have live coverage for every destination in Indonesia yet - BluePass currently runs liveaboards in Komodo and Raja Ampat, so here is what I can speak to directly${excluded}:`;
+    : `Here is what BluePass can speak to directly in ${formatNaturalList(Array.from(new Set(matches.map((yacht) => yacht.region))))}${excluded}:`;
 
   return `${intro}\n${rows}\n\nI can compare these, explain who each yacht suits, or narrow them by dates, group size, diving versus cruising style, and budget before preparing an operator inquiry.`;
 }
 
 export function buildBluePassOpenQuestionReply() {
-  return "Happy to help with that. BluePass is focused on liveaboard trips in Komodo and Raja Ampat right now, so I might not have live details outside those regions, but I can talk it through and help you compare real BluePass options whenever you are ready.";
+  return "Happy to help with that. BluePass covers a growing set of vetted liveaboard trips, so I might not have live details on absolutely everything, but I can talk it through and help you compare real BluePass options whenever you are ready.";
 }
 
 export function buildBluePassValueReply() {
@@ -130,7 +130,7 @@ export function buildBluePassSmallTalkReply(input?: { gratitude?: boolean }) {
     return "Anytime. I can keep helping with this inquiry, compare other BluePass options, or start a fresh one when you are ready.";
   }
 
-  return "Hey, I am here. I can talk through BluePass, compare liveaboards, recommend Komodo or Raja Ampat options, or help continue an inquiry when you are ready.";
+  return "Hey, I am here. I can talk through BluePass, compare liveaboards, recommend options that fit what you're after, or help continue an inquiry when you are ready.";
 }
 
 export function buildBluePassSeasonReply(destination: string) {
@@ -138,15 +138,23 @@ export function buildBluePassSeasonReply(destination: string) {
     return "Raja Ampat is usually strongest from October to April, when liveaboard conditions are more reliable and the routes around Misool, Dampier Strait, and Wayag make more sense. It is remote, reef-forward, and best planned with enough lead time because operator schedules and cabins still need confirmation.";
   }
 
-  return "Komodo is usually strongest from April to November, with June to September often excellent for dry-season cruising, dramatic island scenery, manta sites, and liveaboard routes from Labuan Bajo. Kai can use your dates, guest count, and style to narrow options, but availability and final price still need operator confirmation.";
+  if (/komodo/i.test(destination)) {
+    return "Komodo is usually strongest from April to November, with June to September often excellent for dry-season cruising, dramatic island scenery, manta sites, and liveaboard routes from Labuan Bajo. Kai can use your dates, guest count, and style to narrow options, but availability and final price still need operator confirmation.";
+  }
+
+  return `I do not have detailed seasonal notes for ${destination} memorized yet, but I can check with the operator directly once I have your dates and guest count.`;
 }
 
-export function buildBluePassDestinationComparisonReply() {
-  return [
-    "Komodo and Raja Ampat are both strong BluePass regions, but they fit different trips.",
-    "Komodo is easier to reach from Labuan Bajo and better for dramatic islands, shorter liveaboards, mantas, current diving, and a mix of cruising plus topside scenery.",
-    "Raja Ampat is more remote from Sorong and better for reef biodiversity, soft coral, Misool or Wayag routes, and longer expedition-style trips. If this is your first Indonesia liveaboard, Komodo is usually simpler; if the goal is the richest reef trip, Raja Ampat is the one to compare first."
-  ].join(" ");
+export function buildBluePassDestinationComparisonReply(regions: string[] = ["Komodo", "Raja Ampat"]) {
+  if (regions.length === 2 && regions.includes("Komodo") && regions.includes("Raja Ampat")) {
+    return [
+      "Komodo and Raja Ampat are both strong BluePass regions, but they fit different trips.",
+      "Komodo is easier to reach from Labuan Bajo and better for dramatic islands, shorter liveaboards, mantas, current diving, and a mix of cruising plus topside scenery.",
+      "Raja Ampat is more remote from Sorong and better for reef biodiversity, soft coral, Misool or Wayag routes, and longer expedition-style trips. If this is your first Indonesia liveaboard, Komodo is usually simpler; if the goal is the richest reef trip, Raja Ampat is the one to compare first."
+    ].join(" ");
+  }
+
+  return `I can walk through what's different between ${formatNaturalList(regions)}, but I don't have detailed side-by-side notes memorized for that pairing yet - tell me what matters most (trip style, length, budget) and I will compare what actually fits.`;
 }
 
 export function buildBluePassYachtComparisonReply(yachts: BluePassYachtSummary[]) {
@@ -158,8 +166,13 @@ export function buildBluePassYachtComparisonReply(yachts: BluePassYachtSummary[]
       return `${yacht.name}: ${yacht.tier} in ${yacht.region}, up to ${yacht.maxGuests} guests across ${yacht.cabins} cabins, ${yacht.priceSignal}${charter}.`;
     })
     .join(" ");
+  const comparedRegions = Array.from(new Set(yachts.slice(0, 3).map((yacht) => yacht.region)));
+  const routeFitNote =
+    comparedRegions.length === 2 && comparedRegions.includes("Komodo") && comparedRegions.includes("Raja Ampat")
+      ? " The practical difference is route and fit: Komodo yachts suit Labuan Bajo, dramatic islands, and manta/liveaboard days; Raja Ampat yachts suit a more remote reef expedition."
+      : "";
 
-  return `${rows} The practical difference is route and fit: Komodo yachts suit Labuan Bajo, dramatic islands, and manta/liveaboard days; Raja Ampat yachts suit a more remote reef expedition. I can narrow this by dates, guest count, diving versus cruising style, and budget before preparing an operator inquiry.`;
+  return `${rows}${routeFitNote} I can narrow this by dates, guest count, diving versus cruising style, and budget before preparing an operator inquiry.`;
 }
 
 function formatFieldList(fields: BluePassRequiredInquiryField[]) {

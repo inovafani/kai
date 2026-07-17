@@ -23,7 +23,7 @@ export function buildBluePassResetConversationReply(input?: {
     return "Fresh chat started. I can help explain BluePass partner terms, compare yacht options for a client, or capture your partner contact details when you are ready.";
   }
 
-  return "Fresh chat started. I can help compare BluePass liveaboards, recommend Komodo or Raja Ampat options, or prepare a new operator inquiry when you are ready.";
+  return "Fresh chat started. I can help compare BluePass liveaboards, recommend options that fit what you're after, or prepare a new operator inquiry when you are ready.";
 }
 
 export function normalizeBluePassConversationText(content: string) {

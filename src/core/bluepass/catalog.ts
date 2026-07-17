@@ -3,7 +3,7 @@ import type { TruthPolicy } from "@/core/business-pack/types";
 export type BluePassYachtCard = {
   slug: string;
   name: string;
-  region: "Komodo" | "Raja Ampat";
+  region: string;
   tier: string;
   maxGuests: number;
   cabins: number;
@@ -409,8 +409,14 @@ function normalizeBluePassCatalogSnapshot(catalogInput?: BluePassCatalogSnapshot
     .filter((item): item is NonNullable<typeof item> => Boolean(item));
 }
 
+// Keeps the existing Komodo/Raja Ampat spelling-variant normalization (Labuan Bajo, Flores,
+// Misool, Sorong all still canonicalize), but passes through anything else instead of returning
+// null - a null here used to silently drop the entire catalog item (see the !region check above),
+// which is exactly what discarded any non-Indonesia region (e.g. "Great Barrier Reef") before.
 function normalizeRegion(value?: string) {
-  if (/komodo|labuan bajo|flores/i.test(value ?? "")) return "Komodo";
-  if (/raja\s*ampat|misool|sorong/i.test(value ?? "")) return "Raja Ampat";
-  return null;
+  const trimmed = value?.trim();
+  if (!trimmed) return null;
+  if (/komodo|labuan bajo|flores/i.test(trimmed)) return "Komodo";
+  if (/raja\s*ampat|misool|sorong/i.test(trimmed)) return "Raja Ampat";
+  return trimmed;
 }

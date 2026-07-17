@@ -59,6 +59,21 @@ describe("BluePass inquiry intent", () => {
     });
   });
 
+  it("preserves an explicitly stated AUD budget instead of relabeling it as USD", () => {
+    const intent = extractBluePassInquiryIntent(["my budget is AUD 5000 for the trip"]);
+
+    expect(intent.budget).toBe("AUD 5000");
+  });
+
+  it("recognizes a known region beyond Komodo/Raja Ampat when passed explicitly", () => {
+    const intent = extractBluePassInquiryIntent(
+      ["looking for a trip to Great Barrier Reef"],
+      ["Komodo", "Raja Ampat", "Great Barrier Reef"]
+    );
+
+    expect(intent.destination).toBe("Great Barrier Reef");
+  });
+
   it("uses the most recently mentioned destination instead of always preferring Raja Ampat", () => {
     const intent = extractBluePassInquiryIntent([
       "any recommendation for raja ampat?",
