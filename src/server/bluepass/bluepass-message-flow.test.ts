@@ -48,6 +48,39 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).not.toContain("guest count");
   });
 
+  it("answers a commission question accurately even when persona locked to traveller from an earlier message", async () => {
+    // Regression: "charter" (a travellerSignals word) in the opener locks persona to TRAVELLER for
+    // the rest of the conversation (classifyBluePassPersona is sticky/first-signal-wins), so this
+    // never reaches triage.ts's operator/partner commission copy - the real 82/18 breakdown must
+    // still be reachable and accurate regardless of which persona got locked in.
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "what commission does BluePass take",
+      priorTravellerMessages: ["I'm interested in a Gold Coast charter in Australia"]
+    });
+
+    expect(result.persona).toBe("TRAVELLER");
+    expect(result.assistantContent).toContain("18%");
+    expect(result.assistantContent).toContain("82%");
+    expect(result.assistantContent).not.toContain("not publicly disclosed");
+    expect(result.assistantContent).not.toContain("isn't publicly disclosed");
+  });
+
+  it("never asks the LLM router about a commission question - the real numbers are trusted without a call", async () => {
+    const routerClient = { route: vi.fn(async () => ({ action: "GENERAL_QUESTION" as never, intent: {}, seasonDestination: null, gratitude: false })) };
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "what's your take rate?",
+      priorTravellerMessages: [],
+      routerClient
+    });
+
+    expect(routerClient.route).not.toHaveBeenCalled();
+    expect(result.assistantContent).toContain("18%");
+  });
+
   it("treats travel inspiration as concierge chat instead of forcing inquiry fields", async () => {
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,

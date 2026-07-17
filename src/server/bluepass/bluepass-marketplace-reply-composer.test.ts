@@ -34,6 +34,62 @@ describe("composeBluePassMarketplaceAssistantReply", () => {
     expect(capturedInputs[0].requiredFacts).toEqual([]);
   });
 
+  it("rejects a concierge-mode LLM rewrite that drops a real percentage fact, even though concierge mode has no other required facts", async () => {
+    // Regression: a real bug reached production behavior in manual testing - the LLM rewrote an
+    // accurate commission-breakdown answer into a hallucinated "isn't publicly disclosed" hedge, and
+    // it passed isSafeRewrite because concierge mode's requiredFacts list was empty. Percentages in
+    // the deterministic reply must survive rewriting regardless of replyMode.
+    const capturedInputs: Parameters<AssistantLlmClient["composeReply"]>[0][] = [];
+    const result = await composeBluePassMarketplaceAssistantReply({
+      deterministicReply:
+        "BluePass takes a capped 18% total: 5% funds reef conservation, 5% goes to partners who refer guests, 3% covers payment processing, and 5% is the platform fee. Operators keep 82% of their own rate, and guests never pay more than booking direct.",
+      latestMessage: "what commission does BluePass take",
+      conversationHistory: [],
+      llmClient: {
+        async composeReply(input) {
+          capturedInputs.push(input);
+          return "BluePass Australia's commission structure isn't publicly disclosed, but our pricing is competitive and transparent, with no hidden fees.";
+        }
+      },
+      marketplaceResult: {
+        replyMode: "CONCIERGE",
+        bluepassMatches: [],
+        bluepassInquiry: null,
+        assistantContent: ""
+      }
+    });
+
+    expect(capturedInputs[0].requiredFacts).toEqual(expect.arrayContaining(["18%", "82%", "5%", "3%"]));
+    expect(result.source).toBe("DETERMINISTIC");
+    expect(result.reply).toContain("18%");
+    expect(result.reply).toContain("82%");
+    expect(result.reply).not.toContain("isn't publicly disclosed");
+  });
+
+  it("still allows a concierge-mode LLM rewrite that correctly preserves the real percentages", async () => {
+    const result = await composeBluePassMarketplaceAssistantReply({
+      deterministicReply:
+        "BluePass takes a capped 18% total: 5% funds reef conservation, 5% goes to partners who refer guests, 3% covers payment processing, and 5% is the platform fee. Operators keep 82% of their own rate, and guests never pay more than booking direct.",
+      latestMessage: "what commission does BluePass take",
+      conversationHistory: [],
+      llmClient: {
+        async composeReply() {
+          return "Great question - BluePass takes a capped 18% total (5% conservation, 5% partners, 3% payments, 5% platform), so operators keep 82% of their own rate. Guests never pay more than booking direct.";
+        }
+      },
+      marketplaceResult: {
+        replyMode: "CONCIERGE",
+        bluepassMatches: [],
+        bluepassInquiry: null,
+        assistantContent: ""
+      }
+    });
+
+    expect(result.source).toBe("LLM");
+    expect(result.reply).toContain("18%");
+    expect(result.reply).toContain("82%");
+  });
+
   it("keeps transactional replies fact-preserving", async () => {
     const capturedInputs: Parameters<AssistantLlmClient["composeReply"]>[0][] = [];
     const result = await composeBluePassMarketplaceAssistantReply({

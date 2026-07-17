@@ -125,6 +125,15 @@ export function buildBluePassValueReply() {
   return "BluePass lets travellers book vetted ocean operators, honestly: catalog prices are signals until the operator confirms. Every trip gives back - 5% goes to reef conservation and coastal communities. I can explain options, compare yachts, and prepare an operator inquiry - never fake a confirmed booking.";
 }
 
+// Real, public numbers - safe to state plainly to anyone who asks (traveller, operator, or
+// partner), not just the operator/partner onboarding playbooks in triage.ts. Persona classification
+// is sticky/first-signal-wins (see classifyBluePassPersona), so a traveller-flavored opener can lock
+// out ever reaching those playbooks in the same conversation - this keeps the commission figures
+// factually answerable regardless of what persona got locked in.
+export function buildBluePassCommissionReply() {
+  return "BluePass takes a capped 18% total: 5% funds reef conservation, 5% goes to partners who refer guests, 3% covers payment processing, and 5% is the platform fee. Operators keep 82% of their own rate, and guests never pay more than booking direct.";
+}
+
 export function buildBluePassSmallTalkReply(input?: { gratitude?: boolean }) {
   if (input?.gratitude) {
     return "Anytime. I can keep helping with this inquiry, compare other BluePass options, or start a fresh one when you are ready.";

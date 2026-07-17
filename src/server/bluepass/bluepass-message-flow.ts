@@ -23,6 +23,7 @@ import { classifyBluePassMarket, type BluePassMarket } from "@/core/bluepass/mar
 import { extractBluePassPersonaLead } from "@/core/bluepass/persona-lead";
 import type { BluePassRouterAction, BluePassRouterLlmClient } from "@/core/llm/bluepass-router";
 import {
+  buildBluePassCommissionReply,
   buildBluePassInquiryConfirmationReply,
   buildBluePassInquiryReadyReply,
   buildBluePassInquiryStatusReply,
@@ -360,6 +361,9 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   switch (action) {
     case "VALUE_QUESTION":
       return buildConciergeResponse(persona, buildBluePassValueReply(), [], showYachtsSuggestedReplies);
+
+    case "COMMISSION_QUESTION":
+      return buildConciergeResponse(persona, buildBluePassCommissionReply(), [], showYachtsSuggestedReplies);
 
     case "SMALL_TALK": {
       const gratitude = Boolean(routerDecision?.gratitude) || isBluePassGratitudeRequest(input.content);
@@ -760,6 +764,7 @@ function resolveFallbackBluePassRouterAction(input: {
   const knownRegions = input.knownRegions ?? ["Komodo", "Raja Ampat"];
 
   if (isBluePassValueQuestion(content)) return "VALUE_QUESTION";
+  if (isBluePassCommissionQuestion(content)) return "COMMISSION_QUESTION";
   if (isBluePassSmallTalkRequest(content)) return "SMALL_TALK";
   if (input.seasonDestination) return "SEASON_QUESTION";
   if (isBluePassDestinationComparisonRequest(content, knownRegions)) return "DESTINATION_COMPARISON";
@@ -796,6 +801,7 @@ function resolveFallbackBluePassRouterAction(input: {
 // the cascade itself uses before being trusted as "confident enough to skip the LLM."
 const bluepassHighConfidenceFallbackActions = new Set<BluePassRouterAction>([
   "VALUE_QUESTION",
+  "COMMISSION_QUESTION",
   "SMALL_TALK",
   "SEASON_QUESTION",
   "DESTINATION_COMPARISON",
@@ -992,6 +998,18 @@ function isBluePassValueQuestion(content: string) {
     /\b(?:why|how)\s+bluepass\b/.test(normalized) ||
     /\b(?:booking direct|book direct|direct booking|same price|conservation|give back|5%)\b/.test(normalized)
   );
+}
+
+// Commission/fee-structure questions are real, public numbers (see buildBluePassCommissionReply)
+// that anyone can ask about, not just an already-identified operator/partner - persona is sticky/
+// first-signal-wins (classifyBluePassPersona), so a traveller-flavored opener can otherwise lock a
+// conversation out of ever reaching triage.ts's operator/partner commission copy. Keep this list
+// narrow and unambiguous (no bare "fee"/"cut"/"cost", which show up in unrelated traveller
+// questions) so it only fires on a clear ask about BluePass's own take.
+export function isBluePassCommissionQuestion(content: string) {
+  const normalized = content.toLowerCase();
+
+  return /\b(?:commission|18\s*%|82\s*%|take\s*rate|platform\s+fee|fee\s+structure)\b/.test(normalized);
 }
 
 function isBluePassSmallTalkRequest(content: string) {

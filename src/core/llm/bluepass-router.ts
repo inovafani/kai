@@ -2,6 +2,7 @@ import type { BluePassInquiryIntent } from "@/core/bluepass/intent";
 
 export const bluePassRouterActions = [
   "VALUE_QUESTION",
+  "COMMISSION_QUESTION",
   "SMALL_TALK",
   "SEASON_QUESTION",
   "DESTINATION_COMPARISON",

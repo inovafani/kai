@@ -4,6 +4,7 @@ import {
   type AssistantLlmClient
 } from "@/core/llm/assistant-reply-composer";
 import { resolveBluePassCatalog, type BluePassCatalogSnapshotItem } from "@/core/bluepass/catalog";
+import { isBluePassCommissionQuestion } from "./bluepass-message-flow";
 
 type BluePassMarketplaceComposerResult = {
   reply: string;
@@ -33,7 +34,16 @@ export async function composeBluePassMarketplaceAssistantReply(input: {
 }): Promise<BluePassMarketplaceComposerResult> {
   const conciergeMode = input.marketplaceResult.replyMode === "CONCIERGE";
   const productTitles = buildMarketplaceProductTitles(input.marketplaceResult);
-  const requiredFacts = conciergeMode ? [] : buildMarketplaceRequiredFacts(input.marketplaceResult, input.deterministicReply);
+  // Concierge-mode replies otherwise carry zero required facts (paraphrase is fine for open chat -
+  // e.g. buildBluePassValueReply's own "5% goes to reef conservation" is fine to summarize loosely).
+  // But when the traveller specifically asked a commission-shaped question, the percentages in the
+  // deterministic reply are the actual answer, not color - they must survive rewriting in every mode,
+  // or an LLM rewrite is free to replace them with a hallucinated hedge like "isn't publicly
+  // disclosed" and still pass isSafeRewrite on an otherwise-empty required-facts list.
+  const requiredFacts = [
+    ...(conciergeMode ? [] : buildMarketplaceRequiredFacts(input.marketplaceResult, input.deterministicReply)),
+    ...(isBluePassCommissionQuestion(input.latestMessage) ? extractBluePassPercentageFacts(input.deterministicReply) : [])
+  ];
   // Derived from the actual resolved catalog (not a hardcoded literal) so it's self-updating as
   // soon as a real catalog snapshot carries new regions - no code change needed for the next one.
   const knownRegions = Array.from(
@@ -92,6 +102,10 @@ export function buildMarketplaceRequiredFacts(result: BluePassMarketplaceResultL
   ].filter((value): value is string => Boolean(value));
 
   return Array.from(new Set(facts));
+}
+
+function extractBluePassPercentageFacts(reply: string) {
+  return Array.from(new Set(reply.match(/\b\d{1,3}%/g) ?? []));
 }
 
 function extractBluePassDeterministicFacts(reply: string) {
