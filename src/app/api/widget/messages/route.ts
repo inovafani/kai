@@ -1,9 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { updateBookingMemoryState } from "@/core/booking/booking-memory";
-import { handleTravellerBookingMessage } from "@/core/booking/booking-orchestrator";
-import { MappedPmsAdapter } from "@/core/pms/mapped-pms-adapter";
-import { parsePublicProductCatalog } from "@/core/pms/public-product-catalog";
-import type { PmsProvider } from "@/core/tenant/types";
 import {
   createAssistantMessage,
   createManualInquiry,
@@ -11,20 +6,17 @@ import {
   findConversationBookingState,
   findTenantConversation,
   listRecentConversationMessages,
-  listRecentTravellerMessageContents,
-  upsertConversationBookingState
+  listRecentTravellerMessageContents
 } from "@/server/conversation/conversation-repository";
+import { runGenericBookingTurn } from "@/server/booking/generic-booking-turn";
 import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
 import { createGenericBookingRouterClient } from "@/server/llm/generic-booking-router-client";
 import { createBluePassRouterClient } from "@/server/llm/bluepass-router-client";
-import { buildBookingFailureManualInquiry } from "@/server/conversation/manual-inquiry-fallback";
 import { handleBluePassMarketplaceMessage } from "@/server/bluepass/bluepass-message-flow";
 import { composeBluePassMarketplaceAssistantReply } from "@/server/bluepass/bluepass-marketplace-reply-composer";
 import { shouldPolishBluePassMarketplaceReply } from "@/server/bluepass/bluepass-marketplace-reply-gate";
 import type { BluePassCatalogSnapshotItem } from "@/core/bluepass/catalog";
 import { resolveTenantBusinessPack } from "@/server/business-pack/resolve-tenant-business-pack";
-import { getPmsAdapter } from "@/server/pms/pms-adapter-registry";
-import { resolveTenantPmsEnv } from "@/server/pms/tenant-pms-credentials";
 import { getWidgetRequestOrigin } from "@/server/widget/request-origin";
 import { resolveWidgetRequest } from "@/server/widget/resolve-widget-request";
 import { shouldUseGenericBookingFlow } from "./business-pack-gate";
@@ -148,7 +140,8 @@ export async function POST(request: NextRequest) {
       latestMessage: content,
       conversationHistory: priorConversationMessages,
       llmClient: shouldPolish ? createAssistantLlmClient(process.env) : null,
-      marketplaceResult: bluepassResult
+      marketplaceResult: bluepassResult,
+      catalogInput: body.bluepassCatalog
     });
 
     const assistantMessage = await createAssistantMessage({
@@ -249,151 +242,19 @@ export async function POST(request: NextRequest) {
     content
   });
 
-  const provider = (resolved.tenant.config?.pmsProvider ?? "MOCK") as PmsProvider;
   const llmClient = createAssistantLlmClient(process.env);
   const routerClient = createGenericBookingRouterClient(process.env);
-  let assistantContent: string;
-  let manualInquiry: Awaited<ReturnType<typeof createManualInquiry>> | null = null;
-  let paymentRequest:
-    | {
-        conversationId: string;
-        productTitle: string | null;
-        dateText: string | null;
-        guests: number | null;
-        checkoutUrl: string | null;
-        status: "PAYMENT_PENDING";
-      }
-    | null = null;
-  let contactRequest:
-    | {
-        conversationId: string;
-        fields: ["name", "email", "phone"];
-        status: "CONTACT_DETAILS_REQUIRED";
-      }
-    | null = null;
 
-  try {
-    const tenantPmsEnv = await resolveTenantPmsEnv(resolved.tenant.id, provider, process.env);
-    const sourcePmsAdapter = getPmsAdapter(provider, tenantPmsEnv, fetch, resolved.tenant.slug);
-    const publicProductCatalog = parsePublicProductCatalog(resolved.tenant.config?.publicProductCatalog);
-    const pmsAdapter =
-      publicProductCatalog.length > 0 ? new MappedPmsAdapter(sourcePmsAdapter, publicProductCatalog) : sourcePmsAdapter;
-    const products = await pmsAdapter.listProducts();
-    const bookingState = updateBookingMemoryState({
-      previousState: previousBookingState,
-      message: content,
-      products
-    });
-
-    await upsertConversationBookingState({
-      tenantId: resolved.tenant.id,
-      conversationId: conversation.id,
-      state: bookingState
-    });
-
-    const bookingResult = await handleTravellerBookingMessage({
-      message: content,
-      priorTravellerMessages,
-      conversationHistory: [...priorConversationMessages, { role: "traveller", content }],
-      bookingMemory: bookingState,
-      pmsAdapter,
-      bookingWriteEnabled: resolved.tenant.config?.bookingWriteEnabled ?? false,
-      allowUnpaidExternalBooking: false,
-      llmClient,
-      routerClient,
-      tenantContext: {
-        tenantName: resolved.tenant.name,
-        brandVoice: resolved.tenant.branding?.brandVoice ?? null,
-        pmsProvider: provider,
-        responseGuardrails: resolved.tenant.config?.responseGuardrails ?? [],
-        productTitles: products.map((product) => product.title)
-      }
-    });
-
-    if (bookingResult.action === "MANUAL_INQUIRY_REQUIRED") {
-      manualInquiry = await createManualInquiry({
-        tenantId: resolved.tenant.id,
-        conversationId: conversation.id,
-        state: bookingState,
-        travellerMessage: content
-      });
-    }
-
-    const bookingStatePatch = bookingResult.bookingStatePatch;
-
-    if (bookingStatePatch) {
-      await upsertConversationBookingState({
-        tenantId: resolved.tenant.id,
-        conversationId: conversation.id,
-        state: bookingStatePatch
-      });
-
-      if (bookingResult.action === "BOOKING_PAYMENT_REQUIRED") {
-        paymentRequest = {
-          conversationId: conversation.id,
-          productTitle: bookingStatePatch.productTitle,
-          dateText: bookingStatePatch.dateText,
-          guests: bookingStatePatch.guests,
-          checkoutUrl: null,
-          status: "PAYMENT_PENDING"
-        };
-      }
-    }
-
-    const bookingFailureInquiry = buildBookingFailureManualInquiry(bookingResult);
-    if (bookingFailureInquiry) {
-      manualInquiry = await createManualInquiry({
-        tenantId: resolved.tenant.id,
-        conversationId: conversation.id,
-        state: bookingFailureInquiry.state,
-        travellerMessage: content,
-        travellerName: bookingFailureInquiry.travellerName,
-        travellerEmail: bookingFailureInquiry.travellerEmail,
-        travellerPhone: bookingFailureInquiry.travellerPhone
-      });
-    }
-
-    if (
-      (bookingResult.action === "BOOKING_INQUIRY_READY" ||
-        bookingResult.action === "BOOKING_WRITE_DISABLED" ||
-        bookingResult.action === "BOOKING_CHECKOUT_READY" ||
-        bookingResult.action === "BOOKING_PAYMENT_REQUIRED") &&
-      bookingResult.inquiryDraft
-    ) {
-      manualInquiry = await createManualInquiry({
-        tenantId: resolved.tenant.id,
-        conversationId: conversation.id,
-        state: {
-          productExternalId: bookingResult.inquiryDraft.productExternalId,
-          productTitle: bookingResult.inquiryDraft.productTitle,
-          dateText: bookingResult.inquiryDraft.dateText,
-          guests: bookingResult.inquiryDraft.guests
-        },
-        travellerMessage: content,
-        travellerName: bookingResult.inquiryDraft.travellerName,
-        travellerEmail: bookingResult.inquiryDraft.travellerEmail,
-        travellerPhone: bookingResult.inquiryDraft.travellerPhone
-      });
-    }
-
-    assistantContent = bookingResult.reply;
-    const asksForContactDetails =
-      bookingResult.action === "BOOKING_DETAILS_REQUIRED" &&
-      /name,\s*email,\s*and\s*phone/i.test(bookingResult.reply);
-
-    if (asksForContactDetails) {
-      contactRequest = {
-        conversationId: conversation.id,
-        fields: ["name", "email", "phone"],
-        status: "CONTACT_DETAILS_REQUIRED"
-      };
-    }
-  } catch (error) {
-    assistantContent =
-      error instanceof Error
-        ? "I can help with this, but " + error.message
-        : "I can help with this, but the PMS adapter is not available right now.";
-  }
+  const { assistantContent, manualInquiry, paymentRequest, contactRequest } = await runGenericBookingTurn({
+    tenant: resolved.tenant,
+    conversationId: conversation.id,
+    content,
+    previousBookingState,
+    priorTravellerMessages,
+    priorConversationMessages,
+    llmClient,
+    routerClient
+  });
 
   const assistantMessage = await createAssistantMessage({
     tenantId: resolved.tenant.id,

@@ -131,6 +131,32 @@ export async function findTenantConversation(input: { tenantId: string; conversa
   });
 }
 
+// Generalizes the find-or-create-by-phone pattern BluePass's own WhatsApp path already used
+// privately (bluepass-whatsapp-conversation.ts) so any tenant's WhatsApp traffic - not just
+// BluePass's - can resume the same Conversation across turns instead of starting fresh every time.
+export async function findOrCreateWhatsAppConversation(input: { tenantId: string; travellerId: string }) {
+  const existing = await prisma.conversation.findFirst({
+    where: {
+      tenantId: input.tenantId,
+      channel: "WHATSAPP",
+      travellerId: input.travellerId
+    },
+    orderBy: { updatedAt: "desc" }
+  });
+
+  return (
+    existing ??
+    (await prisma.conversation.create({
+      data: {
+        tenantId: input.tenantId,
+        channel: "WHATSAPP",
+        controlMode: "AI",
+        travellerId: input.travellerId
+      }
+    }))
+  );
+}
+
 // Lets a logged-in traveller's Kai memory follow their account instead of one browser's local
 // storage: the widget session endpoint uses this to resume their most recent conversation with a
 // tenant (if any) rather than always starting fresh, so switching devices/browsers while logged in
