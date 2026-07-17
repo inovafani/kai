@@ -1013,7 +1013,7 @@ describe("/api/whatsapp/webhook", () => {
       where: {
         tenantId: tenant.id,
         channel: "WHATSAPP",
-        travellerId: inboundPhone
+        whatsappPhone: inboundPhone
       },
       include: {
         messages: { orderBy: { createdAt: "asc" } }
@@ -1170,7 +1170,7 @@ describe("/api/whatsapp/webhook", () => {
       where: {
         tenantId: tenant.id,
         channel: "WHATSAPP",
-        travellerId: inboundPhone
+        whatsappPhone: inboundPhone
       }
     });
     const inquiry = await prisma.bluePassInquiry.findFirst({
@@ -1227,7 +1227,7 @@ describe("/api/whatsapp/webhook", () => {
       data: {
         tenantId: tenant.id,
         channel: "WHATSAPP",
-        travellerId: inboundPhone
+        whatsappPhone: inboundPhone
       }
     });
     await createOrReuseBluePassInquiry({
@@ -1346,7 +1346,7 @@ describe("/api/whatsapp/webhook", () => {
       data: {
         tenantId: tenant.id,
         channel: "WHATSAPP",
-        travellerId: inboundPhone
+        whatsappPhone: inboundPhone
       }
     });
     await createOrReuseBluePassInquiry({
@@ -1401,7 +1401,7 @@ describe("/api/whatsapp/webhook", () => {
     const requestBodyText = requestBody.text?.body ?? requestBody.interactive?.body?.text ?? "";
 
     expect(response.status).toBe(200);
-    expect(requestBodyText).toContain("BluePass helps travellers");
+    expect(requestBodyText).toContain("BluePass lets travellers");
     expect(requestBodyText).not.toContain("Current status");
     expect(requestBodyText).not.toContain("Operator Pending");
   }, 20_000);
@@ -1537,7 +1537,7 @@ describe("/api/whatsapp/webhook", () => {
       data: {
         tenantId: tenant.id,
         channel: "WHATSAPP",
-        travellerId: inboundPhone
+        whatsappPhone: inboundPhone
       }
     });
     await createOrReuseBluePassInquiry({
@@ -1967,7 +1967,7 @@ describe("/api/whatsapp/webhook", () => {
       where: {
         tenantId: tenant.id,
         channel: "WHATSAPP",
-        travellerId: inboundPhone
+        whatsappPhone: inboundPhone
       },
       include: {
         messages: { orderBy: { createdAt: "asc" } }
@@ -2294,7 +2294,7 @@ describe("/api/whatsapp/webhook", () => {
       where: {
         tenantId: pmsTenant.id,
         channel: "WHATSAPP",
-        travellerId: inboundPhone
+        whatsappPhone: inboundPhone
       },
       include: {
         messages: { orderBy: { createdAt: "asc" } }
@@ -2420,7 +2420,7 @@ describe("/api/whatsapp/webhook", () => {
     const conversation = await prisma.conversation.findFirst({
       where: {
         channel: "WHATSAPP",
-        travellerId: inboundPhone,
+        whatsappPhone: inboundPhone,
         tenant: { slug: bluepassTenantSlug }
       },
       include: {
@@ -2433,7 +2433,7 @@ describe("/api/whatsapp/webhook", () => {
     const pmsTenantConversation = await prisma.conversation.findFirst({
       where: {
         channel: "WHATSAPP",
-        travellerId: inboundPhone,
+        whatsappPhone: inboundPhone,
         tenantId: unrelatedPmsTenant.id
       }
     });

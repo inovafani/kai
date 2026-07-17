@@ -18,6 +18,7 @@ import type { WhatsAppInboundTextMessage } from "@/server/whatsapp/webhook";
 import { normalizeLocalPhone } from "@/server/phone/normalize-local-phone";
 import { sendWhatsAppImage, sendWhatsAppInteractiveButtons, sendWhatsAppText } from "@/server/whatsapp/client";
 import { handleBluePassMarketplaceMessage } from "./bluepass-message-flow";
+import type { BluePassPersona } from "@/core/bluepass/triage";
 import {
   findLatestBluePassParticipantContext,
   handleBluePassWhatsAppContextMessage
@@ -45,7 +46,12 @@ export async function handleBluePassWhatsAppInboundMessage(
   const partnerDirectoryIdentity = directoryIdentity
     ? null
     : await resolveBluePassPartnerDirectoryIdentityByPhone(input.from);
-  const identityPersona = directoryIdentity?.persona ?? partnerDirectoryIdentity?.persona ?? null;
+  // A phone with no directory entry can still be a known participant (it sent/received an
+  // existing BluePassInquiry) - that's a real identity signal too, just weaker than a directory
+  // match, so it only fills in when the directory lookups come back empty.
+  const contextPersona: BluePassPersona | null =
+    context?.participant === "operator" ? "OPERATOR" : context?.participant === "traveller" ? "TRAVELLER" : null;
+  const identityPersona = directoryIdentity?.persona ?? partnerDirectoryIdentity?.persona ?? contextPersona;
   const identityName = directoryIdentity?.operatorName ?? partnerDirectoryIdentity?.partnerName ?? null;
 
   if (identityPersona) {
@@ -158,10 +164,10 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
           tenantId: tenant.id,
           channel: "WHATSAPP",
           controlMode: "AI",
-          travellerId: travellerPhone
+          whatsappPhone: travellerPhone
         }
       })
-    : await findOrCreateWhatsAppConversation({ tenantId: tenant.id, travellerId: travellerPhone });
+    : await findOrCreateWhatsAppConversation({ tenantId: tenant.id, whatsappPhone: travellerPhone });
 
   const priorTravellerMessages = options.resetConversation
     ? []

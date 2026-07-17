@@ -134,27 +134,46 @@ export async function findTenantConversation(input: { tenantId: string; conversa
 // Generalizes the find-or-create-by-phone pattern BluePass's own WhatsApp path already used
 // privately (bluepass-whatsapp-conversation.ts) so any tenant's WhatsApp traffic - not just
 // BluePass's - can resume the same Conversation across turns instead of starting fresh every time.
-export async function findOrCreateWhatsAppConversation(input: { tenantId: string; travellerId: string }) {
+// Keyed by the dedicated whatsappPhone column (DB-enforced unique per tenant), not travellerId -
+// the same column setWhatsAppConversationControlMode uses for human-takeover.
+export async function findOrCreateWhatsAppConversation(input: { tenantId: string; whatsappPhone: string }) {
   const existing = await prisma.conversation.findFirst({
     where: {
       tenantId: input.tenantId,
+      whatsappPhone: input.whatsappPhone
+    }
+  });
+  if (existing) return existing;
+
+  return prisma.conversation.create({
+    data: {
+      tenantId: input.tenantId,
       channel: "WHATSAPP",
-      travellerId: input.travellerId
-    },
-    orderBy: { updatedAt: "desc" }
+      controlMode: "AI",
+      whatsappPhone: input.whatsappPhone
+    }
+  });
+}
+
+/**
+ * Flip control of a WhatsApp thread (e.g. a human answered from the Business phone app, so the
+ * concierge must go quiet). Creates the conversation when the human replied before any inbound
+ * message from this traveller ever reached us.
+ */
+export async function setWhatsAppConversationControlMode(input: {
+  tenantId: string;
+  whatsappPhone: string;
+  controlMode: "AI" | "HUMAN" | "PAUSED";
+}) {
+  const conversation = await findOrCreateWhatsAppConversation({
+    tenantId: input.tenantId,
+    whatsappPhone: input.whatsappPhone
   });
 
-  return (
-    existing ??
-    (await prisma.conversation.create({
-      data: {
-        tenantId: input.tenantId,
-        channel: "WHATSAPP",
-        controlMode: "AI",
-        travellerId: input.travellerId
-      }
-    }))
-  );
+  return prisma.conversation.update({
+    where: { id: conversation.id },
+    data: { controlMode: input.controlMode }
+  });
 }
 
 // Lets a logged-in traveller's Kai memory follow their account instead of one browser's local

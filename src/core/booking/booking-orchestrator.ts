@@ -36,6 +36,12 @@ import type {
   PmsTicketQuantity,
   PmsTimeOption
 } from "@/core/pms/types";
+import {
+  isPolicyShapedQuestion,
+  matchesHandoffKeywords,
+  matchKnowledgeEntry
+} from "@/core/knowledge/knowledge-matcher";
+import type { OperatorKnowledgePack } from "@/core/knowledge/types";
 
 export type BookingOrchestratorAction =
   | "AVAILABILITY_CHECKED"
@@ -78,6 +84,8 @@ export interface HandleTravellerBookingMessageInput {
   llmClient?: AssistantLlmClient | null;
   routerClient?: GenericBookingRouterLlmClient | null;
   tenantContext?: AssistantTenantContext | null;
+  /** Operator-authored answers (policies, logistics, FAQs). Loaded per tenant. */
+  knowledgePack?: OperatorKnowledgePack | null;
 }
 
 function formatPrice(currency: string, unitPriceCents: number) {
@@ -1560,9 +1568,25 @@ export async function handleTravellerBookingMessage(
   }
 
   if (resolvedIntent === "HUMAN_HANDOFF") {
+    const pack = input.knowledgePack ?? null;
+    // An operator-authored handoff line, or a knowledge answer if the handoff was actually a
+    // policy question we can answer.
+    const knowledgeAnswer = pack ? matchKnowledgeEntry(input.message, pack) : null;
+    if (knowledgeAnswer) {
+      return composeReplyResult({
+        action: "GENERAL_REPLY",
+        deterministicReply: knowledgeAnswer.answer,
+        requiredFacts: knowledgeAnswer.isPolicy ? [knowledgeAnswer.answer] : [],
+        llmClient: input.llmClient,
+        tenantContext: input.tenantContext,
+        latestUserMessage: input.message,
+        conversationHistory: input.conversationHistory
+      });
+    }
     return composeReplyResult({
       action: "HUMAN_HANDOFF",
-      deterministicReply: composeBookingBrainReply({ ...analysis, intent: resolvedIntent }),
+      deterministicReply: pack?.escalation.handoffMessage ?? composeBookingBrainReply({ ...analysis, intent: resolvedIntent }),
+      requiredFacts: pack?.escalation.handoffMessage ? [pack.escalation.handoffMessage] : undefined,
       llmClient: input.llmClient,
       tenantContext: input.tenantContext,
       latestUserMessage: input.message,
@@ -1605,6 +1629,43 @@ export async function handleTravellerBookingMessage(
   }
 
   if (resolvedIntent === "GENERAL_QUESTION") {
+    const pack = input.knowledgePack ?? null;
+
+    // Prefer an operator-authored answer when the question matches one.
+    const knowledgeAnswer = pack ? matchKnowledgeEntry(input.message, pack) : null;
+    if (knowledgeAnswer) {
+      return composeReplyResult({
+        action: "GENERAL_REPLY",
+        deterministicReply: knowledgeAnswer.answer,
+        // Policy answers are forced verbatim through any LLM rephrase.
+        requiredFacts: knowledgeAnswer.isPolicy ? [knowledgeAnswer.answer] : [],
+        llmClient: input.llmClient,
+        tenantContext: input.tenantContext,
+        latestUserMessage: input.message,
+        conversationHistory: input.conversationHistory
+      });
+    }
+
+    // No matching answer to a policy-shaped question -> hand to a human rather than let Kai
+    // improvise a policy the operator never gave.
+    if (
+      pack &&
+      pack.escalation.fallbackToHuman &&
+      (isPolicyShapedQuestion(input.message) || matchesHandoffKeywords(input.message, pack))
+    ) {
+      return composeReplyResult({
+        action: "HUMAN_HANDOFF",
+        deterministicReply:
+          pack.escalation.handoffMessage ??
+          "That's a good question for the operator directly - I'll pass you to their team so you get an accurate answer.",
+        requiredFacts: pack.escalation.handoffMessage ? [pack.escalation.handoffMessage] : undefined,
+        llmClient: input.llmClient,
+        tenantContext: input.tenantContext,
+        latestUserMessage: input.message,
+        conversationHistory: input.conversationHistory
+      });
+    }
+
     return composeReplyResult({
       action: "GENERAL_REPLY",
       deterministicReply: composeBookingBrainReply({ ...analysis, intent: resolvedIntent }),

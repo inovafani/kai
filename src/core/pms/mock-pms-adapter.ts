@@ -8,7 +8,7 @@ import type {
   PmsProduct
 } from "./types";
 
-export type MockPmsCatalog = "komodo" | "boattime";
+export type MockPmsCatalog = "komodo" | "boattime" | "australia";
 
 type MockPmsProduct = PmsProduct & {
   capacity: number;
@@ -18,6 +18,55 @@ type MockPmsProduct = PmsProduct & {
 };
 
 const catalogProducts: Record<MockPmsCatalog, MockPmsProduct[]> = {
+  // Australia is the launch market - the general AU reef/charter catalog, used as the
+  // default for AU tenants. Whole-boat charter is MANUAL_INQUIRY (quote over WhatsApp/SMS).
+  australia: [
+    {
+      externalProductId: "au-gbr-reef-day-trip",
+      title: "Great Barrier Reef Day Trip",
+      description: "A full-day outer reef snorkel and dive trip from Cairns.",
+      bookingMode: "AUTO_BOOKING",
+      capacity: 30,
+      currency: "AUD",
+      unitPriceCents: 21500
+    },
+    {
+      externalProductId: "au-whitsundays-sailing-day",
+      title: "Whitsundays Sailing Day",
+      description: "A day sailing the Whitsundays with a stop at Whitehaven Beach.",
+      bookingMode: "AUTO_BOOKING",
+      capacity: 20,
+      currency: "AUD",
+      unitPriceCents: 24900
+    },
+    {
+      externalProductId: "au-ningaloo-whale-shark-swim",
+      title: "Ningaloo Whale Shark Swim",
+      description: "A guided swim with whale sharks on Ningaloo Reef from Exmouth.",
+      bookingMode: "AUTO_BOOKING",
+      capacity: 20,
+      currency: "AUD",
+      unitPriceCents: 42500
+    },
+    {
+      externalProductId: "au-reef-dive-trip",
+      title: "Reef Dive Trip",
+      description: "A guided two-dive day on the reef for certified divers.",
+      bookingMode: "AUTO_BOOKING",
+      capacity: 16,
+      currency: "AUD",
+      unitPriceCents: 27900
+    },
+    {
+      externalProductId: "au-whole-boat-charter",
+      title: "Whole-Boat Charter",
+      description: "A private whole-boat charter for groups, quoted by the operator.",
+      bookingMode: "MANUAL_INQUIRY",
+      capacity: 0,
+      currency: "AUD",
+      unitPriceCents: 0
+    }
+  ],
   komodo: [
     {
       externalProductId: "mock-komodo-day-trip",
@@ -146,7 +195,7 @@ export class MockPmsAdapter implements PmsAdapter {
         date: request.date,
         available: false,
         remaining: 0,
-        currency: this.catalog === "boattime" ? "AUD" : "USD",
+        currency: this.catalog === "komodo" ? "USD" : "AUD",
         unitPriceCents: 0
       };
     }

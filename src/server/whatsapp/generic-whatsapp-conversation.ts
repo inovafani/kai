@@ -29,7 +29,7 @@ export async function handleGenericWhatsAppInboundMessage(
   const travellerPhone = normalizeLocalPhone(input.from);
   const conversation = await findOrCreateWhatsAppConversation({
     tenantId: tenant.id,
-    travellerId: travellerPhone
+    whatsappPhone: travellerPhone
   });
 
   const [previousBookingState, priorTravellerMessages, priorConversationMessages] = await Promise.all([

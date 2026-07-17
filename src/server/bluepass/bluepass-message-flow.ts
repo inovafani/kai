@@ -19,7 +19,8 @@ import {
   type BluePassInquiryIntent,
   type BluePassRequiredInquiryField
 } from "@/core/bluepass/intent";
-import { extractBluePassPersonaLead } from "@/core/bluepass/lead";
+import { classifyBluePassMarket, type BluePassMarket } from "@/core/bluepass/market";
+import { extractBluePassPersonaLead } from "@/core/bluepass/persona-lead";
 import type { BluePassRouterAction, BluePassRouterLlmClient } from "@/core/llm/bluepass-router";
 import {
   buildBluePassInquiryConfirmationReply,
@@ -35,11 +36,14 @@ import {
   buildBluePassYachtComparisonReply,
   buildBluePassYachtOverviewReply
 } from "@/core/bluepass/reply";
+import type { BluePassLead } from "@/core/bluepass/lead";
 import {
   buildBluePassLeadCapturedReply,
   buildBluePassOperatorReply,
   buildBluePassPartnerReply,
+  buildBluePassTriageGreeting,
   classifyBluePassPersona,
+  shouldSendBluePassTriageGreeting,
   type BluePassPersona
 } from "@/core/bluepass/triage";
 import {
@@ -66,10 +70,17 @@ export type BluePassMarketplaceMessageInput = {
 };
 
 export async function handleBluePassMarketplaceMessage(input: BluePassMarketplaceMessageInput) {
-  const persona = classifyBluePassPersona({
-    messages: [input.content, ...input.priorTravellerMessages],
+  // Oldest-first: classifyBluePassPersona/classifyBluePassMarket are sticky, first-signal-wins
+  // scans that expect the earliest message first, so an established persona/market from earlier
+  // in the conversation isn't overridden by a later, unrelated message.
+  const allMessages = [...input.priorTravellerMessages, input.content];
+  const persona = classifyBluePassPersonaWithIdentity({
+    messages: allMessages,
     identityPersona: input.identityPersona
   });
+  const market = resolveBluePassMarket(allMessages);
+  const pitched =
+    input.priorTravellerMessages.length > 0 && classifyBluePassPersona(input.priorTravellerMessages) === persona;
 
   if (isBluePassResetConversationRequest(input.content)) {
     return buildConciergeResponse(
@@ -96,15 +107,15 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
         sourceMessage: input.content
       });
 
-      return buildConciergeResponse(persona, buildBluePassLeadCapturedReply({ persona, lead }));
+      return buildConciergeResponse(
+        persona,
+        buildBluePassLeadCapturedReply({ persona, lead: toBluePassLead(lead) })
+      );
     }
 
     return buildConciergeResponse(
       persona,
-      buildBluePassOperatorReply({
-        latestMessage: input.content,
-        operatorName: input.identityName
-      })
+      buildBluePassOperatorReply({ latestMessage: input.content, pitched, market }).reply
     );
   }
 
@@ -123,14 +134,15 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
         sourceMessage: input.content
       });
 
-      return buildConciergeResponse(persona, buildBluePassLeadCapturedReply({ persona, lead }));
+      return buildConciergeResponse(
+        persona,
+        buildBluePassLeadCapturedReply({ persona, lead: toBluePassLead(lead) })
+      );
     }
 
     return buildConciergeResponse(
       persona,
-      buildBluePassPartnerReply({
-        latestMessage: input.content
-      })
+      buildBluePassPartnerReply({ latestMessage: input.content, pitched, market }).reply
     );
   }
 
@@ -272,6 +284,38 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     missingFields: regexMissingFields,
     knownRegions
   });
+
+  // Only a genuinely content-free opener (fallbackAction === SMALL_TALK, e.g. "Hi") on the very
+  // first turn should be met with "who are you" instead of an answer - this is first-touch triage
+  // (see the module doc-comment on shouldSendBluePassTriageGreeting), not a check that re-runs on
+  // every turn. classifyBluePassPersona only recognizes a fixed keyword list, so an established
+  // conversation can still read as UNKNOWN persona (e.g. someone who named a specific yacht and
+  // already gave contact details, then just says "thanks") without priorTravellerMessages being
+  // empty - the greeting must not re-litigate who they are once there is real history. Anything the
+  // cascade above already recognizes as a real, on-topic question (general questions, season/
+  // comparison/yacht-info, etc.) must also reach its own handling below (including LLM router
+  // escalation for GENERAL_QUESTION) rather than being preempted here, per
+  // shouldSendBluePassTriageGreeting's own contract of "no question the marketplace flow already
+  // answers."
+  if (
+    fallbackAction === "SMALL_TALK" &&
+    input.priorTravellerMessages.length === 0 &&
+    shouldSendBluePassTriageGreeting({
+      persona,
+      missingFields: regexMissingFields,
+      hasIntentSignal: Boolean(
+        messageIntent.destination ||
+          messageIntent.dateWindow ||
+          messageIntent.guests ||
+          messageIntent.tripType ||
+          messageIntent.budget ||
+          latestMentionedYachts.length > 0
+      )
+    })
+  ) {
+    return buildConciergeResponse(persona, buildBluePassTriageGreeting());
+  }
+
   const shouldCallRouterLlm = shouldEscalateBluePassRouterToLlm({
     fallbackAction,
     content: input.content,
@@ -806,6 +850,32 @@ function resolvePersonaLead(input: {
       messages: [...input.priorTravellerMessages, input.content]
     }) ?? latestLead
   );
+}
+
+// A known directory identity (a registered operator/partner's own WhatsApp number) sticks unless
+// the latest message alone clearly classifies as a different, specific persona - e.g. an operator
+// asking to book their own personal trip. classifyBluePassPersona is already sticky/first-signal-
+// wins across a message list, so re-running it on just the latest message is the narrowest
+// possible override check.
+function classifyBluePassPersonaWithIdentity(input: {
+  messages: string[];
+  identityPersona?: BluePassPersona | null;
+}): BluePassPersona {
+  if (!input.identityPersona) {
+    return classifyBluePassPersona(input.messages);
+  }
+
+  const latestPersona = classifyBluePassPersona([input.messages.at(-1) ?? ""]);
+  return latestPersona === "UNKNOWN" ? input.identityPersona : latestPersona;
+}
+
+function resolveBluePassMarket(messages: string[]): BluePassMarket | undefined {
+  const market = classifyBluePassMarket(messages);
+  return market === "UNKNOWN" ? undefined : market;
+}
+
+function toBluePassLead(lead: { name?: string; email?: string; phone?: string }): BluePassLead {
+  return { name: lead.name, email: lead.email, phone: lead.phone };
 }
 
 async function resolveDeclinedInquiryAlternative(input: {

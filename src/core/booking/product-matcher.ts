@@ -37,7 +37,17 @@ const ALIASES: Record<string, string[]> = {
   reef: ["reef", "snorkel"],
   snorkeling: ["snorkel"],
   snorkelling: ["snorkel"],
-  snorkel: ["snorkel"]
+  snorkel: ["snorkel"],
+  // Australia trip types
+  sail: ["sailing", "charter"],
+  sailing: ["sailing", "charter"],
+  dive: ["dive", "reef"],
+  diving: ["dive", "reef"],
+  whale: ["whale"],
+  whales: ["whale"],
+  gbr: ["reef"],
+  barrier: ["reef"],
+  whitsundays: ["whitsundays", "sailing"]
 };
 
 function normalize(value: string) {

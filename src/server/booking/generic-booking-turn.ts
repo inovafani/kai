@@ -3,6 +3,7 @@ import { updateBookingMemoryState } from "@/core/booking/booking-memory";
 import { handleTravellerBookingMessage, type BookingOrchestratorResult } from "@/core/booking/booking-orchestrator";
 import type { AssistantConversationMessage, AssistantLlmClient } from "@/core/llm/assistant-reply-composer";
 import type { GenericBookingRouterLlmClient } from "@/core/llm/generic-booking-router";
+import { parseKnowledgePack, summarizeKnowledgePack } from "@/core/knowledge/knowledge-matcher";
 import { MappedPmsAdapter } from "@/core/pms/mapped-pms-adapter";
 import { parsePublicProductCatalog } from "@/core/pms/public-product-catalog";
 import type { PmsProvider } from "@/core/tenant/types";
@@ -18,6 +19,7 @@ export interface GenericBookingTurnTenant {
   config: {
     pmsProvider: PmsProvider;
     publicProductCatalog: unknown;
+    operatorKnowledgePack?: unknown;
     bookingWriteEnabled?: boolean | null;
     responseGuardrails?: string[] | null;
   } | null;
@@ -77,6 +79,7 @@ export async function runGenericBookingTurn(
     const publicProductCatalog = parsePublicProductCatalog(input.tenant.config?.publicProductCatalog);
     const pmsAdapter =
       publicProductCatalog.length > 0 ? new MappedPmsAdapter(sourcePmsAdapter, publicProductCatalog) : sourcePmsAdapter;
+    const knowledgePack = parseKnowledgePack(input.tenant.config?.operatorKnowledgePack);
     const products = await pmsAdapter.listProducts();
     const bookingState = updateBookingMemoryState({
       previousState: input.previousBookingState,
@@ -100,12 +103,14 @@ export async function runGenericBookingTurn(
       allowUnpaidExternalBooking: false,
       llmClient: input.llmClient ?? null,
       routerClient: input.routerClient ?? null,
+      knowledgePack,
       tenantContext: {
         tenantName: input.tenant.name,
         brandVoice: input.tenant.branding?.brandVoice ?? null,
         pmsProvider: provider,
         responseGuardrails: input.tenant.config?.responseGuardrails ?? [],
-        productTitles: products.map((product) => product.title)
+        productTitles: products.map((product) => product.title),
+        knowledgeSummary: summarizeKnowledgePack(knowledgePack)
       }
     });
 

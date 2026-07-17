@@ -3,7 +3,7 @@ import { findBluePassAlternativeYachts, type BluePassYachtCard } from "@/core/bl
 import { buildBluePassDispatchText } from "@/core/bluepass/dispatch";
 import type { BluePassInquiryIntent } from "@/core/bluepass/intent";
 import { calculateBluePassLedgerEstimate } from "@/core/bluepass/ledger";
-import type { BluePassPersonaLead } from "@/core/bluepass/lead";
+import type { BluePassPersonaLead } from "@/core/bluepass/persona-lead";
 import { composeAssistantReply } from "@/core/llm/assistant-reply-composer";
 import { prisma } from "@/lib/prisma";
 import {

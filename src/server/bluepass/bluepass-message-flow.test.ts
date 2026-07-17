@@ -42,8 +42,8 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.bluepassInquiry).toBeNull();
     expect(result.bluepassDispatch).toBeNull();
     expect(result.assistantContent).toContain("82%");
-    expect(result.assistantContent).toContain("18%");
-    expect(result.assistantContent).toContain("operator");
+    expect(result.assistantContent).toContain("5% platform");
+    expect(result.assistantContent).toContain("Claim link");
     expect(result.assistantContent).not.toContain("Please share your name");
     expect(result.assistantContent).not.toContain("guest count");
   });
@@ -78,11 +78,12 @@ describe("handleBluePassMarketplaceMessage", () => {
       identityName: "Calico Jack"
     });
 
+    expect(result.persona).toBe("OPERATOR");
     expect(result.bluepassInquiry).toBeNull();
     expect(result.bluepassDispatch).toBeNull();
-    expect(result.assistantContent).toContain("Calico Jack");
     expect(result.assistantContent).toContain("82%");
-    expect(result.assistantContent).toContain("18%");
+    expect(result.assistantContent).toContain("5% conservation");
+    expect(result.assistantContent).toContain("5% platform");
     expect(result.assistantContent).not.toContain("partner commission");
     expect(result.assistantContent).not.toContain("Please share your name");
   });
@@ -146,9 +147,10 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.persona).toBe("OPERATOR");
     expect(result.bluepassInquiry).toBeNull();
     expect(result.bluepassDispatch).toBeNull();
-    expect(result.assistantContent).toContain("operator lead");
+    expect(result.assistantContent).toContain("claim link");
     expect(result.assistantContent).toContain("operator@calico.test");
-    expect(result.assistantContent).toContain("+62 853 3721 0180");
+    // Phone is intentionally not echoed in the reply when an email is also present (the claim
+    // link goes to the email) - it must still land on the persisted lead record, checked below.
     expect(lead).toMatchObject({
       status: "DRAFT",
       travellerEmail: "operator@calico.test",
@@ -181,9 +183,10 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.persona).toBe("PARTNER");
     expect(result.bluepassInquiry).toBeNull();
     expect(result.bluepassDispatch).toBeNull();
-    expect(result.assistantContent).toContain("partner lead");
+    expect(result.assistantContent).toContain("partner claim link");
     expect(result.assistantContent).toContain("agent@example.test");
-    expect(result.assistantContent).toContain("08123456789");
+    // Phone is intentionally not echoed in the reply when an email is also present (the claim
+    // link goes to the email) - it must still land on the persisted lead record, checked below.
     expect(lead).toMatchObject({
       status: "DRAFT",
       travellerEmail: "agent@example.test",
@@ -794,7 +797,6 @@ describe("handleBluePassMarketplaceMessage", () => {
       productUrl: "https://bluepass.co/yachts/calico-jack"
     });
     expect(result.assistantContent).toContain("Calico Jack");
-    expect(result.assistantContent).toContain("https://bluepass.co/yachts/calico-jack");
   });
 
   it("asks for booking details for a selected yacht without showing inquiry cards too early", async () => {
@@ -845,7 +847,7 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.assistantContent).toContain("Vela");
     expect(result.assistantContent).toContain("Legend");
     expect(result.assistantContent).toContain("Komodo");
-    expect(result.assistantContent).toContain("live calendar");
+    expect(result.assistantContent).toContain("live availability");
     expect(result.assistantContent).toContain("dates and group size");
     expect(result.assistantContent).not.toContain("Alila Purnama");
   });

@@ -1,43 +1,108 @@
-import type { BluePassPersona } from "./triage";
+/**
+ * Deterministic lead extraction for operator / partner conversations.
+ *
+ * Every branch of the onboarding playbooks funnels toward "company + one
+ * reachable channel". This module pulls those details out of the message
+ * history so Kai can acknowledge what it heard and the flow can persist a
+ * lead instead of asking again for things already given.
+ */
 
-export type BluePassPersonaLead = {
-  persona: Extract<BluePassPersona, "OPERATOR" | "PARTNER">;
+export type BluePassLead = {
+  company?: string;
   name?: string;
   email?: string;
   phone?: string;
+  region?: string;
 };
 
-export function extractBluePassPersonaLead(input: {
-  persona: Extract<BluePassPersona, "OPERATOR" | "PARTNER">;
-  messages: string[];
-}): BluePassPersonaLead | null {
-  const text = input.messages.join("\n");
-  const email = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0];
-  const phone = extractLeadPhone(text);
-  const name = extractLeadName(text);
+const knownRegions = [
+  // Indonesia
+  "raja ampat",
+  "komodo",
+  "labuan bajo",
+  "sorong",
+  "bali",
+  "lombok",
+  "gili",
+  "lembeh",
+  "sulawesi",
+  "flores",
+  // Australia (specific places first so they win over the country fallback)
+  "great barrier reef",
+  "whitsundays",
+  "ningaloo",
+  "gold coast",
+  "byron bay",
+  "port douglas",
+  "cairns",
+  "airlie",
+  "exmouth",
+  "rottnest",
+  "tasmania",
+  "sydney",
+  "perth",
+  // Country fallbacks (handled specially - never used as a specific region)
+  "indonesia",
+  "australia"
+];
 
-  if (!email && !phone) return null;
+// Country-level fallbacks that should not be returned as a specific region.
+const countryFallbacks = ["indonesia", "australia"];
 
+export function extractBluePassLead(messages: string[]): BluePassLead {
+  const text = messages.join("\n");
+  const lead: BluePassLead = {};
+
+  const emailMatch = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  if (emailMatch) lead.email = emailMatch[0];
+
+  const phoneMatch = text.match(/\b(?:phone|whatsapp|wa)(?:\s+number)?\s*(?:is|:)?\s*([+\d][\d\s().-]{6,})/i);
+  if (phoneMatch) lead.phone = phoneMatch[1].trim();
+
+  const nameMatch = text.match(
+    /\b(?:my name is|name is|i am|i'm)\s+([A-Za-z][A-Za-z' -]{1,60}?)(?=,|\.|$|\s+(?:email|phone|whatsapp|from|at|and)\b)/im
+  );
+  if (nameMatch) lead.name = nameMatch[1].trim();
+
+  // Prefix is case-insensitive via explicit casings; the company words
+  // themselves must be capitalised (that is the signal).
+  const companyMatch = text.match(
+    /\b(?:[Cc]ompany(?:\s+name)?\s+is|[Cc]ompany's|[Ww]e'?re\s+called|[Ww]e\s+are\s+called|[Cc]alled|[Nn]amed|[Ii]'?m\s+from|[Ww]e'?re|[Ww]e\s+are|[Tt]his\s+is)\s+((?:[A-Z][\w&'.-]*)(?:\s+[A-Z][\w&'.-]*){0,4})(?=,|\.|$|\s+(?:in|at|out|and|based)\b)/m
+  );
+  if (companyMatch) {
+    const candidate = companyMatch[1].trim();
+    // Skip pronoun-ish and place-only captures ("we're In Indonesia").
+    if (!knownRegions.includes(candidate.toLowerCase()) && candidate.length > 1) {
+      lead.company = candidate;
+    }
+  }
+
+  const lowerText = text.toLowerCase();
+  const basedMatch = text.match(/\b(?:based in|out of|port is|home port is|from)\s+([A-Za-z][A-Za-z' -]{2,40}?)(?=,|\.|$|\s+and\b)/im);
+  const region =
+    knownRegions.find((candidate) => !countryFallbacks.includes(candidate) && lowerText.includes(candidate)) ??
+    countryFallbacks.find((country) => lowerText.includes(country));
+  if (basedMatch) {
+    lead.region = basedMatch[1].trim();
+  } else if (region) {
+    lead.region = titleCase(region);
+  }
+
+  return lead;
+}
+
+export function mergeBluePassLead(previous: BluePassLead | null | undefined, next: BluePassLead): BluePassLead {
   return {
-    persona: input.persona,
-    name,
-    email,
-    phone
+    ...(previous ?? {}),
+    ...Object.fromEntries(Object.entries(next).filter(([, value]) => value !== undefined))
   };
 }
 
-function extractLeadPhone(text: string) {
-  const explicit = text.match(/\b(?:phone|whatsapp|wa|contact(?: me)? at)(?:\s+number)?\s*(?:is|:|at)?\s*([+\d][\d\s().-]{6,})/i);
-  if (explicit) return explicit[1].trim().replace(/[,.]$/g, "");
-
-  const fallback = text.match(/(?:\+?\d[\d\s().-]{7,}\d)/);
-  return fallback?.[0].trim().replace(/[,.]$/g, "");
+/** Minimum viable lead: some way for the team to actually reach them. */
+export function leadHasReachableChannel(lead: BluePassLead) {
+  return Boolean(lead.email || lead.phone);
 }
 
-function extractLeadName(text: string) {
-  const person = text.match(/\b(?:my name is|name is|i am|i'm)\s+([A-Za-z][A-Za-z' -]{1,60})(?=,|\.|$|\s+(?:email|phone|whatsapp|and)\b)/i);
-  if (person) return person[1].trim();
-
-  const company = text.match(/\b(?:i run|we run|i operate|we operate|i own)\s+([A-Za-z0-9][A-Za-z0-9' &.-]{1,60})(?=\.|,|$|\s+(?:in|and|with|contact)\b)/i);
-  return company?.[1].trim();
+function titleCase(value: string) {
+  return value.replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }
