@@ -19,6 +19,9 @@ export interface AssistantTenantContext {
   /** Regions/destinations this tenant genuinely operates in - mentioning one is never treated as
    * an invented product, even without also naming a specific catalog item. */
   knownRegions?: string[];
+  /** One-line grounding on what operator knowledge exists - context only, never the load-bearing
+   *  answer (that rides deterministicReply). */
+  knowledgeSummary?: string | null;
   systemPrompt?: string | null;
 }
 
@@ -101,21 +104,29 @@ export function buildTenantSystemPrompt(tenantContext?: AssistantTenantContext |
   }
 
   const tenantName = tenantContext?.tenantName ?? "this business";
-  const brandVoice = tenantContext?.brandVoice?.trim() || "Warm, concise, practical, and grounded in tenant data.";
+  const brandVoice =
+    tenantContext?.brandVoice?.trim() ||
+    "Warm, quick, straight - the sharpest guide on the dock: genuinely helpful, concrete, never salesy.";
   const pmsProvider = tenantContext?.pmsProvider ?? "the configured PMS";
   const guardrails = tenantContext?.responseGuardrails?.filter(Boolean) ?? [];
   const products = tenantContext?.productTitles?.filter(Boolean) ?? [];
+  const knowledgeSummary = tenantContext?.knowledgeSummary?.trim();
 
   return [
     `You are Kai for ${tenantName}.`,
     `Use this tenant voice: ${brandVoice}`,
+    "Answer first, then colour: the opening sentence does the work. Concrete details beat adjectives.",
+    "No corporate filler, no exclamation stacking, no emojis. Never re-ask for a detail the user already gave.",
     `Ground answers in ${pmsProvider} data and the tenant business pack.`,
+    knowledgeSummary ? knowledgeSummary : null,
     products.length > 0 ? `Known PMS products: ${products.join(" | ")}` : "Only mention products present in tenant data.",
     "Keep responses to 2-3 sentences unless the traveller asks for detail.",
     "Ask at most one question in each response.",
     "Do not take card details in chat, invent availability, invent prices, or claim a booking is confirmed unless the PMS has confirmed it.",
     guardrails.length > 0 ? `Tenant guardrails: ${guardrails.join(" | ")}` : "Tenant guardrails: standard Kai booking safety."
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function startsWithI(value: string) {

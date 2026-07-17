@@ -63,10 +63,18 @@ describe("parseBluePassRouterDecision", () => {
     expect(decision?.intent.guests).toBeUndefined();
   });
 
-  it("ignores a seasonDestination outside the known enum", () => {
+  it("preserves any non-empty seasonDestination the model returns, not just Komodo/Raja Ampat", () => {
+    // seasonDestination used to be filtered against a hardcoded 2-value enum (Komodo/Raja Ampat
+    // only) - now that the catalog itself is the source of truth for known regions, the parser
+    // trusts whatever destination string the model extracted, e.g. an Australian region.
     const decision = parseBluePassRouterDecision(
-      JSON.stringify({ action: "SEASON_QUESTION", seasonDestination: "Bali" })
+      JSON.stringify({ action: "SEASON_QUESTION", seasonDestination: "Great Barrier Reef" })
     );
+    expect(decision?.seasonDestination).toBe("Great Barrier Reef");
+  });
+
+  it("treats a missing or empty seasonDestination as null", () => {
+    const decision = parseBluePassRouterDecision(JSON.stringify({ action: "SEASON_QUESTION" }));
     expect(decision?.seasonDestination).toBeNull();
   });
 });

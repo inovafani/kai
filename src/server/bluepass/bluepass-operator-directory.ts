@@ -1,4 +1,5 @@
 import type { BluePassSelectedYachtInput } from "./bluepass-inquiry-repository";
+import { normalizeLocalPhone } from "@/server/phone/normalize-local-phone";
 
 type BluePassOperatorDirectoryEntry = {
   operatorSlug?: string | null;
@@ -180,8 +181,7 @@ function normalizePhone(value?: string | null) {
 }
 
 function normalizePhoneForCompare(value?: string | null) {
-  const digits = value?.trim().replace(/[^\d]/g, "") ?? "";
-  return digits.startsWith("0") ? `62${digits.slice(1)}` : digits;
+  return normalizeLocalPhone(value ?? "");
 }
 
 function resolveBluePassAppUrl() {

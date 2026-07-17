@@ -105,6 +105,7 @@ model TenantConfig {
   bookingWriteEnabled Boolean    @default(false)
   pmsProvider        PmsProvider @default(MOCK)
   publicProductCatalog Json       @default("[]")
+  operatorKnowledgePack Json      @default("{}")
   escalationRules    String[]
   responseGuardrails String[]
   createdAt          DateTime    @default(now())
@@ -133,6 +134,9 @@ model Conversation {
   channel     String
   travellerId String?
   leadId      String?
+  // E.164 digits (no "+") - set for WhatsApp-channel conversations so the webhook can find the
+  // thread for an inbound sender, and so a Business-app human-takeover can be toggled per number.
+  whatsappPhone String?
   createdAt   DateTime                @default(now())
   updatedAt   DateTime                @updatedAt
 
@@ -140,6 +144,8 @@ model Conversation {
   messages        Message[]
   bookingState    ConversationBookingState?
   manualInquiries ManualInquiry[]
+
+  @@unique([tenantId, whatsappPhone])
 }
 
 model Message {

@@ -70,7 +70,7 @@ describe("handleBluePassWhatsAppInboundMessage", () => {
     expect(result.handled).toBe(true);
     expect(result.sent).toBe(true);
     expect(sentBody).toContain("operator");
-    expect(sentBody).toContain("BluePass");
+    expect(sentBody).toContain("82%");
     expect(sentBody).not.toContain("latest BluePass inquiry");
     expect(sentBody).not.toContain("Please share your name");
   }, 20_000);
@@ -115,9 +115,9 @@ describe("handleBluePassWhatsAppInboundMessage", () => {
 
     expect(result.handled).toBe(true);
     expect(result.sent).toBe(true);
-    expect(sentBody).toContain("Calico Jack");
     expect(sentBody).toContain("82%");
-    expect(sentBody).toContain("18%");
+    expect(sentBody).toContain("5% conservation");
+    expect(sentBody).toContain("5% platform");
     expect(sentBody).not.toContain("partner commission");
     expect(sentBody).not.toContain("Please share your name");
   }, 20_000);
@@ -164,8 +164,8 @@ describe("handleBluePassWhatsAppInboundMessage", () => {
 
     expect(result.handled).toBe(true);
     expect(result.sent).toBe(true);
-    expect(sentBody).toContain("partner commission");
-    expect(sentBody).toContain("traveller");
+    expect(sentBody).toContain("capped commission");
+    expect(sentBody).toContain("client");
     expect(sentBody).not.toContain("82%");
     expect(sentBody).not.toContain("Please share your name");
   }, 20_000);
@@ -193,7 +193,7 @@ describe("handleBluePassWhatsAppInboundMessage", () => {
 
     expect(result.handled).toBe(true);
     expect(result.sent).toBe(true);
-    expect(sentBody).toContain("I am here");
+    expect(sentBody).toContain("82%");
     expect(sentBody).not.toContain("Current status");
     expect(sentBody).not.toContain("You can reply with availability");
     expect(contextEvent).toBeNull();
@@ -213,7 +213,7 @@ describe("handleBluePassWhatsAppInboundMessage", () => {
       where: {
         tenantId,
         channel: "WHATSAPP",
-        travellerId: operatorPhone
+        whatsappPhone: operatorPhone
       }
     });
     const contextEvent = await prisma.bluePassInquiryEvent.findFirst({
@@ -258,7 +258,7 @@ describe("handleBluePassWhatsAppInboundMessage", () => {
 
     expect(result.handled).toBe(true);
     expect(result.sent).toBe(true);
-    expect(sentBody).toContain("BluePass helps travellers");
+    expect(sentBody).toContain("BluePass lets travellers");
     expect(sentBody).toContain("vetted ocean operators");
     expect(sentBody).not.toContain("latest BluePass inquiry");
     expect(sentBody).not.toContain("Current status");
@@ -317,7 +317,7 @@ describe("handleBluePassWhatsAppInboundMessage", () => {
       data: {
         tenantId: tenant.id,
         channel: "WHATSAPP",
-        travellerId: travellerPhone,
+        whatsappPhone: travellerPhone,
         controlMode: "AI"
       }
     });
@@ -506,7 +506,7 @@ async function seedTravellerContext() {
     data: {
       tenantId: tenant.id,
       channel: "WHATSAPP",
-      travellerId: travellerPhone,
+      whatsappPhone: travellerPhone,
       controlMode: "AI"
     }
   });

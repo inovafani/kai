@@ -1,3 +1,4 @@
+import type { BluePassCatalogSnapshotItem } from "@/core/bluepass/catalog";
 import {
   buildBluePassResetConversationReply,
   isBluePassResetConversationRequest,
@@ -7,14 +8,17 @@ import { prisma } from "@/lib/prisma";
 import {
   createAssistantMessage,
   createTravellerMessage,
+  findOrCreateWhatsAppConversation,
   listRecentConversationMessages,
   listRecentTravellerMessageContents
 } from "@/server/conversation/conversation-repository";
 import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
 import { createBluePassRouterClient } from "@/server/llm/bluepass-router-client";
 import type { WhatsAppInboundTextMessage } from "@/server/whatsapp/webhook";
+import { normalizeLocalPhone } from "@/server/phone/normalize-local-phone";
 import { sendWhatsAppImage, sendWhatsAppInteractiveButtons, sendWhatsAppText } from "@/server/whatsapp/client";
 import { handleBluePassMarketplaceMessage } from "./bluepass-message-flow";
+import type { BluePassPersona } from "@/core/bluepass/triage";
 import {
   findLatestBluePassParticipantContext,
   handleBluePassWhatsAppContextMessage
@@ -42,7 +46,12 @@ export async function handleBluePassWhatsAppInboundMessage(
   const partnerDirectoryIdentity = directoryIdentity
     ? null
     : await resolveBluePassPartnerDirectoryIdentityByPhone(input.from);
-  const identityPersona = directoryIdentity?.persona ?? partnerDirectoryIdentity?.persona ?? null;
+  // A phone with no directory entry can still be a known participant (it sent/received an
+  // existing BluePassInquiry) - that's a real identity signal too, just weaker than a directory
+  // match, so it only fills in when the directory lookups come back empty.
+  const contextPersona: BluePassPersona | null =
+    context?.participant === "operator" ? "OPERATOR" : context?.participant === "traveller" ? "TRAVELLER" : null;
+  const identityPersona = directoryIdentity?.persona ?? partnerDirectoryIdentity?.persona ?? contextPersona;
   const identityName = directoryIdentity?.operatorName ?? partnerDirectoryIdentity?.partnerName ?? null;
 
   if (identityPersona) {
@@ -149,26 +158,16 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
   }
 
   const travellerPhone = normalizeWhatsAppSender(input.from);
-  const existingConversation = options.resetConversation
-    ? null
-    : await prisma.conversation.findFirst({
-        where: {
+  const conversation = options.resetConversation
+    ? await prisma.conversation.create({
+        data: {
           tenantId: tenant.id,
           channel: "WHATSAPP",
-          travellerId: travellerPhone
-        },
-        orderBy: { updatedAt: "desc" }
-      });
-  const conversation =
-    existingConversation ??
-    (await prisma.conversation.create({
-      data: {
-        tenantId: tenant.id,
-        channel: "WHATSAPP",
-        controlMode: "AI",
-        travellerId: travellerPhone
-      }
-    }));
+          controlMode: "AI",
+          whatsappPhone: travellerPhone
+        }
+      })
+    : await findOrCreateWhatsAppConversation({ tenantId: tenant.id, whatsappPhone: travellerPhone });
 
   const priorTravellerMessages = options.resetConversation
     ? []
@@ -193,6 +192,8 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
     hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY?.trim())
   });
 
+  const catalog = options.overrideAssistantContent ? undefined : await fetchBluePassCatalogSnapshot();
+
   const result = options.overrideAssistantContent
     ? null
     : await handleBluePassMarketplaceMessage({
@@ -203,7 +204,8 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
         travellerPhone,
         identityPersona: options.identityPersona,
         identityName: options.identityName,
-        routerClient
+        routerClient,
+        catalog
       });
   const assistantContent =
     options.overrideAssistantContent ??
@@ -212,7 +214,8 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
       conversationId: conversation.id,
       deterministicReply: result!.assistantContent,
       latestMessage: input.body,
-      marketplaceResult: result!
+      marketplaceResult: result!,
+      catalogInput: catalog
     }));
 
   await createAssistantMessage({
@@ -301,6 +304,7 @@ async function composeBluePassMarketplaceWhatsAppReply(input: {
   deterministicReply: string;
   latestMessage: string;
   marketplaceResult: Awaited<ReturnType<typeof handleBluePassMarketplaceMessage>>;
+  catalogInput?: BluePassCatalogSnapshotItem[];
 }) {
   const shouldPolish = shouldPolishBluePassMarketplaceReply({
     persona: input.marketplaceResult.persona,
@@ -323,13 +327,53 @@ async function composeBluePassMarketplaceWhatsAppReply(input: {
     latestMessage: input.latestMessage,
     conversationHistory: history,
     llmClient,
-    marketplaceResult: input.marketplaceResult
+    marketplaceResult: input.marketplaceResult,
+    catalogInput: input.catalogInput
   });
 
   return result.reply;
 }
 
+const bluePassCatalogFetchTimeoutMs = 3000;
+
+// WhatsApp messages hit kai's webhook directly and never pass through bluepass-app's own
+// web-widget client, so this is the only path that gets kai's WhatsApp flow live operator-listing
+// (and full yacht) data. Never throws - any failure (missing config, timeout, bad response) falls
+// through to an empty array, which resolveBluePassCatalog() already treats identically to "no
+// external catalog was ever sent" (its existing static preview-catalog fallback), so a
+// bluepass-app outage degrades WhatsApp back to today's behavior rather than breaking it.
+async function fetchBluePassCatalogSnapshot(): Promise<BluePassCatalogSnapshotItem[]> {
+  // Explicit opt-in: several existing tests set BLUEPASS_APP_URL to a fake test domain (it's
+  // already used elsewhere just to build display links), which would otherwise make every one of
+  // them attempt a real, doomed-to-fail network call on every WhatsApp message. Requires this
+  // separate flag once BLUEPASS_APP_URL is confirmed to point at a real deployment with the
+  // catalog-snapshot route live.
+  if (process.env.BLUEPASS_WHATSAPP_CATALOG_FETCH_ENABLED !== "true") return [];
+
+  const baseUrl = process.env.BLUEPASS_APP_URL?.trim();
+  if (!baseUrl) return [];
+
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), bluePassCatalogFetchTimeoutMs);
+
+  try {
+    const response = await fetch(`${baseUrl.replace(/\/+$/, "")}/api/kai/catalog-snapshot`, {
+      signal: abortController.signal
+    });
+    if (!response.ok) return [];
+
+    const payload = (await response.json()) as { catalog?: BluePassCatalogSnapshotItem[] };
+    return Array.isArray(payload.catalog) ? payload.catalog : [];
+  } catch (error) {
+    console.log("bluepass_whatsapp.catalog_snapshot_fetch_failed", {
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return [];
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function normalizeWhatsAppSender(value: string) {
-  const digits = value.trim().replace(/[^\d]/g, "");
-  return digits.startsWith("0") ? `62${digits.slice(1)}` : digits;
+  return normalizeLocalPhone(value);
 }

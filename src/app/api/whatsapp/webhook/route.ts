@@ -5,6 +5,8 @@ import {
   resolveLatestPendingBluePassInquiryIdForOperatorPhone
 } from "@/server/bluepass/bluepass-inquiry-repository";
 import { handleBluePassWhatsAppInboundMessage } from "@/server/bluepass/bluepass-whatsapp-conversation";
+import { handleGenericWhatsAppInboundMessage } from "@/server/whatsapp/generic-whatsapp-conversation";
+import { resolveWhatsAppGenericTenant } from "@/server/whatsapp/generic-tenant-router";
 import {
   extractBluePassOperatorResponsesFromWhatsAppWebhook,
   extractWhatsAppInboundTextMessagesFromWebhook,
@@ -77,7 +79,10 @@ export async function POST(request: Request) {
         messageId: message.providerMessageId ?? ""
       }).catch(() => undefined);
 
-      const result = await handleBluePassWhatsAppInboundMessage(message);
+      const genericTenantMatch = await resolveWhatsAppGenericTenant(message.body);
+      const result = genericTenantMatch
+        ? await handleGenericWhatsAppInboundMessage(message, genericTenantMatch.tenant)
+        : await handleBluePassWhatsAppInboundMessage(message);
       if (result.handled) {
         contextHandled += 1;
       }

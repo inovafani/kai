@@ -21,6 +21,7 @@ const isolatedWhatsAppEnvKeys = [
   "WHATSAPP_PHONE_ID_OPS",
   "WHATSAPP_ACCESS_TOKEN",
   "WHATSAPP_BLUEPASS_TENANT_SLUG",
+  "WHATSAPP_GENERIC_TENANT_SLUGS",
   "ENABLE_LLM",
   "LLM_PROVIDER",
   "OPENAI_API_KEY",
@@ -1012,7 +1013,7 @@ describe("/api/whatsapp/webhook", () => {
       where: {
         tenantId: tenant.id,
         channel: "WHATSAPP",
-        travellerId: inboundPhone
+        whatsappPhone: inboundPhone
       },
       include: {
         messages: { orderBy: { createdAt: "asc" } }
@@ -1169,7 +1170,7 @@ describe("/api/whatsapp/webhook", () => {
       where: {
         tenantId: tenant.id,
         channel: "WHATSAPP",
-        travellerId: inboundPhone
+        whatsappPhone: inboundPhone
       }
     });
     const inquiry = await prisma.bluePassInquiry.findFirst({
@@ -1226,7 +1227,7 @@ describe("/api/whatsapp/webhook", () => {
       data: {
         tenantId: tenant.id,
         channel: "WHATSAPP",
-        travellerId: inboundPhone
+        whatsappPhone: inboundPhone
       }
     });
     await createOrReuseBluePassInquiry({
@@ -1345,7 +1346,7 @@ describe("/api/whatsapp/webhook", () => {
       data: {
         tenantId: tenant.id,
         channel: "WHATSAPP",
-        travellerId: inboundPhone
+        whatsappPhone: inboundPhone
       }
     });
     await createOrReuseBluePassInquiry({
@@ -1400,7 +1401,7 @@ describe("/api/whatsapp/webhook", () => {
     const requestBodyText = requestBody.text?.body ?? requestBody.interactive?.body?.text ?? "";
 
     expect(response.status).toBe(200);
-    expect(requestBodyText).toContain("BluePass helps travellers");
+    expect(requestBodyText).toContain("BluePass lets travellers");
     expect(requestBodyText).not.toContain("Current status");
     expect(requestBodyText).not.toContain("Operator Pending");
   }, 20_000);
@@ -1536,7 +1537,7 @@ describe("/api/whatsapp/webhook", () => {
       data: {
         tenantId: tenant.id,
         channel: "WHATSAPP",
-        travellerId: inboundPhone
+        whatsappPhone: inboundPhone
       }
     });
     await createOrReuseBluePassInquiry({
@@ -1966,7 +1967,7 @@ describe("/api/whatsapp/webhook", () => {
       where: {
         tenantId: tenant.id,
         channel: "WHATSAPP",
-        travellerId: inboundPhone
+        whatsappPhone: inboundPhone
       },
       include: {
         messages: { orderBy: { createdAt: "asc" } }
@@ -2218,5 +2219,224 @@ describe("/api/whatsapp/webhook", () => {
     expect(whatsAppBody).toContain("Calico Jack");
     expect(whatsAppBody).toContain("Komodo / 21 July 2026 / 2 guests");
     expect(whatsAppBody).toContain("not a confirmed booking");
+  }, 30_000);
+
+  it("routes a message naming an allowlisted PMS tenant's product to the generic booking engine instead of BluePass", async () => {
+    process.env.META_GRAPH_VERSION = "v20.0";
+    process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token";
+    process.env.WHATSAPP_PHONE_ID_KAI = "1115079071692326";
+
+    const pmsTenant = await prisma.tenant.create({
+      data: {
+        slug: `pms-webhook-test-${randomUUID()}`,
+        name: "Reef Runner Charters",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: [],
+        status: "ACTIVE",
+        config: {
+          create: {
+            bookingMode: "AUTO_BOOKING",
+            bookingWriteEnabled: false,
+            pmsProvider: "REZDY",
+            publicProductCatalog: [
+              {
+                publicTitle: "Sunset Reef Snorkel Adventure",
+                publicDescription: "A guided snorkel trip over the outer reef at sunset.",
+                pmsProductId: `test-product-${randomUUID()}`,
+                bookingMode: "AUTO_BOOKING"
+              }
+            ],
+            enabledFeatures: [],
+            requiredSlots: {},
+            escalationRules: [],
+            responseGuardrails: []
+          }
+        }
+      }
+    });
+    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = pmsTenant.slug;
+
+    const phoneSuffix = randomUUID().replace(/\D/g, "").padEnd(9, "7").slice(0, 9);
+    const inboundPhone = `6285${phoneSuffix}`;
+
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({ messages: [{ id: "wamid.pms.reply" }] })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(
+      new Request("http://localhost/api/whatsapp/webhook", {
+        method: "POST",
+        body: JSON.stringify({
+          entry: [
+            {
+              changes: [
+                {
+                  value: {
+                    messages: [
+                      {
+                        from: inboundPhone,
+                        id: "wamid.pms.start",
+                        type: "text",
+                        text: { body: "Tell me more about the Sunset Reef Snorkel Adventure please" }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      })
+    );
+    const body = await response.json();
+    const conversation = await prisma.conversation.findFirst({
+      where: {
+        tenantId: pmsTenant.id,
+        channel: "WHATSAPP",
+        whatsappPhone: inboundPhone
+      },
+      include: {
+        messages: { orderBy: { createdAt: "asc" } }
+      }
+    });
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      ok: true,
+      contextHandled: 1,
+      contextFailed: 0
+    });
+    expect(conversation).not.toBeNull();
+    expect(conversation?.messages.map((message) => message.role)).toEqual(["TRAVELLER", "ASSISTANT"]);
+
+    const bluepassInquiryForPmsConversation = await prisma.bluePassInquiry.findFirst({
+      where: { conversationId: conversation!.id }
+    });
+    expect(bluepassInquiryForPmsConversation).toBeNull();
+  }, 30_000);
+
+  it("still routes a BluePass-style message to BluePass when an unrelated PMS tenant is allowlisted", async () => {
+    process.env.META_GRAPH_VERSION = "v20.0";
+    process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token";
+    process.env.WHATSAPP_PHONE_ID_KAI = "1115079071692326";
+
+    const unrelatedPmsTenant = await prisma.tenant.create({
+      data: {
+        slug: `pms-webhook-unrelated-${randomUUID()}`,
+        name: "Reef Runner Charters",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: [],
+        status: "ACTIVE",
+        config: {
+          create: {
+            bookingMode: "AUTO_BOOKING",
+            bookingWriteEnabled: false,
+            pmsProvider: "REZDY",
+            publicProductCatalog: [
+              {
+                publicTitle: "Sunset Reef Snorkel Adventure",
+                publicDescription: "A guided snorkel trip over the outer reef at sunset.",
+                pmsProductId: `test-product-${randomUUID()}`,
+                bookingMode: "AUTO_BOOKING"
+              }
+            ],
+            enabledFeatures: [],
+            requiredSlots: {},
+            escalationRules: [],
+            responseGuardrails: []
+          }
+        }
+      }
+    });
+    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = unrelatedPmsTenant.slug;
+
+    const bluepassTenantSlug = `bluepass-webhook-fallback-${randomUUID()}`;
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = bluepassTenantSlug;
+    await prisma.tenant.create({
+      data: {
+        slug: bluepassTenantSlug,
+        name: "BluePass Webhook Fallback Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE",
+        config: {
+          create: {
+            supportedChannels: ["WEB_WIDGET", "WHATSAPP"],
+            enabledFeatures: ["widget_config", "bluepass_marketplace"],
+            requiredSlots: {},
+            bookingMode: "MANUAL_INQUIRY",
+            bookingWriteEnabled: false,
+            pmsProvider: "MOCK",
+            escalationRules: [],
+            responseGuardrails: []
+          }
+        }
+      }
+    });
+
+    const phoneSuffix = randomUUID().replace(/\D/g, "").padEnd(9, "7").slice(0, 9);
+    const inboundPhone = `6285${phoneSuffix}`;
+
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      Response.json({ messages: [{ id: "wamid.bluepass.fallback.reply" }] })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await POST(
+      new Request("http://localhost/api/whatsapp/webhook", {
+        method: "POST",
+        body: JSON.stringify({
+          entry: [
+            {
+              changes: [
+                {
+                  value: {
+                    messages: [
+                      {
+                        from: inboundPhone,
+                        id: "wamid.bluepass.fallback.start",
+                        type: "text",
+                        text: { body: "I want to book Calico Jack in Komodo for 2 guests on 16 July 2026" }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      ok: true,
+      contextHandled: 1,
+      contextFailed: 0
+    });
+
+    const conversation = await prisma.conversation.findFirst({
+      where: {
+        channel: "WHATSAPP",
+        whatsappPhone: inboundPhone,
+        tenant: { slug: bluepassTenantSlug }
+      },
+      include: {
+        messages: { orderBy: { createdAt: "asc" } }
+      }
+    });
+    expect(conversation).not.toBeNull();
+    expect(conversation?.messages.map((message) => message.role)).toEqual(["TRAVELLER", "ASSISTANT"]);
+
+    const pmsTenantConversation = await prisma.conversation.findFirst({
+      where: {
+        channel: "WHATSAPP",
+        whatsappPhone: inboundPhone,
+        tenantId: unrelatedPmsTenant.id
+      }
+    });
+    expect(pmsTenantConversation).toBeNull();
   }, 30_000);
 });

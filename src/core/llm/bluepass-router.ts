@@ -2,6 +2,7 @@ import type { BluePassInquiryIntent } from "@/core/bluepass/intent";
 
 export const bluePassRouterActions = [
   "VALUE_QUESTION",
+  "COMMISSION_QUESTION",
   "SMALL_TALK",
   "SEASON_QUESTION",
   "DESTINATION_COMPARISON",
@@ -29,7 +30,7 @@ export type BluePassRouterExtractedIntent = Pick<
 export interface BluePassRouterDecision {
   action: BluePassRouterAction;
   intent: Partial<BluePassRouterExtractedIntent>;
-  seasonDestination: "Komodo" | "Raja Ampat" | null;
+  seasonDestination: string | null;
   gratitude: boolean;
 }
 
@@ -94,7 +95,9 @@ export function parseBluePassRouterDecision(raw: string): BluePassRouterDecision
   }
 
   const seasonDestination =
-    value.seasonDestination === "Komodo" || value.seasonDestination === "Raja Ampat" ? value.seasonDestination : null;
+    typeof value.seasonDestination === "string" && value.seasonDestination.trim()
+      ? value.seasonDestination.trim().slice(0, 80)
+      : null;
   const gratitude = value.gratitude === true;
 
   return {
