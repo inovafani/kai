@@ -2439,4 +2439,118 @@ describe("/api/whatsapp/webhook", () => {
     });
     expect(pmsTenantConversation).toBeNull();
   }, 30_000);
+
+  it("keeps a generic follow-up with no product/region keyword in the sticky PMS tenant instead of falling back to BluePass mid-conversation", async () => {
+    // Regression, found live: a traveller mid-conversation with an allowlisted PMS tenant sends a
+    // generic follow-up ("What's the price?", "1", a bare date) that names no product/region at
+    // all - before the sticky fix this silently fell through to BluePass's own, unrelated
+    // conversation for the same phone instead of continuing the PMS tenant's thread.
+    process.env.META_GRAPH_VERSION = "v20.0";
+    process.env.WHATSAPP_ACCESS_TOKEN = "test_access_token";
+    process.env.WHATSAPP_PHONE_ID_KAI = "1115079071692326";
+
+    const pmsTenant = await prisma.tenant.create({
+      data: {
+        slug: `pms-sticky-webhook-${randomUUID()}`,
+        name: "Reef Runner Charters",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: [],
+        status: "ACTIVE",
+        config: {
+          create: {
+            bookingMode: "AUTO_BOOKING",
+            bookingWriteEnabled: false,
+            pmsProvider: "REZDY",
+            publicProductCatalog: [
+              {
+                publicTitle: "Sunset Reef Snorkel Adventure",
+                publicDescription: "A guided snorkel trip over the outer reef at sunset.",
+                pmsProductId: `test-product-${randomUUID()}`,
+                bookingMode: "AUTO_BOOKING"
+              }
+            ],
+            enabledFeatures: [],
+            requiredSlots: {},
+            escalationRules: [],
+            responseGuardrails: []
+          }
+        }
+      }
+    });
+    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = pmsTenant.slug;
+
+    const phoneSuffix = randomUUID().replace(/\D/g, "").padEnd(9, "7").slice(0, 9);
+    const inboundPhone = `6285${phoneSuffix}`;
+
+    const fetchMock = vi.fn<typeof fetch>(async () => Response.json({ messages: [{ id: "wamid.sticky.reply" }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await POST(
+      new Request("http://localhost/api/whatsapp/webhook", {
+        method: "POST",
+        body: JSON.stringify({
+          entry: [
+            {
+              changes: [
+                {
+                  value: {
+                    messages: [
+                      {
+                        from: inboundPhone,
+                        id: "wamid.sticky.start",
+                        type: "text",
+                        text: { body: "Tell me more about the Sunset Reef Snorkel Adventure please" }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      })
+    );
+
+    const response = await POST(
+      new Request("http://localhost/api/whatsapp/webhook", {
+        method: "POST",
+        body: JSON.stringify({
+          entry: [
+            {
+              changes: [
+                {
+                  value: {
+                    messages: [
+                      {
+                        from: inboundPhone,
+                        id: "wamid.sticky.followup",
+                        type: "text",
+                        text: { body: "What's the price?" }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      })
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ ok: true, contextHandled: 1, contextFailed: 0 });
+
+    const pmsConversation = await prisma.conversation.findFirst({
+      where: { tenantId: pmsTenant.id, channel: "WHATSAPP", whatsappPhone: inboundPhone },
+      include: { messages: { orderBy: { createdAt: "asc" } } }
+    });
+    expect(pmsConversation).not.toBeNull();
+    expect(pmsConversation?.messages.map((message) => message.role)).toEqual([
+      "TRAVELLER",
+      "ASSISTANT",
+      "TRAVELLER",
+      "ASSISTANT"
+    ]);
+  }, 30_000);
 });

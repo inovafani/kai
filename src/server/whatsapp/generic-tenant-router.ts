@@ -1,11 +1,16 @@
 import { matchPmsProduct } from "@/core/booking/product-matcher";
+import { isBluePassResetConversationRequest } from "@/core/bluepass/conversation-intent";
+import { classifyBluePassMarket } from "@/core/bluepass/market";
 import { MappedPmsAdapter } from "@/core/pms/mapped-pms-adapter";
 import { parsePublicProductCatalog } from "@/core/pms/public-product-catalog";
 import type { PmsProvider } from "@/core/tenant/types";
 import type { GenericBookingTurnTenant } from "@/server/booking/generic-booking-turn";
+import { normalizeLocalPhone } from "@/server/phone/normalize-local-phone";
 import { getPmsAdapter } from "@/server/pms/pms-adapter-registry";
 import { resolveTenantPmsEnv } from "@/server/pms/tenant-pms-credentials";
 import { prisma } from "@/lib/prisma";
+
+const defaultBluePassTenantSlug = "bluepass";
 
 export interface ResolvedWhatsAppGenericTenant {
   tenant: GenericBookingTurnTenant;
@@ -94,4 +99,62 @@ export async function resolveWhatsAppGenericTenant(
   }
 
   return null;
+}
+
+// Fallback for a message that carries NO explicit signal for any tenant (a bare "1", "yes", "show me
+// yachts", a date) - the kind of generic follow-up that only makes sense in the context of whatever
+// this phone number was JUST discussing. Without this, resolveWhatsAppGenericTenant returning null
+// makes the webhook default straight to BluePass, so a traveller mid-conversation with an allowlisted
+// PMS tenant (e.g. bluepass-au) silently gets bounced back to BluePass's own, unrelated conversation
+// history the moment their message stops repeating an explicit region/product keyword. Instead, check
+// which tenant - among the allowlist plus BluePass itself - this phone last actually talked to, and
+// stay there. A phone with no WhatsApp history yet, or whose most recent conversation was already
+// BluePass, resolves to null here (unchanged, default-to-BluePass behavior).
+export async function resolveStickyWhatsAppGenericTenant(
+  phone: string,
+  env: Record<string, string | undefined> = process.env
+): Promise<ResolvedWhatsAppGenericTenant | null> {
+  const allowlistedSlugs = readAllowlistedSlugs(env);
+  if (allowlistedSlugs.length === 0) return null;
+
+  const bluePassTenantSlug = env.WHATSAPP_BLUEPASS_TENANT_SLUG?.trim() || defaultBluePassTenantSlug;
+  const normalizedPhone = normalizeLocalPhone(phone);
+
+  const mostRecent = await prisma.conversation.findFirst({
+    where: {
+      whatsappPhone: normalizedPhone,
+      channel: "WHATSAPP",
+      tenant: {
+        slug: { in: [...allowlistedSlugs, bluePassTenantSlug] },
+        status: "ACTIVE"
+      }
+    },
+    orderBy: { updatedAt: "desc" },
+    include: { tenant: { include: { branding: true, config: true } } }
+  });
+
+  if (!mostRecent || mostRecent.tenant.slug === bluePassTenantSlug || !mostRecent.tenant.config) {
+    return null;
+  }
+
+  return { tenant: mostRecent.tenant };
+}
+
+// Single entry point for the webhook: explicit signal first (resolveWhatsAppGenericTenant), then the
+// sticky recency fallback above - except a "new chat" reset or an explicit Indonesia-market signal
+// ("Komodo", "Bali", ...) always means "go to BluePass now" and must override stickiness, otherwise a
+// traveller who explicitly asks for Komodo while stuck in a sticky bluepass-au thread would wrongly
+// stay there. classifyBluePassMarket is BluePass's own existing country classifier
+// (core/bluepass/market.ts) - reused rather than a second hand-maintained keyword list.
+export async function resolveWhatsAppTenantForMessage(
+  input: { messageText: string; fromPhone: string },
+  env: Record<string, string | undefined> = process.env
+): Promise<ResolvedWhatsAppGenericTenant | null> {
+  if (isBluePassResetConversationRequest(input.messageText)) return null;
+  if (classifyBluePassMarket([input.messageText]) === "INDONESIA") return null;
+
+  const explicitMatch = await resolveWhatsAppGenericTenant(input.messageText, env);
+  if (explicitMatch) return explicitMatch;
+
+  return resolveStickyWhatsAppGenericTenant(input.fromPhone, env);
 }

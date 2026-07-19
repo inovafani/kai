@@ -1,13 +1,36 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
-import { matchesTenantRegionKeywords, resolveWhatsAppGenericTenant } from "./generic-tenant-router";
+import {
+  matchesTenantRegionKeywords,
+  resolveStickyWhatsAppGenericTenant,
+  resolveWhatsAppGenericTenant,
+  resolveWhatsAppTenantForMessage
+} from "./generic-tenant-router";
 
 const originalEnv = { ...process.env };
 
 afterEach(() => {
   process.env = { ...originalEnv };
 });
+
+function randomTestPhone() {
+  return `6281199${randomUUID().replace(/\D/g, "").slice(0, 7)}`;
+}
+
+async function createBluePassStandInTenant(name: string) {
+  const slug = `bluepass-standin-${randomUUID()}`;
+  await prisma.tenant.create({
+    data: {
+      slug,
+      name,
+      widgetPublicKey: `pk_${randomUUID()}`,
+      allowedOrigins: [],
+      status: "ACTIVE"
+    }
+  });
+  return slug;
+}
 
 async function createTestPmsTenant(overrides?: {
   name?: string;
@@ -213,5 +236,113 @@ describe("matchesTenantRegionKeywords", () => {
 
   it("does not match any keyword for a tenant slug with no configured region", () => {
     expect(matchesTenantRegionKeywords("boattime", "I want to trip in australia")).toBe(false);
+  });
+});
+
+describe("resolveStickyWhatsAppGenericTenant", () => {
+  it("sticks to the allowlisted tenant this phone most recently talked to", async () => {
+    const genericTenant = await createTestPmsTenant({ name: `Sticky Recent ${randomUUID()}` });
+    const bluePassSlug = await createBluePassStandInTenant("BluePass Sticky Stand-in A");
+    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = genericTenant.slug;
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = bluePassSlug;
+    const phone = randomTestPhone();
+
+    await prisma.conversation.create({
+      data: { tenantId: genericTenant.id, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: phone }
+    });
+
+    const result = await resolveStickyWhatsAppGenericTenant(phone);
+
+    expect(result?.tenant.slug).toBe(genericTenant.slug);
+  });
+
+  it("returns null when BluePass's own conversation for this phone is the more recent one", async () => {
+    const genericTenant = await createTestPmsTenant({ name: `Sticky Stale ${randomUUID()}` });
+    const bluePassSlug = await createBluePassStandInTenant("BluePass Sticky Stand-in B");
+    const bluePassTenant = await prisma.tenant.findFirstOrThrow({ where: { slug: bluePassSlug } });
+    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = genericTenant.slug;
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = bluePassSlug;
+    const phone = randomTestPhone();
+
+    await prisma.conversation.create({
+      data: { tenantId: genericTenant.id, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: phone }
+    });
+    await prisma.conversation.create({
+      data: { tenantId: bluePassTenant.id, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: phone }
+    });
+
+    const result = await resolveStickyWhatsAppGenericTenant(phone);
+
+    expect(result).toBeNull();
+  });
+
+  it("returns null when this phone has no WhatsApp conversation history at all", async () => {
+    const genericTenant = await createTestPmsTenant({ name: `Sticky None ${randomUUID()}` });
+    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = genericTenant.slug;
+
+    const result = await resolveStickyWhatsAppGenericTenant(randomTestPhone());
+
+    expect(result).toBeNull();
+  });
+});
+
+describe("resolveWhatsAppTenantForMessage", () => {
+  it("regression: stays with the AU tenant for a generic follow-up with no region keyword, instead of falling back to BluePass/Komodo", async () => {
+    // Reproduces the exact bug found live: traveller says "id like to travel in australia" (routes
+    // to bluepass-au, creating its Conversation row), then later says something generic like "Show
+    // me yachts" with no region word in it - before this fix, that silently fell through to
+    // BluePass's own separate Komodo conversation instead of continuing the Australia thread.
+    const auTenant = await createTestPmsTenant({ name: `AU Regression ${randomUUID()}` });
+    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = auTenant.slug;
+    const phone = randomTestPhone();
+
+    await prisma.conversation.create({
+      data: { tenantId: auTenant.id, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: phone }
+    });
+
+    const result = await resolveWhatsAppTenantForMessage({ messageText: "Show me yachts", fromPhone: phone });
+
+    expect(result?.tenant.slug).toBe(auTenant.slug);
+  });
+
+  it("a 'new chat' reset always overrides stickiness", async () => {
+    const auTenant = await createTestPmsTenant({ name: `AU Reset Override ${randomUUID()}` });
+    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = auTenant.slug;
+    const phone = randomTestPhone();
+    await prisma.conversation.create({
+      data: { tenantId: auTenant.id, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: phone }
+    });
+
+    const result = await resolveWhatsAppTenantForMessage({ messageText: "new chat", fromPhone: phone });
+
+    expect(result).toBeNull();
+  });
+
+  it("an explicit Indonesia-market mention always overrides stickiness", async () => {
+    const auTenant = await createTestPmsTenant({ name: `AU Indonesia Override ${randomUUID()}` });
+    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = auTenant.slug;
+    const phone = randomTestPhone();
+    await prisma.conversation.create({
+      data: { tenantId: auTenant.id, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: phone }
+    });
+
+    const result = await resolveWhatsAppTenantForMessage({
+      messageText: "actually can we talk about Komodo instead",
+      fromPhone: phone
+    });
+
+    expect(result).toBeNull();
+  });
+
+  it("an explicit product match still wins even with no sticky history", async () => {
+    const tenant = await createTestPmsTenant();
+    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = tenant.slug;
+
+    const result = await resolveWhatsAppTenantForMessage({
+      messageText: "Do you have availability for the Sunset Reef Snorkel Adventure this weekend?",
+      fromPhone: randomTestPhone()
+    });
+
+    expect(result?.tenant.slug).toBe(tenant.slug);
   });
 });
