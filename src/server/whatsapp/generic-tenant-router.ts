@@ -108,8 +108,19 @@ export async function resolveWhatsAppGenericTenant(
 // PMS tenant (e.g. bluepass-au) silently gets bounced back to BluePass's own, unrelated conversation
 // history the moment their message stops repeating an explicit region/product keyword. Instead, check
 // which tenant - among the allowlist plus BluePass itself - this phone last actually talked to, and
-// stay there. A phone with no WhatsApp history yet, or whose most recent conversation was already
+// stay there. A phone with no WhatsApp history yet, or whose most recent activity was already
 // BluePass, resolves to null here (unchanged, default-to-BluePass behavior).
+//
+// Deliberately orders by the MESSAGE table's createdAt, not Conversation.updatedAt: an existing
+// Conversation row is only ever read via findOrCreateWhatsAppConversation, never .update()'d on
+// later turns, so its updatedAt freezes at creation/reset time and goes stale the moment a second
+// message arrives. Ordering by that stale field made a long-reset-ago BluePass conversation always
+// look "more recent" than a tenant conversation actively being used seconds ago - confirmed live: a
+// traveller's bluepass-au conversation reused from hours earlier still carried its original
+// creation timestamp even after just answering "i want to travel in australia", so it lost the
+// recency race to a "new chat" reset that had touched the BluePass row moments before. Message rows
+// are always fresh inserts, so ordering by their createdAt reflects true last-activity regardless of
+// whether anything else remembers to touch the parent Conversation row.
 export async function resolveStickyWhatsAppGenericTenant(
   phone: string,
   env: Record<string, string | undefined> = process.env
@@ -120,24 +131,27 @@ export async function resolveStickyWhatsAppGenericTenant(
   const bluePassTenantSlug = env.WHATSAPP_BLUEPASS_TENANT_SLUG?.trim() || defaultBluePassTenantSlug;
   const normalizedPhone = normalizeLocalPhone(phone);
 
-  const mostRecent = await prisma.conversation.findFirst({
+  const mostRecentMessage = await prisma.message.findFirst({
     where: {
-      whatsappPhone: normalizedPhone,
-      channel: "WHATSAPP",
-      tenant: {
-        slug: { in: [...allowlistedSlugs, bluePassTenantSlug] },
-        status: "ACTIVE"
+      conversation: {
+        whatsappPhone: normalizedPhone,
+        channel: "WHATSAPP",
+        tenant: {
+          slug: { in: [...allowlistedSlugs, bluePassTenantSlug] },
+          status: "ACTIVE"
+        }
       }
     },
-    orderBy: { updatedAt: "desc" },
-    include: { tenant: { include: { branding: true, config: true } } }
+    orderBy: { createdAt: "desc" },
+    include: { conversation: { include: { tenant: { include: { branding: true, config: true } } } } }
   });
 
-  if (!mostRecent || mostRecent.tenant.slug === bluePassTenantSlug || !mostRecent.tenant.config) {
+  const tenant = mostRecentMessage?.conversation.tenant;
+  if (!tenant || tenant.slug === bluePassTenantSlug || !tenant.config) {
     return null;
   }
 
-  return { tenant: mostRecent.tenant };
+  return { tenant };
 }
 
 // Single entry point for the webhook: explicit signal first (resolveWhatsAppGenericTenant), then the

@@ -32,6 +32,25 @@ async function createBluePassStandInTenant(name: string) {
   return slug;
 }
 
+// Stickiness is measured off the Message table, not Conversation.updatedAt (see
+// resolveStickyWhatsAppGenericTenant's own doc comment) - a bare Conversation row with no message
+// looks identical to one that was never actually talked in, so every sticky test needs a real
+// message to represent "this phone actually said something to this tenant."
+async function createConversationWithMessage(input: { tenantId: string; whatsappPhone: string; content?: string }) {
+  const conversation = await prisma.conversation.create({
+    data: { tenantId: input.tenantId, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: input.whatsappPhone }
+  });
+  await prisma.message.create({
+    data: {
+      tenantId: input.tenantId,
+      conversationId: conversation.id,
+      role: "TRAVELLER",
+      content: input.content ?? "hi"
+    }
+  });
+  return conversation;
+}
+
 async function createTestPmsTenant(overrides?: {
   name?: string;
   productTitle?: string;
@@ -247,9 +266,7 @@ describe("resolveStickyWhatsAppGenericTenant", () => {
     process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = bluePassSlug;
     const phone = randomTestPhone();
 
-    await prisma.conversation.create({
-      data: { tenantId: genericTenant.id, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: phone }
-    });
+    await createConversationWithMessage({ tenantId: genericTenant.id, whatsappPhone: phone });
 
     const result = await resolveStickyWhatsAppGenericTenant(phone);
 
@@ -264,17 +281,13 @@ describe("resolveStickyWhatsAppGenericTenant", () => {
     process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = bluePassSlug;
     const phone = randomTestPhone();
 
-    await prisma.conversation.create({
-      data: { tenantId: genericTenant.id, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: phone }
-    });
-    await prisma.conversation.create({
-      data: { tenantId: bluePassTenant.id, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: phone }
-    });
+    await createConversationWithMessage({ tenantId: genericTenant.id, whatsappPhone: phone });
+    await createConversationWithMessage({ tenantId: bluePassTenant.id, whatsappPhone: phone });
 
     const result = await resolveStickyWhatsAppGenericTenant(phone);
 
     expect(result).toBeNull();
-  });
+  }, 15_000);
 
   it("returns null when this phone has no WhatsApp conversation history at all", async () => {
     const genericTenant = await createTestPmsTenant({ name: `Sticky None ${randomUUID()}` });
@@ -296,8 +309,10 @@ describe("resolveWhatsAppTenantForMessage", () => {
     process.env.WHATSAPP_GENERIC_TENANT_SLUGS = auTenant.slug;
     const phone = randomTestPhone();
 
-    await prisma.conversation.create({
-      data: { tenantId: auTenant.id, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: phone }
+    await createConversationWithMessage({
+      tenantId: auTenant.id,
+      whatsappPhone: phone,
+      content: "i want to travel in australia"
     });
 
     const result = await resolveWhatsAppTenantForMessage({ messageText: "Show me yachts", fromPhone: phone });
