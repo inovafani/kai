@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/prisma";
-import { resolveWhatsAppGenericTenant } from "./generic-tenant-router";
+import { matchesTenantRegionKeywords, resolveWhatsAppGenericTenant } from "./generic-tenant-router";
 
 const originalEnv = { ...process.env };
 
@@ -173,5 +173,45 @@ describe("resolveWhatsAppGenericTenant", () => {
     );
 
     expect(result).toBeNull();
+  });
+
+  it("resolves the real bluepass-au tenant for a bare region mention with no specific product named", async () => {
+    // Regression: a generic "I want to trip in Australia" never scores against any single AU
+    // product distinctly enough for matchPmsProduct to resolve it (see
+    // matchesTenantRegionKeywords's own doc comment) - this proves the region-keyword escape hatch
+    // actually closes that gap for the one tenant it's scoped to, using the tenant already seeded
+    // in the shared database (not a throwaway test fixture), since the check is keyed by that exact
+    // slug.
+    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = "bluepass-au";
+
+    const result = await resolveWhatsAppGenericTenant("i want to trip in australia");
+
+    expect(result?.tenant.slug).toBe("bluepass-au");
+  });
+
+  it("does not resolve bluepass-au for an ordinary Indonesia-flavored BluePass message", async () => {
+    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = "bluepass-au";
+
+    const result = await resolveWhatsAppGenericTenant(
+      "I want a liveaboard trip to Komodo for 6 guests next month"
+    );
+
+    expect(result).toBeNull();
+  });
+});
+
+describe("matchesTenantRegionKeywords", () => {
+  it("matches bluepass-au on a bare region mention", () => {
+    expect(matchesTenantRegionKeywords("bluepass-au", "i want to trip in australia")).toBe(true);
+    expect(matchesTenantRegionKeywords("bluepass-au", "any trips to the Gold Coast?")).toBe(true);
+    expect(matchesTenantRegionKeywords("bluepass-au", "looking at Queensland options")).toBe(true);
+  });
+
+  it("does not match bluepass-au for an unrelated message", () => {
+    expect(matchesTenantRegionKeywords("bluepass-au", "I want a liveaboard in Komodo")).toBe(false);
+  });
+
+  it("does not match any keyword for a tenant slug with no configured region", () => {
+    expect(matchesTenantRegionKeywords("boattime", "I want to trip in australia")).toBe(false);
   });
 });

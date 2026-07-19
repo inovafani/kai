@@ -28,6 +28,181 @@ afterEach(() => {
   process.env = { ...originalEnv };
 });
 
+describe("BluePass country/region gate (WhatsApp only)", () => {
+  // Tony's resolveBluePassGate, wired into WhatsApp specifically per explicit user request - the
+  // web widget already asks this itself (bluepass-app's own region-router before ever calling
+  // Kai), so this only applies to the WhatsApp entry point, not the shared marketplace core.
+  it("asks which country before anything else for a genuinely fresh conversation", async () => {
+    const tenantSlug = `bluepass-whatsapp-gate-market-${randomUUID()}`;
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = tenantSlug;
+    const travellerPhone = "6281111100010";
+    await prisma.tenant.create({
+      data: {
+        slug: tenantSlug,
+        name: "BluePass WhatsApp Gate Market Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const fetchMock = stubWhatsAppSend("wamid.gate.market.reply");
+
+    const result = await handleBluePassWhatsAppInboundMessage({
+      from: travellerPhone,
+      providerMessageId: "wamid.gate.market",
+      body: "Hi"
+    });
+    const sentBody = getLastWhatsAppTextBody(fetchMock);
+
+    expect(result.handled).toBe(true);
+    expect(result.sent).toBe(true);
+    expect(sentBody).toContain("are you in Australia or Indonesia");
+  }, 20_000);
+
+  it("asks which region once the country is known", async () => {
+    const tenantSlug = `bluepass-whatsapp-gate-region-${randomUUID()}`;
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = tenantSlug;
+    const travellerPhone = "6281111100011";
+    await prisma.tenant.create({
+      data: {
+        slug: tenantSlug,
+        name: "BluePass WhatsApp Gate Region Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    stubWhatsAppSend("wamid.gate.region.first.reply");
+    await handleBluePassWhatsAppInboundMessage({
+      from: travellerPhone,
+      providerMessageId: "wamid.gate.region.first",
+      body: "Hi"
+    });
+
+    const fetchMock = stubWhatsAppSend("wamid.gate.region.second.reply");
+    const result = await handleBluePassWhatsAppInboundMessage({
+      from: travellerPhone,
+      providerMessageId: "wamid.gate.region.second",
+      body: "Australia"
+    });
+    const sentBody = getLastWhatsAppTextBody(fetchMock);
+
+    expect(result.handled).toBe(true);
+    expect(result.sent).toBe(true);
+    expect(sentBody).toContain("Which stretch of coast");
+  }, 20_000);
+
+  it("skips the gate entirely once a message names a real destination", async () => {
+    const tenantSlug = `bluepass-whatsapp-gate-skip-destination-${randomUUID()}`;
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = tenantSlug;
+    const travellerPhone = "6281111100012";
+    await prisma.tenant.create({
+      data: {
+        slug: tenantSlug,
+        name: "BluePass WhatsApp Gate Skip Destination Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const fetchMock = stubWhatsAppSend("wamid.gate.skip.reply");
+
+    const result = await handleBluePassWhatsAppInboundMessage({
+      from: travellerPhone,
+      providerMessageId: "wamid.gate.skip",
+      body: "I want a liveaboard trip to Komodo for 4 guests"
+    });
+    const sentBody = getLastWhatsAppTextBody(fetchMock);
+
+    expect(result.handled).toBe(true);
+    expect(result.sent).toBe(true);
+    expect(sentBody).not.toContain("are you in Australia or Indonesia");
+    expect(sentBody).not.toContain("Which stretch of coast");
+  }, 20_000);
+
+  it("proceeds to the normal marketplace flow once both country and region are answered", async () => {
+    const tenantSlug = `bluepass-whatsapp-gate-ready-${randomUUID()}`;
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = tenantSlug;
+    const travellerPhone = "6281111100013";
+    await prisma.tenant.create({
+      data: {
+        slug: tenantSlug,
+        name: "BluePass WhatsApp Gate Ready Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    stubWhatsAppSend("wamid.gate.ready.first.reply");
+    await handleBluePassWhatsAppInboundMessage({
+      from: travellerPhone,
+      providerMessageId: "wamid.gate.ready.first",
+      body: "Hi"
+    });
+    stubWhatsAppSend("wamid.gate.ready.second.reply");
+    await handleBluePassWhatsAppInboundMessage({
+      from: travellerPhone,
+      providerMessageId: "wamid.gate.ready.second",
+      body: "Australia"
+    });
+
+    const fetchMock = stubWhatsAppSend("wamid.gate.ready.third.reply");
+    const result = await handleBluePassWhatsAppInboundMessage({
+      from: travellerPhone,
+      providerMessageId: "wamid.gate.ready.third",
+      body: "Gold Coast"
+    });
+    const sentBody = getLastWhatsAppTextBody(fetchMock);
+
+    expect(result.handled).toBe(true);
+    expect(result.sent).toBe(true);
+    expect(sentBody).not.toContain("are you in Australia or Indonesia");
+    expect(sentBody).not.toContain("Which stretch of coast");
+  }, 20_000);
+
+  it("skips the gate for a registered operator even with zero country signal", async () => {
+    const tenantSlug = `bluepass-whatsapp-gate-skip-identity-${randomUUID()}`;
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = tenantSlug;
+    process.env.BLUEPASS_APP_URL = "https://bluepass.test";
+    process.env.BLUEPASS_APP_SERVICE_TOKEN = "bridge_token";
+    const operatorPhone = "6281111100014";
+    const fetchMock = stubWhatsAppSend("wamid.gate.skip.identity.reply", {
+      directoryResponse: {
+        operators: [
+          {
+            operatorSlug: "calico-jack",
+            operatorName: "Calico Jack",
+            yachtSlugs: ["calico-jack"],
+            whatsappPhone: operatorPhone,
+            status: "APPROVED",
+            source: "operator_profile"
+          }
+        ]
+      }
+    });
+    await prisma.tenant.create({
+      data: {
+        slug: tenantSlug,
+        name: "BluePass WhatsApp Gate Skip Identity Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+
+    const result = await handleBluePassWhatsAppInboundMessage({
+      from: operatorPhone,
+      providerMessageId: "wamid.gate.skip.identity",
+      body: "Hi"
+    });
+    const sentBody = getLastWhatsAppTextBody(fetchMock);
+
+    expect(result.handled).toBe(true);
+    expect(result.sent).toBe(true);
+    expect(sentBody).not.toContain("are you in Australia or Indonesia");
+  }, 20_000);
+});
+
 describe("handleBluePassWhatsAppInboundMessage", () => {
   it("uses a registered operator phone as operator identity for normal onboarding chat", async () => {
     const tenantSlug = `bluepass-whatsapp-operator-identity-${randomUUID()}`;
@@ -233,6 +408,48 @@ describe("handleBluePassWhatsAppInboundMessage", () => {
     expect(sentBody).not.toContain("Current status");
     expect(whatsappConversations).toHaveLength(1);
     expect(contextEvent).toBeNull();
+  }, 20_000);
+
+  it("starts a fresh conversation with 'new chat' after an existing conversation already exists for that phone", async () => {
+    // Regression: Conversation.whatsappPhone is unique per tenant (today's migration). The reset
+    // path's prisma.conversation.create() has no handling for an existing row - it only ever
+    // passed the existing "new chat" test because that test sends it as the traveller's very first
+    // message (no prior Conversation row to collide with). A real traveller sends a normal message
+    // first (creating the row via findOrCreateWhatsAppConversation), then "new chat" later - which
+    // must not throw a unique-constraint violation and silently drop the reply.
+    const tenantSlug = `bluepass-whatsapp-newchat-existing-${randomUUID()}`;
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = tenantSlug;
+    const travellerPhone = "6285156246399";
+    await prisma.tenant.create({
+      data: {
+        slug: tenantSlug,
+        name: "BluePass WhatsApp New Chat Existing Conversation Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    stubWhatsAppSend("wamid.traveller.first.reply");
+
+    const first = await handleBluePassWhatsAppInboundMessage({
+      from: travellerPhone,
+      providerMessageId: "wamid.traveller.first",
+      body: "Hi"
+    });
+    expect(first.handled).toBe(true);
+    expect(first.sent).toBe(true);
+
+    const fetchMock = stubWhatsAppSend("wamid.traveller.newchat.reply");
+    const result = await handleBluePassWhatsAppInboundMessage({
+      from: travellerPhone,
+      providerMessageId: "wamid.traveller.newchat",
+      body: "new chat"
+    });
+    const sentBody = getLastWhatsAppTextBody(fetchMock);
+
+    expect(result.handled).toBe(true);
+    expect(result.sent).toBe(true);
+    expect(sentBody).toContain("Fresh chat started");
   }, 20_000);
 
   it("answers traveller general questions without forcing the latest inquiry context", async () => {

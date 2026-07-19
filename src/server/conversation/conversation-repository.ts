@@ -156,6 +156,29 @@ export async function findOrCreateWhatsAppConversation(input: { tenantId: string
 }
 
 /**
+ * Starts a genuinely fresh WhatsApp thread for this phone (new conversation id, so future turns
+ * never see the old message history) without violating the tenantId+whatsappPhone unique
+ * constraint. Postgres treats multiple NULLs as non-conflicting for a unique index, so clearing
+ * whatsappPhone on any existing row(s) for this phone frees the slot for the new row - the old
+ * conversation and its messages stay in the database, just detached from this phone number.
+ */
+export async function resetWhatsAppConversation(input: { tenantId: string; whatsappPhone: string }) {
+  await prisma.conversation.updateMany({
+    where: { tenantId: input.tenantId, whatsappPhone: input.whatsappPhone },
+    data: { whatsappPhone: null }
+  });
+
+  return prisma.conversation.create({
+    data: {
+      tenantId: input.tenantId,
+      channel: "WHATSAPP",
+      controlMode: "AI",
+      whatsappPhone: input.whatsappPhone
+    }
+  });
+}
+
+/**
  * Flip control of a WhatsApp thread (e.g. a human answered from the Business phone app, so the
  * concierge must go quiet). Creates the conversation when the human replied before any inbound
  * message from this traveller ever reached us.

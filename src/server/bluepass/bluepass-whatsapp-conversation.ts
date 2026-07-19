@@ -4,13 +4,15 @@ import {
   isBluePassResetConversationRequest,
   normalizeBluePassConversationText
 } from "@/core/bluepass/conversation-intent";
+import { resolveBluePassGate } from "@/core/bluepass/market";
 import { prisma } from "@/lib/prisma";
 import {
   createAssistantMessage,
   createTravellerMessage,
   findOrCreateWhatsAppConversation,
   listRecentConversationMessages,
-  listRecentTravellerMessageContents
+  listRecentTravellerMessageContents,
+  resetWhatsAppConversation
 } from "@/server/conversation/conversation-repository";
 import { createAssistantLlmClient } from "@/server/llm/assistant-llm-client";
 import { createBluePassRouterClient } from "@/server/llm/bluepass-router-client";
@@ -159,14 +161,7 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
 
   const travellerPhone = normalizeWhatsAppSender(input.from);
   const conversation = options.resetConversation
-    ? await prisma.conversation.create({
-        data: {
-          tenantId: tenant.id,
-          channel: "WHATSAPP",
-          controlMode: "AI",
-          whatsappPhone: travellerPhone
-        }
-      })
+    ? await resetWhatsAppConversation({ tenantId: tenant.id, whatsappPhone: travellerPhone })
     : await findOrCreateWhatsAppConversation({ tenantId: tenant.id, whatsappPhone: travellerPhone });
 
   const priorTravellerMessages = options.resetConversation
@@ -182,6 +177,17 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
     content: input.body
   });
 
+  // Tony's country->region gate, WhatsApp-only: the web widget already asks this itself
+  // (bluepass-app's own region-router, before ever calling Kai), so wiring it into the shared
+  // bluepass-message-flow core would double-ask website travellers. A known directory identity
+  // (registered operator/partner) skips the gate - their market comes from their own onboarding,
+  // not a fresh "which country" question on every conversation.
+  const gatePrompt =
+    options.resetConversation || options.overrideAssistantContent || options.identityPersona
+      ? null
+      : resolveBluePassGate([...priorTravellerMessages, input.body]).prompt;
+  const effectiveOverrideContent = options.overrideAssistantContent ?? gatePrompt ?? undefined;
+
   const routerClient = createBluePassRouterClient(process.env);
   console.log("bluepass_whatsapp.llm_router_client", {
     enabled: routerClient !== null,
@@ -192,9 +198,9 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
     hasOpenAiKey: Boolean(process.env.OPENAI_API_KEY?.trim())
   });
 
-  const catalog = options.overrideAssistantContent ? undefined : await fetchBluePassCatalogSnapshot();
+  const catalog = effectiveOverrideContent ? undefined : await fetchBluePassCatalogSnapshot();
 
-  const result = options.overrideAssistantContent
+  const result = effectiveOverrideContent
     ? null
     : await handleBluePassMarketplaceMessage({
         tenantId: tenant.id,
@@ -208,7 +214,7 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
         catalog
       });
   const assistantContent =
-    options.overrideAssistantContent ??
+    effectiveOverrideContent ??
     (await composeBluePassMarketplaceWhatsAppReply({
       tenantId: tenant.id,
       conversationId: conversation.id,

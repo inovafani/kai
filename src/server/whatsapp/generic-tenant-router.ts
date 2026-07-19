@@ -26,6 +26,21 @@ function mentionsTenantByName(message: string, tenantName: string) {
   return normalizedMessage.includes(normalizedName);
 }
 
+// matchPmsProduct only recognizes a specific, named product ("Gold Coast Whale Escape") or the
+// tenant's exact display name - a bare region mention ("I want to trip in Australia") never scores
+// against any one product distinctly enough to resolve, so it silently falls through to BluePass
+// even for a tenant whose entire catalog IS that region. This is a small, explicit, per-tenant
+// escape hatch for that gap - not a generic keyword system, since today there is exactly one
+// region-exclusive PMS-connected tenant on the shared WhatsApp number. Pure and DB-free so it's
+// unit-testable without creating any tenant row.
+const TENANT_REGION_KEYWORDS: Record<string, RegExp> = {
+  "bluepass-au": /\b(?:gold coast|australia|queensland)\b/i
+};
+
+export function matchesTenantRegionKeywords(slug: string, message: string): boolean {
+  return TENANT_REGION_KEYWORDS[slug]?.test(message) ?? false;
+}
+
 // Pre-routing check for the shared WhatsApp number: since there is no separate number/tenant signal
 // on an inbound WhatsApp message (see generic-booking-turn.ts for the shared engine this feeds),
 // this checks the message against a small, explicit allowlist of PMS-connected tenants (today just
@@ -46,7 +61,7 @@ export async function resolveWhatsAppGenericTenant(
     });
     if (!tenant || !tenant.config) continue;
 
-    if (mentionsTenantByName(messageText, tenant.name)) {
+    if (mentionsTenantByName(messageText, tenant.name) || matchesTenantRegionKeywords(tenant.slug, messageText)) {
       return { tenant };
     }
 
