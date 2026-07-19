@@ -737,7 +737,18 @@ function findClockSelection(message: string, options: PmsTimeOption[]) {
   return null;
 }
 
-function parseSelectedTimeOption(message: string, options: PmsTimeOption[]) {
+// The bare-number/ordinal-word fallback below is only safe when time is the ONLY thing being
+// discussed (the original "which time works best?" prompt) - a bare "2" or "second" there
+// unambiguously means time option 2. Once ticket selection is also in play, the same digit almost
+// always refers to a TICKET option ("option 2 and option 5") instead, so callers checking for a
+// time CORRECTION mid-ticket-selection must pass allowBareNumberFallback: false, or they will
+// silently reinterpret a ticket choice as a time change and corrupt an already-confirmed time.
+function parseSelectedTimeOption(
+  message: string,
+  options: PmsTimeOption[],
+  config: { allowBareNumberFallback?: boolean } = {}
+) {
+  const allowBareNumberFallback = config.allowBareNumberFallback ?? true;
   const normalizedMessage = normalizeTimeSelectionText(message);
   const compactMessage = normalizedMessage.replace(/\s+/g, "");
   const clockSelection = findClockSelection(message, options);
@@ -766,6 +777,10 @@ function parseSelectedTimeOption(message: string, options: PmsTimeOption[]) {
 
   if (matchedOption) {
     return matchedOption;
+  }
+
+  if (!allowBareNumberFallback) {
+    return null;
   }
 
   const ordinalWords: Record<string, number> = {
@@ -1219,7 +1234,9 @@ export async function handleTravellerBookingMessage(
 
   if (ticketOptions.length > 1 && !input.bookingMemory?.ticketQuantities) {
     const correctedTime =
-      timeOptions.length > 1 ? parseSelectedTimeOption(input.message, timeOptions) : null;
+      timeOptions.length > 1
+        ? parseSelectedTimeOption(input.message, timeOptions, { allowBareNumberFallback: false })
+        : null;
     const dateTextForTicketSelection =
       correctedTime?.startTimeLocal ?? input.bookingMemory?.dateText ?? null;
     const parsedTicketQuantities = parseTicketQuantities(input.message, ticketOptions, input.bookingMemory?.guests);

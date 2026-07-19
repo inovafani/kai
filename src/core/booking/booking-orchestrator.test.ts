@@ -463,6 +463,90 @@ describe("booking orchestrator", () => {
     expect(ticketResult.reply).toContain("Optional extras");
   });
 
+  it("does not silently change an already-confirmed time when tickets are selected by number", async () => {
+    // Regression, found live on WhatsApp: after confirming 1:30 PM (time option 3 of 4), the
+    // traveller picked tickets by number ("option 2 and option 5, dont you understand?"). Ticket
+    // option 2 and time option 2 are both just the digit "2" - the ticket-selection turn's own
+    // time-correction check used to reinterpret that "2" as time option 2 (12:00 PM) and silently
+    // overwrote the already-confirmed 1:30 PM with zero user intent to change it.
+    const timeOptions = [
+      { label: "9:00 AM", startTimeLocal: "2026-07-24 09:00:00", remaining: 83 },
+      { label: "12:00 PM", startTimeLocal: "2026-07-24 12:00:00", remaining: 87 },
+      { label: "1:30 PM", startTimeLocal: "2026-07-24 13:30:00", remaining: 87 },
+      { label: "2:30 PM", startTimeLocal: "2026-07-24 14:30:00", remaining: 90 }
+    ];
+    const ticketOptions = [
+      { label: "Family (2A +2C) 3-13", unitPriceCents: 24900 },
+      { label: "2 people for $149.00", unitPriceCents: 14900 },
+      { label: "Child (3-13)", unitPriceCents: 5900 },
+      { label: "Infant (under 3)", unitPriceCents: 0 },
+      { label: "Adult (Winter Special)", unitPriceCents: 7900 }
+    ];
+    const extraOptions = [
+      { label: "Corona Bucket", unitPriceCents: 3000 },
+      { label: "Sparkling for 2", unitPriceCents: 4000 }
+    ];
+    const pmsAdapter = {
+      provider: "REZDY" as const,
+      listProducts: async () => [
+        {
+          externalProductId: "boattime-whale-escape",
+          title: "Gold Coast Whale Escape",
+          description: "Luxury whale watching cruise",
+          bookingMode: "AUTO_BOOKING" as const
+        }
+      ],
+      getAvailability: async () => {
+        throw new Error("Availability should not be rechecked during time or ticket selection.");
+      },
+      createBooking: async () => {
+        throw new Error("Booking should not be created before extras and contact are handled.");
+      },
+      cancelBooking: async () => ({ cancelled: false }),
+      getBooking: async () => null
+    };
+
+    const timeResult = await handleTravellerBookingMessage({
+      message: "1:30pm",
+      bookingMemory: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-07-24",
+        guests: 3,
+        timeOptions,
+        ticketOptions,
+        extraOptions
+      },
+      bookingWriteEnabled: true,
+      pmsAdapter
+    });
+
+    expect(timeResult).toMatchObject({
+      action: "BOOKING_TICKET_SELECTION_REQUIRED",
+      bookingStatePatch: { dateText: "2026-07-24 13:30:00" }
+    });
+
+    const ticketResult = await handleTravellerBookingMessage({
+      message: "yes i want to mix option 2 and option 5, dont you understand?",
+      bookingMemory: timeResult.bookingStatePatch,
+      bookingWriteEnabled: true,
+      pmsAdapter
+    });
+
+    expect(ticketResult).toMatchObject({
+      action: "BOOKING_EXTRAS_SELECTION_REQUIRED",
+      bookingStatePatch: {
+        dateText: "2026-07-24 13:30:00",
+        ticketQuantities: [
+          { optionLabel: "2 people for $149.00", quantity: 1 },
+          { optionLabel: "Adult (Winter Special)", quantity: 1 }
+        ]
+      }
+    });
+    expect(ticketResult.reply).toContain("1:30 PM");
+    expect(ticketResult.reply).not.toContain("12:00 PM");
+  });
+
   it("asks for a ticket option when an available product exposes multiple ticket options", async () => {
     const result = await handleTravellerBookingMessage({
       message: "Can you check Gold Coast Whale Escape for 3 guests tomorrow?",
