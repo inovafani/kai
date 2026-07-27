@@ -3,11 +3,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createOrReuseBluePassInquiry,
   dispatchBluePassOperatorWhatsApp,
+  finalizeBluePassLedgerForConfirmedBooking,
   getActiveBluePassInquiryStatus,
   handleBluePassOperatorResponse,
   listBluePassInquiriesForTenantSlug,
   resolveLatestPendingBluePassInquiryIdForOperatorPhone,
-  syncBluePassReferralLedgerEstimate
+  syncBluePassReferralLedgerEstimate,
+  voidBluePassLedgerEntries
 } from "./bluepass-inquiry-repository";
 import { approveBluePassQuote } from "./bluepass-quote";
 import { prisma } from "@/lib/prisma";
@@ -176,7 +178,7 @@ describe("bluepass inquiry repository", () => {
       inquiryId: created.inquiry.id
     });
 
-    expect(ledger).toHaveLength(4);
+    expect(ledger).toHaveLength(5);
     expect(ledger.map((entry) => entry.kind)).toContain("CONSERVATION_ALLOCATION");
     expect(dispatch).toMatchObject({
       status: "QUEUED",
@@ -742,7 +744,7 @@ describe("bluepass inquiry repository", () => {
       selectedYachtName: "Alila Purnama",
       status: "OPERATOR_PENDING"
     });
-    expect(adminList[0].ledger).toHaveLength(4);
+    expect(adminList[0].ledger).toHaveLength(5);
     expect(adminList[0].dispatches[0]).toMatchObject({
       status: "QUEUED",
       operatorPhone: "+6281234567001"
@@ -827,6 +829,72 @@ describe("bluepass inquiry repository", () => {
     expect(event?.metadata).toMatchObject({
       providerMessageId: "wamid.button.accept"
     });
+  }, 20_000);
+
+  it("asks the operator for a price after a plain accept when the traveller gave no budget", async () => {
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: `bluepass-accept-price-${randomUUID()}`,
+        name: "BluePass Accept Price Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const conversation = await prisma.conversation.create({
+      data: {
+        tenantId: tenant.id,
+        channel: "WEB_WIDGET"
+      }
+    });
+    const created = await createOrReuseBluePassInquiry({
+      tenantId: tenant.id,
+      conversationId: conversation.id,
+      travellerMessage: "Calico Jack in Komodo for 4 guests on 20 July 2026",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "20 July 2026",
+        guests: 4,
+        travellerName: "Ekap",
+        travellerEmail: "ekap@example.com",
+        travellerPhone: "0876634231987"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorId: "operator_calico_jack",
+        operatorName: "Calico Jack",
+        operatorPhone: "+6281234567004"
+      }
+    });
+    await dispatchBluePassOperatorWhatsApp({ inquiryId: created.inquiry.id });
+
+    const result = await handleBluePassOperatorResponse({
+      inquiryId: created.inquiry.id,
+      action: "accept",
+      providerMessageId: "wamid.button.accept",
+      operatorPhone: "+6281234567004"
+    });
+    const event = await prisma.bluePassInquiryEvent.findFirst({
+      where: {
+        bluePassInquiryId: created.inquiry.id,
+        type: "OPERATOR_ACCEPT_PRICE_REQUESTED"
+      }
+    });
+
+    expect(result.inquiry).toMatchObject({
+      status: "OPERATOR_ACCEPTED"
+    });
+    expect(result.travellerNotification).toMatchObject({
+      channel: "conversation",
+      sent: true
+    });
+    expect(result.operatorFollowUp).toMatchObject({
+      requested: true
+    });
+    expect(result.operatorFollowUp?.prompt).toContain("did not state a budget");
+    expect(result.operatorFollowUp?.prompt).toContain("Suggested format:");
+    expect(event).not.toBeNull();
   }, 20_000);
 
   it("declines an operator response and tells the traveller BluePass will compare alternatives first", async () => {
@@ -1593,5 +1661,194 @@ describe("bluepass inquiry repository", () => {
     });
 
     await expect(resolveLatestPendingBluePassInquiryIdForOperatorPhone(operatorPhone)).resolves.toBe(newer.inquiry.id);
+  }, 20_000);
+
+  it("finalizes the ledger with the real confirmed price when a booking is confirmed, voiding the stale PENDING estimate", async () => {
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: `bluepass-ledger-finalize-${randomUUID()}`,
+        name: "BluePass Ledger Finalize Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const conversation = await prisma.conversation.create({
+      data: { tenantId: tenant.id, channel: "WEB_WIDGET" }
+    });
+
+    const created = await createOrReuseBluePassInquiry({
+      tenantId: tenant.id,
+      conversationId: conversation.id,
+      travellerMessage: "Calico Jack in Komodo for 2 guests",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "20 July 2026",
+        guests: 2,
+        travellerName: "Maya",
+        travellerEmail: "maya@example.com",
+        travellerPhone: "085100000099"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorId: "operator_calico_jack",
+        operatorName: "Calico Jack",
+        operatorPhone: "6281234567099"
+      },
+      referral: {
+        referralPartnerId: "partner_creator_finalize_test",
+        referralLinkId: "link_finalize_test",
+        referralCode: "FINALIZE42",
+        referralRole: "CREATOR"
+      }
+    });
+    await syncBluePassReferralLedgerEstimate(created.inquiry);
+
+    const pendingBefore = await prisma.bluePassLedgerEntry.findMany({
+      where: { bluePassInquiryId: created.inquiry.id, status: "PENDING" }
+    });
+    expect(pendingBefore.length).toBeGreaterThan(0);
+
+    await handleBluePassOperatorResponse({
+      inquiryId: created.inquiry.id,
+      action: "counter",
+      counterText: "Available 20 July 2026. Final price USD 5000. Includes full board. Excludes flights."
+    });
+    await approveBluePassQuote({ quoteId: created.inquiry.id });
+    await handleBluePassOperatorResponse({
+      inquiryId: created.inquiry.id,
+      action: "payment_ready",
+      counterText: "Payment link: https://pay.example/finalize-test."
+    });
+    await handleBluePassOperatorResponse({
+      inquiryId: created.inquiry.id,
+      action: "booking_confirmed",
+      counterText: "Payment received. Booking confirmed for 20 July."
+    });
+
+    const [finalized, stillPending, nowVoided] = await Promise.all([
+      prisma.bluePassLedgerEntry.findMany({ where: { bluePassInquiryId: created.inquiry.id, status: "FINALIZED" } }),
+      prisma.bluePassLedgerEntry.findMany({ where: { bluePassInquiryId: created.inquiry.id, status: "PENDING" } }),
+      prisma.bluePassLedgerEntry.findMany({ where: { bluePassInquiryId: created.inquiry.id, status: "VOIDED" } })
+    ]);
+
+    expect(stillPending).toHaveLength(0);
+    expect(nowVoided.length).toBe(pendingBefore.length);
+    expect(finalized.reduce((sum, entry) => sum + entry.amountCents, 0)).toBe(500000);
+    expect(finalized.find((entry) => entry.kind === "CONSERVATION_ALLOCATION")?.amountCents).toBe(25000);
+    expect(finalized.find((entry) => entry.kind === "CREATOR_COMMISSION_ESTIMATE")?.amountCents).toBe(25000);
+    expect(finalized.find((entry) => entry.kind === "PAYMENT_PROCESSING_ALLOCATION")?.amountCents).toBe(15000);
+    expect(finalized.find((entry) => entry.kind === "BLUEPASS_PLATFORM_COMMISSION")?.amountCents).toBe(25000);
+    expect(finalized.find((entry) => entry.kind === "OPERATOR_PAYOUT_PLACEHOLDER")?.amountCents).toBe(410000);
+  }, 45_000);
+
+  it("voids stale PENDING ledger rows when the operator declines the inquiry", async () => {
+    const tenant = await prisma.tenant.create({
+      data: {
+        slug: `bluepass-ledger-void-${randomUUID()}`,
+        name: "BluePass Ledger Void Test",
+        widgetPublicKey: `pk_${randomUUID()}`,
+        allowedOrigins: ["https://bluepass.co"],
+        status: "ACTIVE"
+      }
+    });
+    const conversation = await prisma.conversation.create({
+      data: { tenantId: tenant.id, channel: "WEB_WIDGET" }
+    });
+
+    const created = await createOrReuseBluePassInquiry({
+      tenantId: tenant.id,
+      conversationId: conversation.id,
+      travellerMessage: "Calico Jack in Komodo for 2 guests",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "20 July 2026",
+        guests: 2,
+        travellerName: "Maya",
+        travellerEmail: "maya@example.com",
+        travellerPhone: "085100000098"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorId: "operator_calico_jack",
+        operatorName: "Calico Jack",
+        operatorPhone: "6281234567098"
+      },
+      referral: {
+        referralPartnerId: "partner_creator_void_test",
+        referralLinkId: "link_void_test",
+        referralCode: "VOID42",
+        referralRole: "CREATOR"
+      }
+    });
+    await syncBluePassReferralLedgerEstimate(created.inquiry);
+
+    const pendingBefore = await prisma.bluePassLedgerEntry.findMany({
+      where: { bluePassInquiryId: created.inquiry.id, status: "PENDING" }
+    });
+    expect(pendingBefore.length).toBeGreaterThan(0);
+
+    await dispatchBluePassOperatorWhatsApp({ inquiryId: created.inquiry.id });
+    await handleBluePassOperatorResponse({
+      inquiryId: created.inquiry.id,
+      action: "decline",
+      providerMessageId: "wamid.void.test.decline"
+    });
+
+    const [stillPending, voided] = await Promise.all([
+      prisma.bluePassLedgerEntry.findMany({ where: { bluePassInquiryId: created.inquiry.id, status: "PENDING" } }),
+      prisma.bluePassLedgerEntry.findMany({ where: { bluePassInquiryId: created.inquiry.id, status: "VOIDED" } })
+    ]);
+
+    expect(stillPending).toHaveLength(0);
+    expect(voided.length).toBe(pendingBefore.length);
+    expect(voided[0].voidReason).toBe("operator declined the inquiry");
+    expect(voided[0].voidedAt).not.toBeNull();
+  }, 20_000);
+
+  it("directly voids ledger entries via voidBluePassLedgerEntries with a custom reason", async () => {
+    const tenantId = `tenant_${randomUUID()}`;
+    const conversationId = `conversation_${randomUUID()}`;
+
+    const created = await createOrReuseBluePassInquiry({
+      tenantId,
+      conversationId,
+      travellerMessage: "Calico Jack in Komodo for 2 guests",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "20 July 2026",
+        guests: 2,
+        travellerName: "Maya",
+        travellerEmail: "maya@example.com",
+        travellerPhone: "085100000097"
+      },
+      selectedYacht: {
+        slug: "calico-jack",
+        name: "Calico Jack",
+        operatorId: "operator_calico_jack",
+        operatorName: "Calico Jack",
+        operatorPhone: "6281234567097"
+      },
+      referral: {
+        referralPartnerId: "partner_creator_direct_void_test",
+        referralLinkId: "link_direct_void_test",
+        referralCode: "DIRECTVOID42",
+        referralRole: "CREATOR"
+      }
+    });
+    await syncBluePassReferralLedgerEstimate(created.inquiry);
+
+    const voidedCount = await voidBluePassLedgerEntries({
+      inquiryId: created.inquiry.id,
+      reason: "manual test adjustment"
+    });
+
+    expect(voidedCount).toBeGreaterThan(0);
+    const voided = await prisma.bluePassLedgerEntry.findMany({
+      where: { bluePassInquiryId: created.inquiry.id, status: "VOIDED" }
+    });
+    expect(voided.every((entry) => entry.voidReason === "manual test adjustment")).toBe(true);
   }, 20_000);
 });

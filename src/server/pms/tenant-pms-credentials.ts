@@ -48,6 +48,7 @@ function credentialsToRezdyEnv(credentials: Record<string, string>): PmsAdapterE
     ...(credentials.productListPath ? { REZDY_PRODUCT_LIST_PATH: credentials.productListPath } : {}),
     ...(credentials.availabilityPath ? { REZDY_AVAILABILITY_PATH: credentials.availabilityPath } : {}),
     ...(credentials.bookingPath ? { REZDY_BOOKING_PATH: credentials.bookingPath } : {}),
+    ...(credentials.confirmPath ? { REZDY_CONFIRM_PATH: credentials.confirmPath } : {}),
     ...(credentials.timeoutMs ? { REZDY_TIMEOUT_MS: credentials.timeoutMs } : {})
   };
 }

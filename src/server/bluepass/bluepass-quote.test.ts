@@ -321,6 +321,84 @@ describe("bluepass quote", () => {
       confirmationText: "Payment received. Booking confirmed for 22 July. Booking reference CJ-2207."
     });
   }, 20_000);
+
+  it("surfaces a paid operational status once the guest pays via Stripe, ahead of operator booking confirmation", async () => {
+    const { tenantId, conversationId } = await createTestConversation("paid-status");
+    const created = await createOrReuseBluePassInquiry({
+      tenantId,
+      conversationId,
+      travellerMessage: "Alila Purnama Komodo for 2 guests on 20 July",
+      intent: {
+        destination: "Komodo",
+        dateWindow: "20 July",
+        guests: 2,
+        travellerName: "Sari",
+        travellerEmail: "sari@example.com",
+        travellerPhone: "085156246111"
+      },
+      selectedYacht: {
+        slug: "alila-purnama",
+        name: "Alila Purnama",
+        operatorId: "operator_alila_purnama",
+        operatorName: "Alila Purnama",
+        operatorPhone: "6285337210181"
+      }
+    });
+
+    await handleBluePassOperatorResponse({
+      inquiryId: created.inquiry.id,
+      action: "counter",
+      counterText: "Available 22 July 2026. Final price USD 4,100 per cabin\night for 2 guests."
+    });
+
+    const beforePayment = await getBluePassQuote({ quoteId: created.inquiry.id });
+    expect(beforePayment?.operationalStatus).toBe("READY_FOR_TRAVELLER");
+
+    await prisma.bluePassInquiryEvent.create({
+      data: {
+        tenantId,
+        conversationId,
+        bluePassInquiryId: created.inquiry.id,
+        type: "BLUEPASS_QUOTE_APPROVED",
+        fromStatus: "COUNTER_OFFERED",
+        toStatus: "COUNTER_OFFERED",
+        metadata: {
+          quoteId: created.inquiry.id,
+          previousQuoteStatus: "READY_FOR_TRAVELLER",
+          nextQuoteStatus: "TRAVELLER_APPROVED"
+        }
+      }
+    });
+    await prisma.bluePassInquiryEvent.create({
+      data: {
+        tenantId,
+        conversationId,
+        bluePassInquiryId: created.inquiry.id,
+        type: "BLUEPASS_PAYMENT_CONFIRMED",
+        fromStatus: "COUNTER_OFFERED",
+        toStatus: "COUNTER_OFFERED",
+        metadata: { stripeCheckoutSessionId: "cs_test_paid_status" }
+      }
+    });
+
+    const paidQuote = await getBluePassQuote({ quoteId: created.inquiry.id });
+    expect(paidQuote).toMatchObject({ status: "TRAVELLER_APPROVED", operationalStatus: "PAID" });
+
+    await prisma.bluePassInquiryEvent.create({
+      data: {
+        tenantId,
+        conversationId,
+        bluePassInquiryId: created.inquiry.id,
+        type: "OPERATOR_BOOKING_CONFIRMED",
+        fromStatus: "COUNTER_OFFERED",
+        toStatus: "CLOSED",
+        metadata: { confirmationText: "Booking confirmed for 22 July." }
+      }
+    });
+
+    const confirmedQuote = await getBluePassQuote({ quoteId: created.inquiry.id });
+    expect(confirmedQuote?.operationalStatus).toBe("BOOKING_CONFIRMED");
+  }, 20_000);
 });
 
 async function createTestConversation(label: string) {

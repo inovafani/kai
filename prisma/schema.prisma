@@ -49,6 +49,7 @@ enum BluePassLedgerKind {
   CREATOR_COMMISSION_ESTIMATE
   BLUEPASS_PLATFORM_COMMISSION
   CONSERVATION_ALLOCATION
+  PAYMENT_PROCESSING_ALLOCATION
   OPERATOR_PAYOUT_PLACEHOLDER
 }
 
@@ -56,6 +57,19 @@ enum BluePassLedgerStatus {
   PENDING
   FINALIZED
   VOIDED
+}
+
+enum BluePassPaymentIntentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+}
+
+enum BluePassOperatorPayoutStatus {
+  PENDING_RELEASE
+  TRANSFERRED
+  FAILED
 }
 
 enum BluePassOperatorDispatchStatus {
@@ -242,9 +256,10 @@ model BluePassInquiry {
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
 
-  events     BluePassInquiryEvent[]
-  ledger     BluePassLedgerEntry[]
-  dispatches BluePassOperatorDispatch[]
+  events         BluePassInquiryEvent[]
+  ledger         BluePassLedgerEntry[]
+  dispatches     BluePassOperatorDispatch[]
+  paymentIntents BluePassPaymentIntent[]
 
   @@index([tenantId, conversationId, status, createdAt])
   @@index([tenantId, status, createdAt])
@@ -281,13 +296,66 @@ model BluePassLedgerEntry {
   referralCode      String?
   referralRole      String?
   metadata          Json?
+  finalizedAt       DateTime?
+  voidedAt          DateTime?
+  voidReason        String?
+  paidOutAt         DateTime?
+  paidOutReference  String?
+  paidOutBy         String?
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
 
-  inquiry BluePassInquiry @relation(fields: [bluePassInquiryId], references: [id], onDelete: Cascade)
+  inquiry BluePassInquiry         @relation(fields: [bluePassInquiryId], references: [id], onDelete: Cascade)
+  payout  BluePassOperatorPayout?
 
   @@index([tenantId, conversationId, status, createdAt])
   @@index([bluePassInquiryId, status])
+}
+
+// Guest checkout on BluePass's own Stripe account (never the operator's PMS) - one row per
+// checkout attempt. stripePaymentIntentId is only populated once Stripe actually creates the
+// PaymentIntent behind the Checkout Session (may briefly be null right after creation).
+model BluePassPaymentIntent {
+  id                      String                      @id @default(cuid())
+  tenantId                String
+  bluePassInquiryId       String
+  stripeCheckoutSessionId String                      @unique
+  stripePaymentIntentId   String?                     @unique
+  amountCents             Int
+  currency                String
+  status                  BluePassPaymentIntentStatus @default(PENDING)
+  createdAt               DateTime                    @default(now())
+  updatedAt               DateTime                    @updatedAt
+
+  inquiry BluePassInquiry @relation(fields: [bluePassInquiryId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, bluePassInquiryId])
+  @@index([status])
+}
+
+// A real Stripe transfer of one FINALIZED ledger entry's operator-net share to that operator's own
+// Stripe Connect account, gated behind an admin's explicit release action (see
+// releaseBluePassLedgerEntryPayoutViaStripe). stripeConnectAccountId is admin-supplied at release
+// time (same manual-trust model as markBluePassLedgerEntryPaid's paidOutReference) rather than
+// looked up automatically - kai has no first-party link to bluepass-app's OperatorProfile rows.
+model BluePassOperatorPayout {
+  id                     String                       @id @default(cuid())
+  tenantId               String
+  bluePassLedgerEntryId  String                       @unique
+  stripeConnectAccountId String
+  stripeTransferId       String?                      @unique
+  amountCents            Int
+  currency               String
+  status                 BluePassOperatorPayoutStatus @default(PENDING_RELEASE)
+  releasedBy             String?
+  releasedAt             DateTime?
+  failureReason          String?
+  createdAt              DateTime                     @default(now())
+  updatedAt              DateTime                     @updatedAt
+
+  ledgerEntry BluePassLedgerEntry @relation(fields: [bluePassLedgerEntryId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, status])
 }
 
 model BluePassOperatorDispatch {

@@ -300,6 +300,29 @@ export class RezdyPmsAdapter extends RealPmsHttpAdapter {
       ...(request.paymentCardToken ? { creditCard: { cardToken: request.paymentCardToken } } : {}),
       resellerComments: "Created by Kai after traveller confirmation."
     });
+
+    return this.mapBookingResponse(payload);
+  }
+
+  /**
+   * Rezdy's Reseller API confirms a previously-held booking (see createBooking's PAYMENT_HOLD mode
+   * for the reserve step) via a separate call, rather than accepting payment itself - confirmed
+   * against Rezdy's own Reseller API docs. The confirm request body ({ orderNumber }) is inferred
+   * from how Rezdy's own booking responses identify orders elsewhere in this adapter, since the
+   * exact confirm request schema isn't publicly documented; verify against a live account once real
+   * confirmPath credentials exist. Not yet called from anywhere - there is no payment flow that
+   * triggers it until BluePass's own Stripe checkout exists.
+   */
+  async confirmBooking(externalBookingId: string): Promise<PmsCreateBookingResult> {
+    this.assertConfigured(["baseUrl", "apiKey", "confirmPath"]);
+    const payload = await this.requestJson("POST", this.config.confirmPath as string, {
+      orderNumber: externalBookingId
+    });
+
+    return this.mapBookingResponse(payload);
+  }
+
+  private mapBookingResponse(payload: unknown): PmsCreateBookingResult {
     const record = asRecord(payload);
     const bookingRecord = readNestedRecord(record, ["order", "booking"]);
     const externalBookingId = readString(bookingRecord, [

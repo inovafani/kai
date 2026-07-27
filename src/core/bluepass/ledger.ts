@@ -15,62 +15,101 @@ export type BluePassLedgerEstimate = {
     | "CREATOR_COMMISSION_ESTIMATE"
     | "BLUEPASS_PLATFORM_COMMISSION"
     | "CONSERVATION_ALLOCATION"
+    | "PAYMENT_PROCESSING_ALLOCATION"
     | "OPERATOR_PAYOUT_PLACEHOLDER";
   amountCents: number;
   currency: BluePassLedgerCurrency;
-  status: "PENDING";
-  referralPartnerId: string;
+  status: "PENDING" | "FINALIZED";
+  referralPartnerId: string | null;
   referralLinkId: string | null;
   referralCode: string | null;
   referralRole: string | null;
   metadata: {
     budgetAmount: number;
-    capApplied: boolean;
   };
 };
 
+export type BluePassLedgerSplitInput = {
+  inquiryId: string;
+  grossAmountCents: number;
+  currency: BluePassLedgerCurrency;
+  status: "PENDING" | "FINALIZED";
+  referralPartnerId?: string | null;
+  referralLinkId?: string | null;
+  referralCode?: string | null;
+  referralRole?: string | null;
+};
+
+// The real, tested split - Tony's own "Economics stated by the playbooks (source of truth)"
+// (kai-persona-triage.md) and its test-guard in kai-refinement-loop.md ("82% / 18% (5/5/3/5); never
+// invent commission %") - already live in Kai's own chat copy (reply.ts's
+// buildBluePassCommissionReply, triage.ts). Conservation and payment-processing always apply;
+// partner commission only applies when a referral is attached, in which case BluePass's own
+// platform-fee bucket is smaller (5% vs 10%) so the operator's 82% net never depends on whether a
+// referral happened to be attached. No dollar cap - the previous 15%/$750-cap/30%-of-commission
+// figures were an outdated first draft that was never reconciled with the refined 18% figure.
 const conservationPct = 0.05;
-const commissionPct = 0.15;
-// Deliberately not converted per-currency: there's no authoritative exchange-rate source wired up
-// here, and a fabricated converted cap would be worse than applying no cap at all. Only USD
-// budgets get capped for now; other currencies fall through uncapped rather than being compared
-// against a USD-denominated number.
-const commissionCapUsd = 750;
-const creatorSharePct = 0.3;
+const partnerCommissionPct = 0.05;
+const paymentProcessingPct = 0.03;
+const platformFeePctReferred = 0.05;
+const platformFeePctUnreferred = 0.1;
 
-export function calculateBluePassLedgerEstimate(input: BluePassLedgerEstimateInput): BluePassLedgerEstimate[] {
-  if (!input.referralPartnerId) {
-    return [];
-  }
-
-  const { currency, amount: budgetAmount } = parseBudgetAmount(input.budget);
-  const uncappedCommission = budgetAmount * commissionPct;
-  const capApplied = currency === "USD" && uncappedCommission > commissionCapUsd;
-  const commission = capApplied ? commissionCapUsd : uncappedCommission;
+// Core split, operating directly on a real amount in cents - shared by the pre-booking PENDING
+// estimate (parsed from operator free text, see calculateBluePassLedgerEstimate below) and the
+// post-booking FINALIZED ledger (computed from the actual confirmed price, see
+// finalizeBluePassLedgerForConfirmedBooking in bluepass-inquiry-repository.ts), so both paths use
+// the identical percentage math rather than two copies that could drift apart.
+export function calculateBluePassLedgerSplit(input: BluePassLedgerSplitInput): BluePassLedgerEstimate[] {
+  const budgetAmount = input.grossAmountCents / 100;
+  const hasReferral = Boolean(input.referralPartnerId);
   const conservation = budgetAmount * conservationPct;
-  const creatorShare = input.referralRole === "CREATOR" ? commission * creatorSharePct : 0;
-  const bluepassNet = commission - creatorShare;
-  const operatorNet = Math.max(0, budgetAmount - commission - conservation);
+  const partnerCommission = hasReferral ? budgetAmount * partnerCommissionPct : 0;
+  const paymentProcessing = budgetAmount * paymentProcessingPct;
+  const platformFee = budgetAmount * (hasReferral ? platformFeePctReferred : platformFeePctUnreferred);
+  // Derived as the remainder (not a separate budgetAmount * 0.82) so the four ledger rows always
+  // sum to exactly budgetAmount, with no rounding-cent leakage between buckets.
+  const operatorNet = budgetAmount - conservation - partnerCommission - paymentProcessing - platformFee;
+
   const base = {
     inquiryId: input.inquiryId,
-    currency,
-    status: "PENDING" as const,
-    referralPartnerId: input.referralPartnerId,
+    currency: input.currency,
+    status: input.status,
+    referralPartnerId: input.referralPartnerId ?? null,
     referralLinkId: input.referralLinkId ?? null,
     referralCode: input.referralCode ?? null,
     referralRole: input.referralRole ?? null,
     metadata: {
-      budgetAmount,
-      capApplied
+      budgetAmount
     }
   };
 
-  return [
-    { ...base, kind: "CREATOR_COMMISSION_ESTIMATE", amountCents: toCents(creatorShare) },
-    { ...base, kind: "BLUEPASS_PLATFORM_COMMISSION", amountCents: toCents(bluepassNet) },
+  const entries: BluePassLedgerEstimate[] = [
     { ...base, kind: "CONSERVATION_ALLOCATION", amountCents: toCents(conservation) },
+    { ...base, kind: "PAYMENT_PROCESSING_ALLOCATION", amountCents: toCents(paymentProcessing) },
+    { ...base, kind: "BLUEPASS_PLATFORM_COMMISSION", amountCents: toCents(platformFee) },
     { ...base, kind: "OPERATOR_PAYOUT_PLACEHOLDER", amountCents: toCents(operatorNet) }
   ];
+
+  if (hasReferral) {
+    entries.push({ ...base, kind: "CREATOR_COMMISSION_ESTIMATE", amountCents: toCents(partnerCommission) });
+  }
+
+  return entries;
+}
+
+export function calculateBluePassLedgerEstimate(input: BluePassLedgerEstimateInput): BluePassLedgerEstimate[] {
+  const { currency, amount: budgetAmount } = parseBudgetAmount(input.budget);
+
+  return calculateBluePassLedgerSplit({
+    inquiryId: input.inquiryId,
+    grossAmountCents: toCents(budgetAmount),
+    currency,
+    status: "PENDING",
+    referralPartnerId: input.referralPartnerId,
+    referralLinkId: input.referralLinkId,
+    referralCode: input.referralCode,
+    referralRole: input.referralRole
+  });
 }
 
 const knownLedgerCurrencies: BluePassLedgerCurrency[] = ["USD", "IDR", "EUR", "AUD"];
@@ -94,4 +133,10 @@ export function parseBudgetAmount(value?: string | null): { currency: BluePassLe
 
 function toCents(value: number) {
   return Math.round(value * 100);
+}
+
+// Shared with bluepass-quote.ts's operator-quote conservation display so the two never drift to
+// different percentages of the same real (not budget-text-parsed) price.
+export function calculateConservationContributionCents(grossPriceCents: number): number {
+  return Math.round(grossPriceCents * conservationPct);
 }

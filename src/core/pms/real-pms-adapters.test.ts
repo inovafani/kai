@@ -727,6 +727,82 @@ describe("real PMS adapter shells", () => {
     });
   });
 
+  it("confirms a Rezdy reserved booking and returns its confirmed status", async () => {
+    const fetcher = vi.fn(async () => {
+      return new Response(
+        JSON.stringify({
+          order: {
+            orderNumber: "RZ-PENDING",
+            status: "CONFIRMED"
+          }
+        }),
+        { status: 200 }
+      );
+    });
+    const adapter = new RezdyPmsAdapter({
+      baseUrl: "https://rezdy.example.test/v1",
+      apiKey: "rezdy-secret",
+      confirmPath: "/bookings/confirm",
+      fetcher
+    });
+
+    await expect(adapter.confirmBooking("RZ-PENDING")).resolves.toEqual({
+      externalBookingId: "RZ-PENDING",
+      provider: "REZDY",
+      status: "CONFIRMED"
+    });
+
+    const [url, requestInit] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://rezdy.example.test/v1/bookings/confirm?apiKey=rezdy-secret");
+    expect(requestInit.method).toBe("POST");
+    expect(JSON.parse(requestInit.body as string)).toEqual({ orderNumber: "RZ-PENDING" });
+  });
+
+  it("includes PMS error response details when a Rezdy confirm request is rejected", async () => {
+    const fetcher = vi.fn(async () => {
+      return new Response(JSON.stringify({ error: "Order already confirmed" }), { status: 409 });
+    });
+    const adapter = new RezdyPmsAdapter({
+      baseUrl: "https://rezdy.example.test/v1",
+      apiKey: "rezdy-secret",
+      confirmPath: "/bookings/confirm",
+      fetcher
+    });
+
+    await expect(adapter.confirmBooking("RZ-1")).rejects.toThrow(
+      'REZDY PMS API request failed with status 409: {"error":"Order already confirmed"}'
+    );
+  });
+
+  it("treats a Rezdy confirm response without an order reference as failed", async () => {
+    const fetcher = vi.fn(async () => {
+      return new Response(JSON.stringify({ status: "CONFIRMATION_FAILED" }), { status: 200 });
+    });
+    const adapter = new RezdyPmsAdapter({
+      baseUrl: "https://rezdy.example.test/v1",
+      apiKey: "rezdy-secret",
+      confirmPath: "/bookings/confirm",
+      fetcher
+    });
+
+    await expect(adapter.confirmBooking("RZ-1")).resolves.toEqual({
+      externalBookingId: "",
+      provider: "REZDY",
+      status: "FAILED"
+    });
+  });
+
+  it("fails closed with actionable setup requirements when Rezdy confirmPath is missing", async () => {
+    const adapter = new RezdyPmsAdapter({
+      baseUrl: "https://rezdy.example.test/v1",
+      apiKey: "rezdy-secret"
+    });
+
+    await expect(adapter.confirmBooking("RZ-1")).rejects.toThrow(
+      "REZDY PMS adapter requires baseUrl, apiKey, and confirmPath before live calls."
+    );
+  });
+
   it("maps Inseanq availability responses into Kai availability when configured", async () => {
     const fetcher = vi.fn(async () => {
       return new Response(

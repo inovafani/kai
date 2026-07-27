@@ -50,6 +50,7 @@ async function main() {
     productListPath: process.env.REZDY_PRODUCT_LIST_PATH ?? "",
     availabilityPath: process.env.REZDY_AVAILABILITY_PATH ?? "",
     bookingPath: process.env.REZDY_BOOKING_PATH ?? "",
+    confirmPath: process.env.REZDY_CONFIRM_PATH ?? "",
     ...(process.env.REZDY_TIMEOUT_MS ? { timeoutMs: process.env.REZDY_TIMEOUT_MS } : {})
   };
 

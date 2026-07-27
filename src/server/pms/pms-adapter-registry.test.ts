@@ -40,6 +40,30 @@ describe("PMS adapter registry", () => {
     ]);
   });
 
+  it("passes Rezdy confirmPath environment credential into the real adapter", async () => {
+    const fetcher = async () =>
+      new Response(JSON.stringify({ order: { orderNumber: "RZ-1", status: "CONFIRMED" } }), { status: 200 });
+    const adapter = getPmsAdapter(
+      "REZDY",
+      {
+        REZDY_BASE_URL: "https://rezdy.example.test",
+        REZDY_API_KEY: "rezdy-secret",
+        REZDY_CONFIRM_PATH: "/bookings/confirm"
+      },
+      fetcher
+    );
+
+    if (!adapter.confirmBooking) {
+      throw new Error("Expected the Rezdy adapter to expose confirmBooking.");
+    }
+
+    await expect(adapter.confirmBooking("RZ-1")).resolves.toEqual({
+      externalBookingId: "RZ-1",
+      provider: "REZDY",
+      status: "CONFIRMED"
+    });
+  });
+
   it("passes Inseanq environment credentials into the real adapter", async () => {
     const fetcher = async () =>
       new Response(

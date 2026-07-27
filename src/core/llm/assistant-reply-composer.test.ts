@@ -105,6 +105,20 @@ describe("assistant reply composer", () => {
     expect((result.reply.match(/\?/g) ?? []).length).toBeLessThanOrEqual(1);
   });
 
+  it("keeps every sentence of a deterministic reply with no LLM client, including a trailing question past the 3-sentence naturalness cap", async () => {
+    const deterministicReply =
+      "Great choice - Alila Purnama is a Legend phinisi in Komodo (5 cabins, up to 10 guests). Price signal: from $3,000 per cabin. I can't check live availability or take payment here, but I can prepare this for the operator to confirm. Could you share your dates, group size?";
+
+    const result = await composeAssistantReply({
+      deterministicReply
+    });
+
+    expect(result).toEqual({
+      source: "DETERMINISTIC",
+      reply: deterministicReply
+    });
+  });
+
   it("falls back to the deterministic reply when an LLM rewrite drops PMS facts", async () => {
     const deterministicReply =
       "Komodo Day Trip is available for 3 guests on tomorrow. PMS shows 7 spots remaining at USD 185.00 per guest. I have not confirmed a booking yet.";

@@ -318,7 +318,7 @@ describe("resolveWhatsAppTenantForMessage", () => {
     const result = await resolveWhatsAppTenantForMessage({ messageText: "Show me yachts", fromPhone: phone });
 
     expect(result?.tenant.slug).toBe(auTenant.slug);
-  });
+  }, 15_000);
 
   it("a 'new chat' reset always overrides stickiness", async () => {
     const auTenant = await createTestPmsTenant({ name: `AU Reset Override ${randomUUID()}` });

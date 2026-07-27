@@ -1,14 +1,20 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { GET, POST } from "./route";
 import { approveBluePassQuote, getBluePassQuote } from "@/server/bluepass/bluepass-quote";
+import { createBluePassCheckoutSession } from "@/server/payments/bluepass-stripe";
 
 vi.mock("@/server/bluepass/bluepass-quote", () => ({
   approveBluePassQuote: vi.fn(),
   getBluePassQuote: vi.fn()
 }));
 
+vi.mock("@/server/payments/bluepass-stripe", () => ({
+  createBluePassCheckoutSession: vi.fn()
+}));
+
 const getBluePassQuoteMock = vi.mocked(getBluePassQuote);
 const approveBluePassQuoteMock = vi.mocked(approveBluePassQuote);
+const createBluePassCheckoutSessionMock = vi.mocked(createBluePassCheckoutSession);
 
 describe("/api/bluepass/quotes/[quoteId]", () => {
   afterEach(() => {
@@ -94,5 +100,55 @@ describe("/api/bluepass/quotes/[quoteId]", () => {
       id: "inq_1",
       status: "TRAVELLER_APPROVED"
     });
+  });
+
+  it("creates a checkout session for a payment-ready quote", async () => {
+    createBluePassCheckoutSessionMock.mockResolvedValueOnce({
+      checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_123",
+      sessionId: "cs_test_123"
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/bluepass/quotes/inq_1", {
+        method: "POST",
+        body: JSON.stringify({ action: "checkout" })
+      }),
+      { params: Promise.resolve({ quoteId: "inq_1" }) }
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(createBluePassCheckoutSessionMock).toHaveBeenCalledWith({ quoteId: "inq_1" });
+    expect(body).toEqual({ checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_123" });
+  });
+
+  it("returns a 400 when checkout session creation fails", async () => {
+    createBluePassCheckoutSessionMock.mockRejectedValueOnce(new Error("Quote is not ready for payment."));
+
+    const response = await POST(
+      new Request("http://localhost/api/bluepass/quotes/inq_1", {
+        method: "POST",
+        body: JSON.stringify({ action: "checkout" })
+      }),
+      { params: Promise.resolve({ quoteId: "inq_1" }) }
+    );
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.error).toEqual({ code: "CHECKOUT_SESSION_FAILED", message: "Quote is not ready for payment." });
+  });
+
+  it("rejects an unknown quote action", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/bluepass/quotes/inq_1", {
+        method: "POST",
+        body: JSON.stringify({ action: "cancel" })
+      }),
+      { params: Promise.resolve({ quoteId: "inq_1" }) }
+    );
+
+    expect(response.status).toBe(400);
+    expect(approveBluePassQuoteMock).not.toHaveBeenCalled();
+    expect(createBluePassCheckoutSessionMock).not.toHaveBeenCalled();
   });
 });

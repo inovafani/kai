@@ -22,6 +22,7 @@ export interface RealPmsHttpAdapterConfig {
   productListPath?: string;
   availabilityPath?: string;
   bookingPath?: string;
+  confirmPath?: string;
   timeoutMs?: number;
   fetcher?: Fetcher;
 }

@@ -39,6 +39,7 @@ export function getPmsAdapter(
       productListPath: env.REZDY_PRODUCT_LIST_PATH,
       availabilityPath: env.REZDY_AVAILABILITY_PATH,
       bookingPath: env.REZDY_BOOKING_PATH,
+      confirmPath: env.REZDY_CONFIRM_PATH,
       timeoutMs: readTimeout(env.REZDY_TIMEOUT_MS),
       fetcher
     });

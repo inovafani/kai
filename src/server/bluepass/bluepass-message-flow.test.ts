@@ -675,6 +675,61 @@ describe("handleBluePassMarketplaceMessage", () => {
     });
   });
 
+  it("surfaces a contact-detail request for a YACHT_INFO reply about an already-selected yacht (previously only REQUEST_MISSING_FIELDS ever asked)", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "tell me about alila purnama",
+      priorTravellerMessages: ["i want komodo for 2 guests on 20 august"]
+    });
+
+    expect(result.assistantContent).toContain("Alila Purnama");
+    expect(result.contactRequest).toMatchObject({
+      status: "CONTACT_DETAILS_REQUIRED",
+      fields: expect.arrayContaining(["name", "email", "phone"])
+    });
+  });
+
+  it("surfaces a contact-detail request even when the reply is small talk, once a yacht is selected", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "so what can you do for me about alila purnama?",
+      priorTravellerMessages: ["can you help me book alila purnama in komodo on 16 july for 2 guests"]
+    });
+
+    expect(result.contactRequest).toMatchObject({
+      status: "CONTACT_DETAILS_REQUIRED",
+      fields: expect.arrayContaining(["name", "email", "phone"])
+    });
+  });
+
+  it("keeps the contact-detail request alive across a vague small-talk follow-up that drops the yacht mention", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "so what can you do for me?",
+      priorTravellerMessages: ["can you help me book alila purnama in komodo on 16 july for 2 guests"]
+    });
+
+    expect(result.contactRequest).toMatchObject({
+      status: "CONTACT_DETAILS_REQUIRED",
+      fields: expect.arrayContaining(["name", "email", "phone"])
+    });
+  });
+
+  it("does not push a contact-detail request while the traveller is still browsing with no yacht selected", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "what can you recommend for komodo?",
+      priorTravellerMessages: []
+    });
+
+    expect(result.bluepassInquiry).toBeNull();
+    expect(result.contactRequest).toBeNull();
+  });
+
   it("locks a selected yacht even when the traveller makes a small typo in the yacht name", async () => {
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
@@ -749,10 +804,11 @@ describe("handleBluePassMarketplaceMessage", () => {
     });
     expect(result.bluepassMatches).toEqual([]);
     expect(result.bluepassLedger.map((entry) => entry.kind)).toEqual([
-      "CREATOR_COMMISSION_ESTIMATE",
-      "BLUEPASS_PLATFORM_COMMISSION",
       "CONSERVATION_ALLOCATION",
-      "OPERATOR_PAYOUT_PLACEHOLDER"
+      "PAYMENT_PROCESSING_ALLOCATION",
+      "BLUEPASS_PLATFORM_COMMISSION",
+      "OPERATOR_PAYOUT_PLACEHOLDER",
+      "CREATOR_COMMISSION_ESTIMATE"
     ]);
     expect(result.bluepassDispatch).toMatchObject({
       status: "QUEUED",

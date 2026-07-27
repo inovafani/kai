@@ -1,10 +1,11 @@
 import type { BluePassInquiry, Prisma } from "@prisma/client";
+import { calculateConservationContributionCents } from "@/core/bluepass/ledger";
 import { prisma } from "@/lib/prisma";
 import { sendTemplateMessage, sendWhatsAppText } from "@/server/whatsapp/client";
 import { buildTravellerInquiryUpdateParams, whatsappTemplateNames } from "@/server/whatsapp/templates";
 
 export type BluePassQuoteStatus = "NEEDS_FINAL_PRICE" | "READY_FOR_TRAVELLER" | "TRAVELLER_APPROVED";
-export type BluePassQuoteOperationalStatus = BluePassQuoteStatus | "PAYMENT_READY" | "BOOKING_CONFIRMED";
+export type BluePassQuoteOperationalStatus = BluePassQuoteStatus | "PAYMENT_READY" | "PAID" | "BOOKING_CONFIRMED";
 
 export type BluePassQuote = {
   id: string;
@@ -60,7 +61,13 @@ export async function getBluePassQuote(input: { quoteId: string }) {
       events: {
         where: {
           type: {
-            in: ["BLUEPASS_QUOTE_DRAFTED", "BLUEPASS_QUOTE_APPROVED", "OPERATOR_PAYMENT_READY", "OPERATOR_BOOKING_CONFIRMED"]
+            in: [
+              "BLUEPASS_QUOTE_DRAFTED",
+              "BLUEPASS_QUOTE_APPROVED",
+              "OPERATOR_PAYMENT_READY",
+              "BLUEPASS_PAYMENT_CONFIRMED",
+              "OPERATOR_BOOKING_CONFIRMED"
+            ]
           }
         },
         orderBy: { createdAt: "desc" }
@@ -75,11 +82,13 @@ export async function getBluePassQuote(input: { quoteId: string }) {
 
   const approvedEvent = inquiry.events.find((event) => event.type === "BLUEPASS_QUOTE_APPROVED");
   const paymentReadyEvent = inquiry.events.find((event) => event.type === "OPERATOR_PAYMENT_READY");
+  const paidEvent = inquiry.events.find((event) => event.type === "BLUEPASS_PAYMENT_CONFIRMED");
   const bookingConfirmedEvent = inquiry.events.find((event) => event.type === "OPERATOR_BOOKING_CONFIRMED");
   const status: BluePassQuoteStatus = approvedEvent ? "TRAVELLER_APPROVED" : quoteEvent.metadata.status;
   const operationalStatus = resolveQuoteOperationalStatus({
     status,
     paymentReady: Boolean(paymentReadyEvent),
+    paid: Boolean(paidEvent),
     bookingConfirmed: Boolean(bookingConfirmedEvent)
   });
 
@@ -90,7 +99,13 @@ export async function getBluePassQuote(input: { quoteId: string }) {
     paymentText: getMetadataString(paymentReadyEvent?.metadata, "paymentText"),
     confirmationText: getMetadataString(bookingConfirmedEvent?.metadata, "confirmationText"),
     createdAt: quoteEvent.createdAt.toISOString(),
-    updatedAt: (bookingConfirmedEvent?.createdAt ?? paymentReadyEvent?.createdAt ?? approvedEvent?.createdAt ?? quoteEvent.createdAt).toISOString()
+    updatedAt: (
+      bookingConfirmedEvent?.createdAt ??
+      paidEvent?.createdAt ??
+      paymentReadyEvent?.createdAt ??
+      approvedEvent?.createdAt ??
+      quoteEvent.createdAt
+    ).toISOString()
   };
 }
 
@@ -144,7 +159,7 @@ function buildAcceptedQuoteMetadata(inquiry: BluePassInquiry): BluePassQuoteMeta
     guests: inquiry.guests,
     currency: price?.currency ?? "USD",
     grossPriceCents: price?.grossPriceCents ?? null,
-    conservationContributionCents: price ? Math.round(price.grossPriceCents * 0.05) : null,
+    conservationContributionCents: price ? calculateConservationContributionCents(price.grossPriceCents) : null,
     inclusions: null,
     exclusions: null,
     terms: null,
@@ -168,7 +183,7 @@ function buildCounterQuoteMetadata(inquiry: BluePassInquiry, counterText?: strin
     guests: inquiry.guests,
     currency: price?.currency ?? "USD",
     grossPriceCents: price?.grossPriceCents ?? null,
-    conservationContributionCents: price ? Math.round(price.grossPriceCents * 0.05) : null,
+    conservationContributionCents: price ? calculateConservationContributionCents(price.grossPriceCents) : null,
     inclusions: parseSection(text, "includes", ["excludes", "condition"]),
     exclusions: parseSection(text, "excludes", ["condition"]),
     terms: parseTerms(text),
@@ -353,9 +368,11 @@ function resolveTravellerQuoteApprovalSendMode(): "text" | "template" {
 function resolveQuoteOperationalStatus(input: {
   status: BluePassQuoteStatus;
   paymentReady: boolean;
+  paid: boolean;
   bookingConfirmed: boolean;
 }): BluePassQuoteOperationalStatus {
   if (input.bookingConfirmed) return "BOOKING_CONFIRMED";
+  if (input.paid) return "PAID";
   if (input.paymentReady) return "PAYMENT_READY";
   return input.status;
 }

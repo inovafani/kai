@@ -214,20 +214,24 @@ function capSentences(reply: string, latestUserMessage?: string | null) {
 
 function applyNaturalnessCheck(
   reply: string,
-  input: Pick<ComposeAssistantReplyInput, "latestUserMessage" | "conversationHistory">
+  input: Pick<ComposeAssistantReplyInput, "latestUserMessage" | "conversationHistory">,
+  options: { capSentences?: boolean } = {}
 ) {
-  return capSentences(
-    limitQuestions(
-      removeRepeatedUserMessage(
-        removeUnrequestedBullets(
-          avoidRepeatedIStart(removeRepeatedGreeting(reply), input.conversationHistory),
-          input.latestUserMessage
-        ),
+  const cleaned = limitQuestions(
+    removeRepeatedUserMessage(
+      removeUnrequestedBullets(
+        avoidRepeatedIStart(removeRepeatedGreeting(reply), input.conversationHistory),
         input.latestUserMessage
-      )
-    ),
-    input.latestUserMessage
-  ).trim();
+      ),
+      input.latestUserMessage
+    )
+  );
+
+  // capSentences exists to rein in LLM rambling - a deterministic, code-authored reply is already
+  // exactly as long as intended (e.g. buildSelectedYachtMissingFieldsReply's yacht summary plus its
+  // trailing "which dates/how many guests?" question is 4 sentences by design), so capping it at 3
+  // silently drops the one sentence asking what's actually still needed.
+  return (options.capSentences === false ? cleaned : capSentences(cleaned, input.latestUserMessage)).trim();
 }
 
 export async function composeAssistantReply(
@@ -236,7 +240,7 @@ export async function composeAssistantReply(
   if (!input.llmClient) {
     return {
       source: "DETERMINISTIC",
-      reply: applyNaturalnessCheck(input.deterministicReply, input)
+      reply: applyNaturalnessCheck(input.deterministicReply, input, { capSentences: false })
     };
   }
 
@@ -262,7 +266,7 @@ export async function composeAssistantReply(
 
     return {
       source: "DETERMINISTIC",
-      reply: applyNaturalnessCheck(input.deterministicReply, input)
+      reply: applyNaturalnessCheck(input.deterministicReply, input, { capSentences: false })
     };
   }
 
@@ -279,7 +283,7 @@ export async function composeAssistantReply(
 
     return {
       source: "DETERMINISTIC",
-      reply: applyNaturalnessCheck(input.deterministicReply, input)
+      reply: applyNaturalnessCheck(input.deterministicReply, input, { capSentences: false })
     };
   }
 

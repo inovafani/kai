@@ -142,14 +142,14 @@ function extractDateWindow(text: string, lowerText: string) {
   if (lowerText.includes("next week")) return "next week";
 
   const fullDayMonthMatch = text.match(
-    /\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s*,?\s*(\d{4}))?\b/i
+    /\b(\d{1,2})(?:st|nd|rd|th)?\s*(?:of\s+)?(january|february|march|april|may|june|july|august|september|october|november|december)(?:\s*,?\s*(\d{4}))?\b/i
   );
   if (fullDayMonthMatch) {
     return formatDayMonthDate(fullDayMonthMatch[1], fullDayMonthMatch[2], fullDayMonthMatch[3]);
   }
 
   const fullMonthDayMatch = text.match(
-    /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s+(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(\d{4}))?\b/i
+    /\b(january|february|march|april|may|june|july|august|september|october|november|december)\s*(\d{1,2})(?:st|nd|rd|th)?(?:\s*,?\s*(\d{4}))?\b/i
   );
   if (fullMonthDayMatch) {
     return formatDayMonthDate(fullMonthDayMatch[2], fullMonthDayMatch[1], fullMonthDayMatch[3]);

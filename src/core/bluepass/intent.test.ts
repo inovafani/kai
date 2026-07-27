@@ -33,6 +33,15 @@ describe("BluePass inquiry intent", () => {
     });
   });
 
+  it("recognizes a day and month typed with no space between them", () => {
+    const intent = extractBluePassInquiryIntent(["28july for 2 people"]);
+
+    expect(intent).toMatchObject({
+      dateWindow: "28 July",
+      guests: 2
+    });
+  });
+
   it("preserves full ordinal of month date windows", () => {
     const intent = extractBluePassInquiryIntent([
       "for 6th of july 2026, 4 people my name is Inova, email is inova@gmail.com, and whatsapp number is 085156246329"

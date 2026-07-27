@@ -2,7 +2,7 @@ import type { BluePassInquiry, Prisma } from "@prisma/client";
 import { findBluePassAlternativeYachts, type BluePassYachtCard } from "@/core/bluepass/catalog";
 import { buildBluePassDispatchText } from "@/core/bluepass/dispatch";
 import type { BluePassInquiryIntent } from "@/core/bluepass/intent";
-import { calculateBluePassLedgerEstimate } from "@/core/bluepass/ledger";
+import { calculateBluePassLedgerEstimate, calculateBluePassLedgerSplit, type BluePassLedgerCurrency } from "@/core/bluepass/ledger";
 import type { BluePassPersonaLead } from "@/core/bluepass/persona-lead";
 import { composeAssistantReply } from "@/core/llm/assistant-reply-composer";
 import { prisma } from "@/lib/prisma";
@@ -203,6 +203,156 @@ export async function syncBluePassReferralLedgerEstimate(inquiry: BluePassInquir
       status: "PENDING"
     },
     orderBy: { createdAt: "asc" }
+  });
+}
+
+// Interim finalize trigger for Phase 1 (both regions): the operator's free-text "booking confirmed"
+// WhatsApp message, via the same latest-parsed-quote price getBluePassQuote already resolves for
+// the traveller-facing quote screen - not a real payment event yet (Phase 2 replaces this with a
+// Stripe webhook for AU operators specifically; Indonesia keeps this trigger under the current
+// phasing decision). Supersedes the PENDING budget-text estimate with a FINALIZED entry set computed
+// from the actual agreed price, and voids the stale PENDING rows rather than leaving them alongside.
+// Idempotent: now that both the WhatsApp "booking confirmed" trigger and the Stripe payment webhook
+// can call this for the same inquiry, a second call must never double-finalize the ledger.
+export async function finalizeBluePassLedgerForConfirmedBooking(inquiry: BluePassInquiry) {
+  const alreadyFinalized = await prisma.bluePassLedgerEntry.findMany({
+    where: { bluePassInquiryId: inquiry.id, status: "FINALIZED" }
+  });
+  if (alreadyFinalized.length > 0) {
+    return alreadyFinalized;
+  }
+
+  const quote = await getBluePassQuote({ quoteId: inquiry.id });
+  const grossAmountCents = quote?.grossPriceCents ?? null;
+
+  const voided = await prisma.bluePassLedgerEntry.updateMany({
+    where: { bluePassInquiryId: inquiry.id, status: "PENDING" },
+    data: { status: "VOIDED", voidedAt: new Date(), voidReason: "superseded by booking-confirmation finalization" }
+  });
+
+  if (grossAmountCents == null) {
+    // No parsed final price to finalize against yet - the voided PENDING estimate is all there is;
+    // an admin can add a manual ledger adjustment later once a real price is known.
+    return [];
+  }
+
+  const finalized = calculateBluePassLedgerSplit({
+    inquiryId: inquiry.id,
+    grossAmountCents,
+    currency: (quote?.currency as BluePassLedgerCurrency | undefined) ?? "USD",
+    status: "FINALIZED",
+    referralPartnerId: inquiry.referralPartnerId,
+    referralLinkId: inquiry.referralLinkId,
+    referralCode: inquiry.referralCode,
+    referralRole: inquiry.referralRole
+  });
+
+  await prisma.bluePassLedgerEntry.createMany({
+    data: finalized.map((entry) => ({
+      tenantId: inquiry.tenantId,
+      conversationId: inquiry.conversationId,
+      bluePassInquiryId: inquiry.id,
+      kind: entry.kind,
+      amountCents: entry.amountCents,
+      currency: entry.currency,
+      status: entry.status,
+      referralPartnerId: entry.referralPartnerId,
+      referralLinkId: entry.referralLinkId,
+      referralCode: entry.referralCode,
+      referralRole: entry.referralRole,
+      metadata: entry.metadata as Prisma.InputJsonValue,
+      finalizedAt: new Date()
+    }))
+  });
+
+  await createBluePassInquiryEvent({
+    inquiry,
+    type: "LEDGER_FINALIZED",
+    fromStatus: inquiry.status,
+    toStatus: inquiry.status,
+    metadata: { entryCount: finalized.length, voidedPendingCount: voided.count, grossAmountCents }
+  });
+
+  return finalized;
+}
+
+// Declined inquiries currently left their PENDING ledger estimate rows dangling forever - this
+// closes that data-integrity gap (independent of any Stripe/payment work).
+export async function voidBluePassLedgerEntries(input: { inquiryId: string; reason: string }) {
+  const voided = await prisma.bluePassLedgerEntry.updateMany({
+    where: { bluePassInquiryId: input.inquiryId, status: "PENDING" },
+    data: { status: "VOIDED", voidedAt: new Date(), voidReason: input.reason }
+  });
+
+  return voided.count;
+}
+
+// Admin "commission owed/paid" view (Phase 1 foundation for real payouts). Defaults to FINALIZED
+// entries - the real, confirmed amounts actually owed - since PENDING estimates aren't something
+// to act on yet and VOIDED entries are dead. tenantId has no Prisma relation on this model (matches
+// listBluePassInquiriesForTenantSlug's own pattern), so the tenant is resolved by slug first.
+export async function listBluePassLedgerEntriesForTenantSlug(input: {
+  tenantSlug: string;
+  status?: "PENDING" | "FINALIZED" | "VOIDED";
+  take?: number;
+}) {
+  const tenant = await prisma.tenant.findUnique({
+    where: { slug: input.tenantSlug },
+    select: { id: true, slug: true, name: true }
+  });
+
+  if (!tenant) {
+    return [];
+  }
+
+  return prisma.bluePassLedgerEntry.findMany({
+    where: {
+      tenantId: tenant.id,
+      status: input.status ?? "FINALIZED"
+    },
+    orderBy: { createdAt: "desc" },
+    take: input.take ?? 100,
+    include: {
+      inquiry: {
+        select: {
+          id: true,
+          selectedYachtName: true,
+          operatorName: true,
+          operatorPhone: true,
+          destination: true,
+          status: true
+        }
+      }
+    }
+  });
+}
+
+// Only FINALIZED entries can be paid out - a PENDING estimate isn't a real owed amount yet, and a
+// VOIDED entry was superseded/cancelled. Idempotent: marking an already-paid entry again is a no-op
+// rather than an error, so a retried admin click can't double-write the audit trail.
+export async function markBluePassLedgerEntryPaid(input: {
+  entryId: string;
+  paidOutReference: string;
+  reviewerEmail: string;
+}) {
+  const entry = await prisma.bluePassLedgerEntry.findUniqueOrThrow({ where: { id: input.entryId } });
+
+  if (entry.status !== "FINALIZED") {
+    throw new Error(
+      `BluePass ledger entry ${input.entryId} is ${entry.status}, not FINALIZED - only finalized entries can be marked paid.`
+    );
+  }
+  if (entry.paidOutAt) {
+    return entry;
+  }
+
+  return prisma.bluePassLedgerEntry.update({
+    where: { id: input.entryId },
+    data: {
+      paidOutAt: new Date(),
+      paidOutReference: input.paidOutReference,
+      paidOutBy: input.reviewerEmail
+    }
   });
 }
 
@@ -492,14 +642,21 @@ export async function handleBluePassOperatorResponse(input: HandleBluePassOperat
     }
   });
 
+  if (input.action === "decline") {
+    await voidBluePassLedgerEntries({ inquiryId: updated.id, reason: "operator declined the inquiry" });
+  }
+
   let quoteUrl: string | null = null;
+  let needsAcceptPriceFollowUp = false;
   if (input.action === "accept" || input.action === "counter") {
     await createBluePassQuoteDraftForOperatorResponse({
       inquiry: updated,
       action: input.action,
       counterText: input.counterText
     });
-    quoteUrl = (await getBluePassQuote({ quoteId: updated.id }))?.quoteUrl ?? null;
+    const quote = await getBluePassQuote({ quoteId: updated.id });
+    quoteUrl = quote?.quoteUrl ?? null;
+    needsAcceptPriceFollowUp = input.action === "accept" && quote?.status === "NEEDS_FINAL_PRICE";
   }
 
   const notificationContent = buildOperatorResponseTravellerNotification({
@@ -520,10 +677,18 @@ export async function handleBluePassOperatorResponse(input: HandleBluePassOperat
     content: notificationContent
   });
 
+  const operatorFollowUp = needsAcceptPriceFollowUp
+    ? await requestOperatorAcceptPriceDetails({
+        inquiry: updated,
+        providerMessageId: input.providerMessageId,
+        operatorPhone: input.operatorPhone
+      })
+    : null;
+
   return {
     inquiry: updated,
     travellerNotification: whatsappNotification,
-    operatorFollowUp: null
+    operatorFollowUp
   };
 }
 
@@ -1328,7 +1493,7 @@ async function findTravellerWhatsAppSentEvent(providerMessageId: string) {
   );
 }
 
-async function createBluePassInquiryEvent(input: {
+export async function createBluePassInquiryEvent(input: {
   inquiry: BluePassInquiry;
   type: string;
   fromStatus?: string | null;
@@ -1531,6 +1696,8 @@ async function handleBluePassBookingConfirmedOperatorResponse(input: {
       confirmationText
     }
   });
+
+  await finalizeBluePassLedgerForConfirmedBooking(updated);
 
   const notificationContent = buildBookingConfirmedTravellerNotification({
     inquiry: updated,
@@ -1893,14 +2060,17 @@ function extractQuoteUrl(content?: string) {
   return content?.match(/\bQuote link:\s*(https?:\/\/\S+)/i)?.[1] ?? null;
 }
 
-async function requestOperatorCounterDetails(input: {
+async function sendOperatorPriceFollowUpPrompt(input: {
   inquiry: BluePassInquiry;
   providerMessageId?: string | null;
   operatorPhone?: string | null;
+  intro: string;
+  requestedEventType: string;
+  requestFailedEventType: string;
 }) {
   const operatorPhone = input.operatorPhone ?? input.inquiry.operatorPhone;
   const prompt = [
-    `Please reply with the counter-offer details for ${input.inquiry.travellerName ?? "this traveller"}'s ${input.inquiry.selectedYachtName ?? "BluePass"} inquiry.`,
+    input.intro,
     "",
     "Suggested format:",
     "Available 18 July 2026. Final price USD 3,900 per cabin/night. Includes meals, dives, crew, tanks and weights. Excludes flights, park fees, alcohol and tips. Condition: 30% deposit to hold.",
@@ -1910,7 +2080,7 @@ async function requestOperatorCounterDetails(input: {
 
   await createBluePassInquiryEvent({
     inquiry: input.inquiry,
-    type: "OPERATOR_COUNTER_DETAILS_REQUESTED",
+    type: input.requestedEventType,
     fromStatus: input.inquiry.status,
     toStatus: input.inquiry.status,
     metadata: {
@@ -1945,11 +2115,11 @@ async function requestOperatorCounterDetails(input: {
   } catch (error) {
     await createBluePassInquiryEvent({
       inquiry: input.inquiry,
-      type: "OPERATOR_COUNTER_DETAILS_REQUEST_FAILED",
+      type: input.requestFailedEventType,
       fromStatus: input.inquiry.status,
       toStatus: input.inquiry.status,
       metadata: {
-        reason: error instanceof Error ? error.message : "Operator counter detail request failed."
+        reason: error instanceof Error ? error.message : "Operator price follow-up request failed."
       }
     });
 
@@ -1958,9 +2128,40 @@ async function requestOperatorCounterDetails(input: {
       channel: "event" as const,
       sent: false,
       prompt,
-      skippedReason: error instanceof Error ? error.message : "Operator counter detail request failed."
+      skippedReason: error instanceof Error ? error.message : "Operator price follow-up request failed."
     };
   }
+}
+
+async function requestOperatorCounterDetails(input: {
+  inquiry: BluePassInquiry;
+  providerMessageId?: string | null;
+  operatorPhone?: string | null;
+}) {
+  return sendOperatorPriceFollowUpPrompt({
+    ...input,
+    intro: `Please reply with the counter-offer details for ${input.inquiry.travellerName ?? "this traveller"}'s ${input.inquiry.selectedYachtName ?? "BluePass"} inquiry.`,
+    requestedEventType: "OPERATOR_COUNTER_DETAILS_REQUESTED",
+    requestFailedEventType: "OPERATOR_COUNTER_DETAILS_REQUEST_FAILED"
+  });
+}
+
+// Tapping "Accept" alone never carries a price - the traveller often has no stated budget either
+// (source of the NEEDS_FINAL_PRICE quote status), so without this prompt the operator sees their
+// tap register but never learns they still need to reply with an actual price. Mirrors
+// requestOperatorCounterDetails's format, since it's the same underlying ask, just reached from a
+// different button.
+async function requestOperatorAcceptPriceDetails(input: {
+  inquiry: BluePassInquiry;
+  providerMessageId?: string | null;
+  operatorPhone?: string | null;
+}) {
+  return sendOperatorPriceFollowUpPrompt({
+    ...input,
+    intro: `Thanks for accepting! ${input.inquiry.travellerName ?? "This traveller"} did not state a budget, so please reply with your price for the ${input.inquiry.selectedYachtName ?? "BluePass"} inquiry so BluePass can share a quote.`,
+    requestedEventType: "OPERATOR_ACCEPT_PRICE_REQUESTED",
+    requestFailedEventType: "OPERATOR_ACCEPT_PRICE_REQUEST_FAILED"
+  });
 }
 
 async function sendOperatorInquiryMessage(input: {

@@ -163,6 +163,12 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     })
       ? historyMentionedYachts[0] ?? null
       : null);
+  // shouldCarryBluePassHistoryYacht deliberately refuses to carry the yacht forward for small-talk-
+  // flavored content (e.g. "so what can you do for me?"), which is right for selectedYacht's other
+  // uses (destination inference, matching) but wrong for deciding whether to keep asking for contact
+  // details: a vague follow-up right after Kai already asked for name/email/phone shouldn't make the
+  // contact form disappear. Falls back to the same recency signal overviewYacht already uses.
+  const contactRequestYacht = selectedYacht ?? historyMentionedYachts[0] ?? null;
   const regexIntent = mergeBluePassInquiryIntent(historyIntent, {
     ...messageIntent,
     destination: messageIntent.destination ?? (selectedYacht ? selectedYacht.region : undefined),
@@ -360,10 +366,24 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
 
   switch (action) {
     case "VALUE_QUESTION":
-      return buildConciergeResponse(persona, buildBluePassValueReply(), [], showYachtsSuggestedReplies);
+      return buildConciergeResponse(
+        persona,
+        buildBluePassValueReply(),
+        [],
+        showYachtsSuggestedReplies,
+        missingFields,
+        contactRequestYacht
+      );
 
     case "COMMISSION_QUESTION":
-      return buildConciergeResponse(persona, buildBluePassCommissionReply(), [], showYachtsSuggestedReplies);
+      return buildConciergeResponse(
+        persona,
+        buildBluePassCommissionReply(),
+        [],
+        showYachtsSuggestedReplies,
+        missingFields,
+        contactRequestYacht
+      );
 
     case "SMALL_TALK": {
       const gratitude = Boolean(routerDecision?.gratitude) || isBluePassGratitudeRequest(input.content);
@@ -372,12 +392,21 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
         persona,
         buildBluePassSmallTalkReply({ gratitude }),
         [],
-        gratitude ? null : showYachtsSuggestedReplies
+        gratitude ? null : showYachtsSuggestedReplies,
+        missingFields,
+        contactRequestYacht
       );
     }
 
     case "SEASON_QUESTION":
-      return buildConciergeResponse(persona, buildBluePassSeasonReply(seasonDestination as string));
+      return buildConciergeResponse(
+        persona,
+        buildBluePassSeasonReply(seasonDestination as string),
+        [],
+        null,
+        missingFields,
+        contactRequestYacht
+      );
 
     case "DESTINATION_COMPARISON": {
       const comparedRegions = knownRegions.filter((region) => isRegionMentioned(input.content, region));
@@ -385,7 +414,9 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
         persona,
         buildBluePassDestinationComparisonReply(comparedRegions.length >= 2 ? comparedRegions : knownRegions),
         [],
-        knownRegions
+        knownRegions,
+        missingFields,
+        contactRequestYacht
       );
     }
 
@@ -394,7 +425,9 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
         persona,
         buildBluePassYachtComparisonReply(latestMentionedYachts),
         [],
-        latestMentionedYachts.slice(0, 3).map((yacht) => `Book ${yacht.name}`)
+        latestMentionedYachts.slice(0, 3).map((yacht) => `Book ${yacht.name}`),
+        missingFields,
+        contactRequestYacht
       );
 
     case "RECOMMENDATION": {
@@ -441,7 +474,9 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
           excludedYachtNames: excludedYachts.map((yacht) => yacht.name)
         }),
         recommendationMatches,
-        buildBrowsingSuggestedReplies(recommendationMatches)
+        buildBrowsingSuggestedReplies(recommendationMatches),
+        missingFields,
+        contactRequestYacht
       );
     }
 
@@ -454,7 +489,9 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
           matches: inspirationMatches
         }),
         inspirationMatches,
-        knownRegions
+        knownRegions,
+        missingFields,
+        contactRequestYacht
       );
     }
 
@@ -469,12 +506,21 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
         persona,
         buildBluePassYachtOverviewReply(overviewMatch),
         [overviewMatch],
-        [`Book ${overviewMatch.name}`, "Something else"]
+        [`Book ${overviewMatch.name}`, "Something else"],
+        missingFields,
+        contactRequestYacht
       );
     }
 
     case "GENERAL_QUESTION":
-      return buildConciergeResponse(persona, buildBluePassOpenQuestionReply(), [], showYachtsSuggestedReplies);
+      return buildConciergeResponse(
+        persona,
+        buildBluePassOpenQuestionReply(),
+        [],
+        showYachtsSuggestedReplies,
+        missingFields,
+        contactRequestYacht
+      );
 
     case "BROWSE_OPTIONS": {
       const browsingMatches = bluepassMatches.slice(0, 3);
@@ -486,7 +532,9 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
           matches: browsingMatches
         }),
         browsingMatches,
-        buildBrowsingSuggestedReplies(browsingMatches)
+        buildBrowsingSuggestedReplies(browsingMatches),
+        missingFields,
+        contactRequestYacht
       );
     }
 
@@ -665,8 +713,20 @@ function buildConciergeResponse(
   persona: BluePassPersona,
   assistantContent: string,
   bluepassMatches: BluePassYachtCard[] = [],
-  suggestedReplies: string[] | null = null
+  suggestedReplies: string[] | null = null,
+  missingFields: BluePassRequiredInquiryField[] = [],
+  selectedYacht: BluePassYachtCatalogItem | null = null
 ) {
+  // A traveller who has already settled on a specific yacht but never gave contact details
+  // otherwise never sees a contact form: the LLM router is free to keep answering their
+  // yacht/season/general questions indefinitely (all legitimate answers on their own terms),
+  // and only the narrow REQUEST_MISSING_FIELDS action used to carry a contactRequest. Attaching
+  // it here too - alongside whatever informational reply was already chosen - surfaces it as
+  // soon as it's genuinely needed, without fighting the router's own classification.
+  const missingContactFields = missingFields.filter(
+    (field) => field === "travellerName" || field === "travellerEmail" || field === "travellerPhone"
+  );
+
   return {
     replyMode: "CONCIERGE" as const,
     persona,
@@ -676,7 +736,13 @@ function buildConciergeResponse(
     bluepassLedger: [],
     bluepassDispatch: null,
     paymentRequest: null,
-    contactRequest: null,
+    contactRequest:
+      selectedYacht && missingContactFields.length > 0
+        ? {
+            status: "CONTACT_DETAILS_REQUIRED" as const,
+            fields: getContactRequestFields(missingContactFields)
+          }
+        : null,
     suggestedReplies
   };
 }
