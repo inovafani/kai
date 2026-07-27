@@ -271,7 +271,7 @@ function looksLikeDeclineDetails(value: string) {
 
 function looksLikePaymentReadyDetails(value: string) {
   const normalized = value.toLowerCase();
-  const hasHoldOrPayment = /\b(?:slot held|held|hold|slot on|payment link|pay\s?link|pay here|payment url|balance due|payment path)\b/.test(
+  const hasHoldOrPayment = /\b(?:slot held|slot on|payment link|pay\s?link|pay here|payment url|balance due|payment path)\b/.test(
     normalized
   );
   const hasBookingContext = /\b(?:booking reference|reference|ref|confirm(?:ation)?|payment|pay|deposit|balance)\b/.test(

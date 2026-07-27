@@ -116,6 +116,42 @@ describe("extractBluePassOperatorResponsesFromWhatsAppWebhook", () => {
     ]);
   });
 
+  it("treats a price quote mentioning a deposit-to-hold condition as a counter reply, not payment-ready", () => {
+    const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
+      entry: [
+        {
+          changes: [
+            {
+              value: {
+                messages: [
+                  {
+                    from: "6285337210180",
+                    id: "wamid.operator.deposit_to_hold",
+                    type: "text",
+                    text: {
+                      body: "Available 29 July 2026. Final price USD 3,900 per cabin/night. Includes meals, dives, crew, tanks and weights. Excludes flights, park fees, alcohol and tips. Condition: 30% deposit to hold."
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    });
+
+    expect(responses).toEqual([
+      {
+        inquiryId: null,
+        action: "counter",
+        providerMessageId: "wamid.operator.deposit_to_hold",
+        operatorPhone: "6285337210180",
+        counterText:
+          "Available 29 July 2026. Final price USD 3,900 per cabin/night. Includes meals, dives, crew, tanks and weights. Excludes flights, park fees, alcohol and tips. Condition: 30% deposit to hold."
+      }
+    ]);
+  });
+
   it("treats short availability replies as operator accept replies", () => {
     const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook({
       entry: [
