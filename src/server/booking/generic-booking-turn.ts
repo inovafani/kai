@@ -11,6 +11,8 @@ import { buildBookingFailureManualInquiry } from "@/server/conversation/manual-i
 import { createManualInquiry, upsertConversationBookingState } from "@/server/conversation/conversation-repository";
 import { getPmsAdapter } from "@/server/pms/pms-adapter-registry";
 import { resolveTenantPmsEnv } from "@/server/pms/tenant-pms-credentials";
+import { BLUEPASS_STRIPE_PMS_CHECKOUT_FEATURE } from "@/core/tenant/feature-flags";
+import { createBluePassPmsCheckoutClient, type BluePassPmsCheckoutClient } from "@/server/payments/bluepass-pms-checkout-client";
 
 export interface GenericBookingTurnTenant {
   id: string;
@@ -22,6 +24,7 @@ export interface GenericBookingTurnTenant {
     operatorKnowledgePack?: unknown;
     bookingWriteEnabled?: boolean | null;
     responseGuardrails?: string[] | null;
+    enabledFeatures?: string[] | null;
   } | null;
   branding: {
     brandVoice: string | null;
@@ -37,6 +40,7 @@ export interface RunGenericBookingTurnInput {
   priorConversationMessages: AssistantConversationMessage[];
   llmClient?: AssistantLlmClient | null;
   routerClient?: GenericBookingRouterLlmClient | null;
+  bluePassPmsCheckoutClient?: BluePassPmsCheckoutClient;
 }
 
 export interface RunGenericBookingTurnResult {
@@ -72,6 +76,11 @@ export async function runGenericBookingTurn(
   let manualInquiry: Awaited<ReturnType<typeof createManualInquiry>> | null = null;
   let paymentRequest: RunGenericBookingTurnResult["paymentRequest"] = null;
   let contactRequest: RunGenericBookingTurnResult["contactRequest"] = null;
+  let assistantContentOverride: string | null = null;
+
+  const bluePassStripeCheckoutEnabled = (input.tenant.config?.enabledFeatures ?? []).includes(
+    BLUEPASS_STRIPE_PMS_CHECKOUT_FEATURE
+  );
 
   try {
     const tenantPmsEnv = await resolveTenantPmsEnv(input.tenant.id, provider, process.env);
@@ -101,6 +110,7 @@ export async function runGenericBookingTurn(
       pmsAdapter,
       bookingWriteEnabled: input.tenant.config?.bookingWriteEnabled ?? false,
       allowUnpaidExternalBooking: false,
+      bluePassStripeCheckoutEnabled,
       llmClient: input.llmClient ?? null,
       routerClient: input.routerClient ?? null,
       knowledgePack,
@@ -133,12 +143,35 @@ export async function runGenericBookingTurn(
       });
 
       if (bookingResult.action === "BOOKING_PAYMENT_REQUIRED") {
+        let checkoutUrl = bookingResult.paymentHandoffUrl ?? null;
+
+        if (bookingResult.pmsCheckoutHold && bluePassStripeCheckoutEnabled) {
+          const checkoutClient = input.bluePassPmsCheckoutClient ?? createBluePassPmsCheckoutClient(process.env);
+          try {
+            const session = await checkoutClient.createCheckoutSession({
+              tenantId: input.tenant.id,
+              conversationId: input.conversationId,
+              ...bookingResult.pmsCheckoutHold
+            });
+            checkoutUrl = session.checkoutUrl;
+            assistantContentOverride = `Thanks - I have everything for ${bookingResult.pmsCheckoutHold.productTitle} on ${bookingResult.pmsCheckoutHold.dateText} for ${bookingResult.pmsCheckoutHold.guests} guest${bookingResult.pmsCheckoutHold.guests === 1 ? "" : "s"}. Please complete secure payment here: ${session.checkoutUrl}. Kai never sees or stores your card details.`;
+          } catch (error) {
+            checkoutUrl = null;
+            assistantContentOverride =
+              "I've saved this as a lead for the operator - I could not prepare the secure payment link just now, so someone will follow up to complete payment.";
+            console.error("generic_booking_turn.bluepass_pms_checkout_failed", {
+              conversationId: input.conversationId,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          }
+        }
+
         paymentRequest = {
           conversationId: input.conversationId,
           productTitle: bookingStatePatch.productTitle,
           dateText: bookingStatePatch.dateText,
           guests: bookingStatePatch.guests,
-          checkoutUrl: null,
+          checkoutUrl,
           status: "PAYMENT_PENDING"
         };
       }
@@ -180,7 +213,7 @@ export async function runGenericBookingTurn(
       });
     }
 
-    assistantContent = bookingResult.reply;
+    assistantContent = assistantContentOverride ?? bookingResult.reply;
     const asksForContactDetails =
       bookingResult.action === "BOOKING_DETAILS_REQUIRED" &&
       /name,\s*email,\s*and\s*phone/i.test(bookingResult.reply);

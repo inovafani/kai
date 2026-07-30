@@ -20,6 +20,7 @@ import {
   type BookingFlowState
 } from "./booking-state-machine";
 import { matchPmsProduct } from "./product-matcher";
+import { calculateBookingGrossAmountCents } from "./booking-pricing";
 import {
   composeAssistantReply,
   type AssistantConversationMessage,
@@ -64,6 +65,26 @@ export type BookingOrchestratorAction =
   | "BOOKING_EXTRAS_SELECTION_REQUIRED"
   | "BOOKING_TICKET_SELECTION_REQUIRED";
 
+// A real Rezdy (or other PMS) hold reserved for a BluePass-Stripe checkout, distinct from
+// paymentHandoffUrl (the PMS's own payment link, e.g. RezdyPay). Carries an exact, computed price
+// snapshot - the caller (generic-booking-turn.ts) uses this to create the actual Stripe Checkout
+// Session, since this orchestrator has no Stripe/tenant/conversation context of its own.
+export interface PmsCheckoutHold {
+  externalBookingId: string;
+  pmsProvider: PmsAdapter["provider"];
+  productExternalId: string;
+  productTitle: string;
+  dateText: string;
+  guests: number;
+  travellerName: string;
+  travellerEmail: string;
+  travellerPhone: string | null;
+  ticketQuantities: PmsTicketQuantity[];
+  extraQuantities: PmsExtraQuantity[] | null;
+  grossAmountCents: number;
+  currency: string;
+}
+
 export interface BookingOrchestratorResult {
   action: BookingOrchestratorAction;
   reply: string;
@@ -71,6 +92,7 @@ export interface BookingOrchestratorResult {
   inquiryDraft?: BookingCaptureDetails | null;
   bookingStatePatch?: BookingFlowState | null;
   paymentHandoffUrl?: string | null;
+  pmsCheckoutHold?: PmsCheckoutHold | null;
 }
 
 export interface HandleTravellerBookingMessageInput {
@@ -81,6 +103,10 @@ export interface HandleTravellerBookingMessageInput {
   pmsAdapter: PmsAdapter;
   bookingWriteEnabled?: boolean;
   allowUnpaidExternalBooking?: boolean;
+  /** Tenant-scoped: reserve via the PMS then hand off to BluePass's own Stripe Checkout instead of
+   * the PMS's own payment link (see PmsCheckoutHold). Only meaningful when the PMS adapter
+   * implements confirmBooking. */
+  bluePassStripeCheckoutEnabled?: boolean;
   llmClient?: AssistantLlmClient | null;
   routerClient?: GenericBookingRouterLlmClient | null;
   tenantContext?: AssistantTenantContext | null;
@@ -110,6 +136,7 @@ async function composeReplyResult(input: {
   tenantContext?: AssistantTenantContext | null;
   latestUserMessage?: string | null;
   conversationHistory?: AssistantConversationMessage[];
+  bookingStatePatch?: BookingFlowState | null;
 }): Promise<BookingOrchestratorResult> {
   const composed = await composeAssistantReply({
     deterministicReply: input.deterministicReply,
@@ -123,7 +150,8 @@ async function composeReplyResult(input: {
   return {
     action: input.action,
     reply: composed.reply,
-    replySource: composed.source
+    replySource: composed.source,
+    ...(input.bookingStatePatch !== undefined ? { bookingStatePatch: input.bookingStatePatch } : {})
   };
 }
 
@@ -193,14 +221,6 @@ export function resolveFinalGenericBookingIntent(input: {
   }
 
   return llmIntent;
-}
-
-function formatProductOptions(products: Pick<PmsProduct, "title">[]) {
-  if (products.length === 1) {
-    return products[0].title;
-  }
-
-  return formatList(products.map((product) => product.title));
 }
 
 function formatProductOptionsList(products: PmsProduct[]) {
@@ -1439,7 +1459,40 @@ export async function handleTravellerBookingMessage(
     }
   }
 
-  if (shouldHandleCapture) {
+  // The capture flow below (composeBookingCaptureReply's own copy: "I will send this to the
+  // operator for confirmation") was built for MANUAL_INQUIRY products, where there is no live PMS
+  // availability to check - collecting contact details and handing the lead to the operator IS the
+  // whole flow. For an AUTO_BOOKING (live-Rezdy) product it must only take over AFTER a real
+  // getAvailability check already happened this conversation (evidenced by bookingMemory carrying
+  // ticketQuantities/timeOptions/ticketOptions, or a bookingStatus already past DRAFT) - that's the
+  // legitimate "ticket already selected, now just finishing contact details" continuation, and it
+  // deliberately must NOT call getAvailability again (existing tests assert exactly that). Confirmed
+  // live that without this guard, a free-text booking-intent phrase ("i want that", "book it")
+  // combined with an already-known product/date/guests let this block skip straight to asking for
+  // contact details - and, once given, straight to pmsAdapter.createBooking - without EVER calling
+  // getAvailability, so the traveller never saw a real time slot or real ticket price before payment
+  // was requested. A bare product/date/guests match alone is not enough evidence; only a genuine
+  // prior availability check is.
+  const capturedProduct = (await listProducts()).find(
+    (candidate) =>
+      candidate.externalProductId === capture.details.productExternalId || candidate.title === capture.details.productTitle
+  );
+  const hasCheckedRealAvailabilityAlready = Boolean(
+    input.bookingMemory?.ticketQuantities?.length ||
+      input.bookingMemory?.timeOptions?.length ||
+      input.bookingMemory?.ticketOptions?.length ||
+      (input.bookingMemory?.bookingStatus && input.bookingMemory.bookingStatus !== "DRAFT")
+  );
+  // Only matters once product/date/guests are ALL already known - capture's own "please share the
+  // X" replies while slots are still missing are harmless regardless of product type (nothing has
+  // been checked yet, so there is nothing to skip).
+  const captureAppliesToKnownProduct =
+    capture.missingBookingSlots.length > 0 ||
+    !capturedProduct ||
+    capturedProduct.bookingMode !== "AUTO_BOOKING" ||
+    hasCheckedRealAvailabilityAlready;
+
+  if (shouldHandleCapture && captureAppliesToKnownProduct) {
     if (
       !capture.ready &&
       input.bookingWriteEnabled === true &&
@@ -1527,8 +1580,10 @@ export async function handleTravellerBookingMessage(
             }
           | null = null;
         let paymentOrderError: string | null = null;
+        const shouldReserveExternalHold =
+          input.allowUnpaidExternalBooking === true || input.bluePassStripeCheckoutEnabled === true;
 
-        if (input.allowUnpaidExternalBooking === true) {
+        if (shouldReserveExternalHold) {
           try {
             paymentOrder = await createPendingPaymentOrder({
               pmsAdapter: input.pmsAdapter,
@@ -1550,6 +1605,61 @@ export async function handleTravellerBookingMessage(
               ...paymentState,
               bookingError: paymentOrderError ?? paymentState.bookingError
             };
+
+        if (paymentOrder && input.bluePassStripeCheckoutEnabled === true) {
+          const pricing = calculateBookingGrossAmountCents({
+            guests: readyState.guests,
+            ticketOptions: readyState.ticketOptions,
+            ticketQuantities: readyState.ticketQuantities,
+            extraOptions: readyState.extraOptions,
+            extraQuantities: readyState.extraQuantities
+          });
+
+          if (
+            pricing &&
+            readyState.productExternalId &&
+            readyState.productTitle &&
+            readyState.dateText &&
+            readyState.guests &&
+            readyState.travellerName &&
+            readyState.travellerEmail
+          ) {
+            const pmsCheckoutHold: PmsCheckoutHold = {
+              externalBookingId: paymentOrder.externalBookingId,
+              pmsProvider: paymentOrder.provider,
+              productExternalId: readyState.productExternalId,
+              productTitle: readyState.productTitle,
+              dateText: readyState.dateText,
+              guests: readyState.guests,
+              travellerName: readyState.travellerName,
+              travellerEmail: readyState.travellerEmail,
+              travellerPhone: readyState.travellerPhone,
+              ticketQuantities: pricing.resolvedTicketQuantities,
+              extraQuantities: readyState.extraQuantities ?? null,
+              grossAmountCents: pricing.grossAmountCents,
+              currency: "AUD"
+            };
+
+            return {
+              action: "BOOKING_PAYMENT_REQUIRED",
+              reply: `Thanks, I have everything for ${readyState.productTitle} ${formatDateAndTime(
+                readyState.dateText
+              )} for ${
+                readyState.guests
+              } guest${readyState.guests === 1 ? "" : "s"}${ticketSummary}${extraSummary} under ${readyState.travellerName}, ${
+                readyState.travellerEmail
+              }, ${readyState.travellerPhone}.\n\nI'm preparing your secure payment link now.`,
+              replySource: "DETERMINISTIC",
+              inquiryDraft: capture.details,
+              bookingStatePatch: paymentStateWithOrder,
+              pmsCheckoutHold
+            };
+          }
+          // pricing === null (or a required detail was unexpectedly missing): fall through to the
+          // existing "saved as a lead, operator will follow up" reply below - never silently charge
+          // an unpriceable booking.
+        }
+
         const paymentHandoffUrl = paymentOrder?.paymentUrl ?? null;
         const paymentInstruction = paymentOrder
           ? paymentHandoffUrl
@@ -1710,18 +1820,16 @@ export async function handleTravellerBookingMessage(
   const productMatch = matchPmsProduct(currentMessageAnalysis.slots.productHint ?? contextMessage, products);
 
   if (productMatch.status !== "MATCHED") {
-    return composeReplyResult({
+    // Deterministic, and reuses formatRecommendationReply verbatim - the same numbered,
+    // "- live availability"/"- operator confirmation required" tagged list the PRODUCT_RECOMMENDATION
+    // branch above already sends for "what do you have?". Any path that lands here is asking the same
+    // question ("which product?"), so it must look identical regardless of which message shape
+    // triggered it.
+    return {
       action: "NEEDS_PRODUCT_SELECTION",
-      deterministicReply: `Which tour should I check? Available options are ${formatProductOptions(productMatch.products)}.`,
-      requiredFacts: productMatch.products.map((product) => product.title),
-      llmClient: input.llmClient,
-      tenantContext: {
-        ...(input.tenantContext ?? { tenantName: "Unknown tenant" }),
-        productTitles: productMatch.products.map((product) => product.title)
-      },
-      latestUserMessage: input.message,
-      conversationHistory: input.conversationHistory
-    });
+      reply: formatRecommendationReply(productMatch.products, effectiveSlots.dateText),
+      replySource: "DETERMINISTIC"
+    };
   }
 
   const product = productMatch.product;
@@ -1811,11 +1919,27 @@ export async function handleTravellerBookingMessage(
     availability.unitPriceCents
   )} per guest. I have not confirmed anything yet, but I can help you continue if this looks good.`;
 
+  // Persists bookingStatus: "AVAILABILITY_CHECKED" (via buildAvailabilityState) even for this
+  // simplest, single-price case with no time/ticket choices to make - without it, the capture flow
+  // above (gated on real availability evidence in bookingMemory) could never unlock for this class
+  // of product, since nothing else in this branch ever records that a real check happened. A later
+  // "yes"/"book it" would otherwise re-run this same availability check forever instead of
+  // progressing to contact collection.
+  const availabilityCheckedState = buildAvailabilityState({
+    product,
+    dateText: availabilityDateText,
+    guests: effectiveSlots.guests,
+    timeOptions: availability.timeOptions,
+    ticketOptions: availability.ticketOptions,
+    extraOptions: availability.extraOptions
+  });
+
   if (input.bookingWriteEnabled === true) {
     return {
       action: "AVAILABILITY_CHECKED",
       reply: deterministicReply,
-      replySource: "DETERMINISTIC"
+      replySource: "DETERMINISTIC",
+      bookingStatePatch: availabilityCheckedState
     };
   }
 
@@ -1832,6 +1956,7 @@ export async function handleTravellerBookingMessage(
     llmClient: input.llmClient,
     tenantContext: input.tenantContext,
     latestUserMessage: input.message,
-    conversationHistory: input.conversationHistory
+    conversationHistory: input.conversationHistory,
+    bookingStatePatch: availabilityCheckedState
   });
 }

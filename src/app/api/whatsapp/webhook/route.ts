@@ -79,13 +79,16 @@ export async function POST(request: Request) {
         messageId: message.providerMessageId ?? ""
       }).catch(() => undefined);
 
-      const genericTenantMatch = await resolveWhatsAppTenantForMessage({
+      const routeOutcome = await resolveWhatsAppTenantForMessage({
         messageText: message.body,
         fromPhone: message.from
       });
-      const result = genericTenantMatch
-        ? await handleGenericWhatsAppInboundMessage(message, genericTenantMatch.tenant)
-        : await handleBluePassWhatsAppInboundMessage(message);
+      const result =
+        routeOutcome.kind === "TENANT"
+          ? await handleGenericWhatsAppInboundMessage(message, routeOutcome.tenant)
+          : routeOutcome.kind === "HANDLED"
+            ? { handled: true }
+            : await handleBluePassWhatsAppInboundMessage(message);
       if (result.handled) {
         contextHandled += 1;
       }

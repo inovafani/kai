@@ -61,4 +61,12 @@ export class MappedPmsAdapter implements PmsAdapter {
   async getBooking(externalBookingId: string): Promise<PmsCreateBookingResult | null> {
     return this.sourceAdapter.getBooking(externalBookingId);
   }
+
+  async confirmBooking(externalBookingId: string): Promise<PmsCreateBookingResult> {
+    if (!this.sourceAdapter.confirmBooking) {
+      throw new Error(`${this.provider} PMS adapter does not support confirmBooking.`);
+    }
+
+    return this.sourceAdapter.confirmBooking(externalBookingId);
+  }
 }

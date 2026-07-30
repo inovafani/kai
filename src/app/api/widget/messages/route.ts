@@ -16,9 +16,15 @@ import { handleBluePassMarketplaceMessage } from "@/server/bluepass/bluepass-mes
 import { composeBluePassMarketplaceAssistantReply } from "@/server/bluepass/bluepass-marketplace-reply-composer";
 import { shouldPolishBluePassMarketplaceReply } from "@/server/bluepass/bluepass-marketplace-reply-gate";
 import type { BluePassCatalogSnapshotItem } from "@/core/bluepass/catalog";
+import { WHATSAPP_GENERIC_ELIGIBLE_FEATURE } from "@/core/tenant/feature-flags";
 import { resolveTenantBusinessPack } from "@/server/business-pack/resolve-tenant-business-pack";
 import { getWidgetRequestOrigin } from "@/server/widget/request-origin";
 import { resolveWidgetRequest } from "@/server/widget/resolve-widget-request";
+import {
+  buildAuOperatorRecommendationReply,
+  listAuRecommendationCandidates,
+  resolveAuOperatorRecommendationSelection
+} from "@/server/whatsapp/au-operator-recommendation";
 import { shouldUseGenericBookingFlow } from "./business-pack-gate";
 
 export const runtime = "nodejs";
@@ -235,6 +241,98 @@ export async function POST(request: NextRequest) {
     tenantId: resolved.tenant.id,
     conversationId: conversation.id
   });
+
+  // AU recommend-then-pick moment, mirrored from the WhatsApp side (au-operator-recommendation.ts):
+  // scoped to widget tenants themselves flagged eligible for the shared recommendation (same flag
+  // WhatsApp's explicit-match tier uses), so no other generic-flow tenant is affected, and the
+  // candidate list (real + placeholder operators) is identical across both channels.
+  if (resolved.tenant.config?.enabledFeatures?.includes(WHATSAPP_GENERIC_ELIGIBLE_FEATURE)) {
+    const candidates = await listAuRecommendationCandidates();
+
+    if (candidates.length > 0) {
+      const lastAssistantMessage =
+        [...priorConversationMessages].reverse().find((entry) => entry.role === "assistant")?.content ?? null;
+      const picked = resolveAuOperatorRecommendationSelection({
+        lastAssistantMessage,
+        message: content,
+        candidates
+      });
+
+      if (picked) {
+        const message = await createTravellerMessage({
+          tenantId: resolved.tenant.id,
+          conversationId: conversation.id,
+          content
+        });
+        const reply = picked.isPlaceholder
+          ? `Sorry, ${picked.name} is not available right now - want to try one of the other options instead?`
+          : picked.tenantId === resolved.tenant.id
+            ? `Great choice! Let's get you sorted with ${resolved.tenant.name} - what would you like to explore?`
+            : // Picking a different real operator than the one this widget is already bound to isn't
+              // wired up yet (no cross-tenant hand-off on the website today) - say so honestly rather
+              // than silently mishandling it.
+              `I can only help with ${resolved.tenant.name} directly from this site right now - want to continue with them?`;
+        const assistantMessage = await createAssistantMessage({
+          tenantId: resolved.tenant.id,
+          conversationId: conversation.id,
+          content: reply
+        });
+
+        return NextResponse.json({
+          message: {
+            id: message.id,
+            tenantSlug: resolved.tenant.slug,
+            conversationId: message.conversationId,
+            role: message.role,
+            content: message.content
+          },
+          assistantMessage: {
+            id: assistantMessage.id,
+            tenantSlug: resolved.tenant.slug,
+            conversationId: assistantMessage.conversationId,
+            role: assistantMessage.role,
+            content: assistantMessage.content
+          },
+          manualInquiry: null,
+          paymentRequest: null,
+          contactRequest: null
+        });
+      }
+
+      if (priorConversationMessages.length === 0) {
+        const message = await createTravellerMessage({
+          tenantId: resolved.tenant.id,
+          conversationId: conversation.id,
+          content
+        });
+        const assistantMessage = await createAssistantMessage({
+          tenantId: resolved.tenant.id,
+          conversationId: conversation.id,
+          content: buildAuOperatorRecommendationReply(candidates)
+        });
+
+        return NextResponse.json({
+          message: {
+            id: message.id,
+            tenantSlug: resolved.tenant.slug,
+            conversationId: message.conversationId,
+            role: message.role,
+            content: message.content
+          },
+          assistantMessage: {
+            id: assistantMessage.id,
+            tenantSlug: resolved.tenant.slug,
+            conversationId: assistantMessage.conversationId,
+            role: assistantMessage.role,
+            content: assistantMessage.content
+          },
+          manualInquiry: null,
+          paymentRequest: null,
+          contactRequest: null
+        });
+      }
+    }
+  }
 
   const message = await createTravellerMessage({
     tenantId: resolved.tenant.id,

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MappedPmsAdapter } from "./mapped-pms-adapter";
-import type { PmsAdapter, PmsProduct } from "./types";
+import type { PmsAdapter, PmsCreateBookingResult, PmsProduct } from "./types";
 
 describe("MappedPmsAdapter", () => {
   it("exposes website products and checks availability with the mapped PMS product id", async () => {
@@ -60,5 +60,47 @@ describe("MappedPmsAdapter", () => {
       date: "tomorrow",
       guests: 2
     });
+  });
+
+  it("delegates confirmBooking to the source adapter when it supports it", async () => {
+    const sourceAdapter: PmsAdapter = {
+      provider: "REZDY",
+      listProducts: vi.fn(async () => []),
+      getAvailability: vi.fn(),
+      createBooking: vi.fn(),
+      cancelBooking: vi.fn(),
+      getBooking: vi.fn(),
+      confirmBooking: vi.fn(async (): Promise<PmsCreateBookingResult> => ({
+        externalBookingId: "RZ-1",
+        provider: "REZDY",
+        status: "CONFIRMED"
+      }))
+    };
+
+    const adapter = new MappedPmsAdapter(sourceAdapter, []);
+
+    await expect(adapter.confirmBooking?.("RZ-1")).resolves.toEqual({
+      externalBookingId: "RZ-1",
+      provider: "REZDY",
+      status: "CONFIRMED"
+    });
+    expect(sourceAdapter.confirmBooking).toHaveBeenCalledWith("RZ-1");
+  });
+
+  it("throws a clear error when the source adapter does not support confirmBooking", async () => {
+    const sourceAdapter: PmsAdapter = {
+      provider: "MOCK",
+      listProducts: vi.fn(async () => []),
+      getAvailability: vi.fn(),
+      createBooking: vi.fn(),
+      cancelBooking: vi.fn(),
+      getBooking: vi.fn()
+    };
+
+    const adapter = new MappedPmsAdapter(sourceAdapter, []);
+
+    await expect(adapter.confirmBooking?.("id-1")).rejects.toThrow(
+      "MOCK PMS adapter does not support confirmBooking."
+    );
   });
 });

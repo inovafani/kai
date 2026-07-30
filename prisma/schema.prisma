@@ -78,6 +78,19 @@ enum BluePassOperatorDispatchStatus {
   FAILED
 }
 
+// Lifecycle for a direct-PMS (e.g. Rezdy) booking paid through BluePass's own Stripe checkout,
+// instead of the operator's own PMS-native payment (e.g. RezdyPay). Distinct from
+// BluePassInquiryStatus: there is no operator-negotiation step here - the operator's own PMS is
+// the source of truth for availability, BluePass only collects payment and confirms the hold.
+enum PmsBookingPaymentAttemptStatus {
+  AWAITING_PAYMENT
+  PAID_AWAITING_CONFIRM
+  CONFIRMED
+  PAYMENT_FAILED
+  CONFIRM_FAILED_REFUNDED
+  REFUND_FAILED
+}
+
 model Tenant {
   id              String              @id @default(cuid())
   slug            String              @unique
@@ -122,6 +135,9 @@ model TenantConfig {
   operatorKnowledgePack Json      @default("{}")
   escalationRules    String[]
   responseGuardrails String[]
+  // Operator's own ops/admin WhatsApp number, e.g. for a direct-PMS booking payment-confirm
+  // failure alert. Falls back to a per-tenant env var when unset (see resolveTenantAdminWhatsAppPhone).
+  adminWhatsAppPhone String?
   createdAt          DateTime    @default(now())
   updatedAt          DateTime    @updatedAt
   tenant             Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -379,6 +395,76 @@ model BluePassOperatorDispatch {
 
   @@index([tenantId, conversationId, status, createdAt])
   @@index([bluePassInquiryId, createdAt])
+}
+
+// One row per BluePass-Stripe checkout attempt against a real PMS (Rezdy today) booking - the
+// durable, append-only record ConversationBookingState cannot be, since that row is a single
+// mutable per-conversation cache overwritten on every turn. Deliberately NOT tied to
+// BluePassInquiry: this flow has no operator-negotiation lifecycle - the operator's own PMS owns
+// availability, BluePass just collects payment and confirms the hold.
+model PmsBookingPaymentAttempt {
+  id                      String                         @id @default(cuid())
+  tenantId                String
+  conversationId          String
+  pmsProvider             PmsProvider
+  productExternalId       String
+  productTitle            String
+  dateText                String
+  guests                  Int
+  travellerName           String
+  travellerEmail          String
+  travellerPhone          String?
+  ticketQuantities        Json?
+  extraQuantities         Json?
+  grossAmountCents        Int
+  currency                String
+  externalBookingId       String
+  stripeCheckoutSessionId String                         @unique
+  stripePaymentIntentId   String?                        @unique
+  stripeRefundId          String?
+  status                  PmsBookingPaymentAttemptStatus @default(AWAITING_PAYMENT)
+  failureReason           String?
+  adminAlertSentAt        DateTime?
+  createdAt               DateTime                       @default(now())
+  updatedAt               DateTime                       @updatedAt
+
+  ledgerEntries PmsBookingLedgerEntry[]
+
+  @@index([tenantId, conversationId, createdAt])
+  @@index([status])
+}
+
+// Commission/conservation split for a confirmed PmsBookingPaymentAttempt, reusing the same
+// BluePassLedgerKind/BluePassLedgerStatus enums and calculateBluePassLedgerSplit math as the
+// BluePass-marketplace flow. Created once, directly FINALIZED, only at confirm-success - the
+// gross amount here is exact (real ticket prices), unlike the marketplace's parsed-budget estimates.
+model PmsBookingLedgerEntry {
+  id                         String               @id @default(cuid())
+  tenantId                   String
+  conversationId             String
+  pmsBookingPaymentAttemptId String
+  kind                       BluePassLedgerKind
+  amountCents                Int
+  currency                   String
+  status                     BluePassLedgerStatus @default(PENDING)
+  referralPartnerId          String?
+  referralLinkId             String?
+  referralCode               String?
+  referralRole               String?
+  metadata                   Json?
+  finalizedAt                DateTime?
+  voidedAt                   DateTime?
+  voidReason                 String?
+  paidOutAt                  DateTime?
+  paidOutReference           String?
+  paidOutBy                  String?
+  createdAt                  DateTime             @default(now())
+  updatedAt                  DateTime             @updatedAt
+
+  attempt PmsBookingPaymentAttempt @relation(fields: [pmsBookingPaymentAttemptId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, conversationId, status, createdAt])
+  @@index([pmsBookingPaymentAttemptId, status])
 }
 
 // One row per LLM (Groq/OpenAI) call - router or polish. Written best-effort from

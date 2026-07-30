@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/prisma";
+import { WHATSAPP_GENERIC_ELIGIBLE_FEATURE } from "@/core/tenant/feature-flags";
 import {
   matchesTenantRegionKeywords,
   resolveStickyWhatsAppGenericTenant,
@@ -8,10 +9,66 @@ import {
   resolveWhatsAppTenantForMessage
 } from "./generic-tenant-router";
 
-const originalEnv = { ...process.env };
+vi.mock("@/server/whatsapp/client", () => ({
+  sendWhatsAppText: vi.fn().mockResolvedValue(undefined)
+}));
 
-afterEach(() => {
+const originalEnv = { ...process.env };
+// Every tenant this file creates uses one of these slug prefixes - cleaned up after every test so
+// it never lingers as "eligible" for a later (or concurrently-running) test's global
+// resolveWhatsAppGenericTenant()/listAuRecommendationCandidates() query, now that there is no more
+// per-test env-var scoping to isolate this.
+// bluepass-standin-gtr- (not the plain "bluepass-standin-" also used by
+// au-operator-recommendation.test.ts) so this file's afterEach cleanup (a startsWith prefix delete)
+// can never sweep up that OTHER file's still-in-progress stand-in tenant when both run in the same
+// vitest invocation - confirmed live as a real cross-file race (foreign-key errors on both sides)
+// when the two files shared this exact prefix.
+const testTenantSlugPrefixes = ["pms-router-test-", "bluepass-standin-gtr-", "boattime-collision-test-"];
+
+// Scopes listWhatsAppGenericEligibleTenants() to just this file's own test tenants, so real,
+// live-flagged tenants in this shared dev DB (e.g. the real "bluepass-au", which today matches
+// TENANT_REGION_KEYWORDS on a bare "australia" mention) never leak into these tests. This can't be
+// done by mocking generic-tenant-router's own exported listWhatsAppGenericEligibleTenants: every
+// caller in this file (resolveWhatsAppGenericTenant, resolveStickyWhatsAppGenericTenant) is defined
+// in - and calls it from - that same module, as a plain local call rather than through the imported
+// binding, so vi.mock on that module has zero effect on those call sites. Spying on
+// prisma.tenant.findMany instead works regardless of which module makes the call, since every caller
+// shares the one real PrismaClient singleton.
+const realTenantFindMany = prisma.tenant.findMany.bind(prisma.tenant);
+// Untyped on purpose: Prisma's generated findMany signature is a complex conditional generic that
+// isn't worth fighting for a test-only mock - the runtime behavior (filter results, pass everything
+// else through) is what matters here, not a precise static type for the spy itself.
+let tenantFindManySpy: any;
+
+beforeAll(() => {
+  tenantFindManySpy = (vi.spyOn(prisma.tenant, "findMany") as any).mockImplementation(async (args: any) => {
+    const results = await realTenantFindMany(args);
+    const isEligibilityQuery = args?.where?.config?.enabledFeatures?.has === WHATSAPP_GENERIC_ELIGIBLE_FEATURE;
+    if (!isEligibilityQuery) return results;
+    return (results as Array<{ slug: string }>).filter((tenant) =>
+      testTenantSlugPrefixes.some((prefix) => tenant.slug.startsWith(prefix))
+    );
+  });
+});
+
+afterAll(() => {
+  tenantFindManySpy.mockRestore();
+});
+
+// Neutralizes the AU-operator-recommendation tier's BluePass-conversation-home lookup by default,
+// since it does real writes (Conversation/Message rows) and would otherwise resolve against
+// whatever real "bluepass" tenant exists in this DB. Tests that specifically want BluePass stand-in
+// behavior already set WHATSAPP_BLUEPASS_TENANT_SLUG themselves via createBluePassStandInTenant,
+// which overrides this default within that test.
+beforeEach(() => {
+  process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = "no-such-bluepass-tenant-in-tests";
+});
+
+afterEach(async () => {
   process.env = { ...originalEnv };
+  await prisma.tenant.deleteMany({
+    where: { OR: testTenantSlugPrefixes.map((prefix) => ({ slug: { startsWith: prefix } })) }
+  });
 });
 
 function randomTestPhone() {
@@ -19,7 +76,7 @@ function randomTestPhone() {
 }
 
 async function createBluePassStandInTenant(name: string) {
-  const slug = `bluepass-standin-${randomUUID()}`;
+  const slug = `bluepass-standin-gtr-${randomUUID()}`;
   await prisma.tenant.create({
     data: {
       slug,
@@ -51,17 +108,18 @@ async function createConversationWithMessage(input: { tenantId: string; whatsapp
   return conversation;
 }
 
-async function createTestPmsTenant(overrides?: {
-  name?: string;
-  productTitle?: string;
-  productDescription?: string;
-}) {
+// Every tenant created here is automatically eligible for the shared WhatsApp number's generic
+// routing (WHATSAPP_GENERIC_ELIGIBLE_FEATURE) - replaces the old WHATSAPP_GENERIC_TENANT_SLUGS
+// env-var allowlist. Names/product titles should stay specific per test (randomized where the test
+// doesn't care about a particular one) since resolveWhatsAppGenericTenant now checks every eligible
+// tenant in the whole shared database, not just the ones a given test created.
+async function createTestPmsTenant(overrides?: { name?: string; productTitle?: string; productDescription?: string }) {
   const slug = `pms-router-test-${randomUUID()}`;
 
   return prisma.tenant.create({
     data: {
       slug,
-      name: overrides?.name ?? "Reef Runner Charters",
+      name: overrides?.name ?? `Reef Runner Charters ${randomUUID()}`,
       widgetPublicKey: `pk_${randomUUID()}`,
       allowedOrigins: [],
       status: "ACTIVE",
@@ -69,17 +127,20 @@ async function createTestPmsTenant(overrides?: {
         create: {
           bookingMode: "AUTO_BOOKING",
           bookingWriteEnabled: false,
-          pmsProvider: "REZDY",
+          // MOCK, not REZDY: publicProductCatalog below is non-empty so MappedPmsAdapter always
+          // wins here regardless of provider, but MOCK also protects any OTHER (concurrent or
+          // leftover) test that reaches this tenant from ever triggering a real network call.
+          pmsProvider: "MOCK",
           publicProductCatalog: [
             {
-              publicTitle: overrides?.productTitle ?? "Sunset Reef Snorkel Adventure",
+              publicTitle: overrides?.productTitle ?? `Sunset Reef Snorkel Adventure ${randomUUID()}`,
               publicDescription:
                 overrides?.productDescription ?? "A guided snorkel trip over the outer reef at sunset.",
               pmsProductId: `test-product-${randomUUID()}`,
               bookingMode: "AUTO_BOOKING"
             }
           ],
-          enabledFeatures: [],
+          enabledFeatures: [WHATSAPP_GENERIC_ELIGIBLE_FEATURE],
           requiredSlots: {},
           escalationRules: [],
           responseGuardrails: []
@@ -90,76 +151,57 @@ async function createTestPmsTenant(overrides?: {
 }
 
 describe("resolveWhatsAppGenericTenant", () => {
-  it("returns null when no allowlist is configured", async () => {
-    delete process.env.WHATSAPP_GENERIC_TENANT_SLUGS;
-
-    const result = await resolveWhatsAppGenericTenant("I want to book a liveaboard in Komodo");
-
-    expect(result).toBeNull();
-  });
-
-  it("returns null for a BluePass-style message that doesn't match the allowlisted tenant", async () => {
-    const tenant = await createTestPmsTenant();
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = tenant.slug;
+  it("returns null for a BluePass-style message that doesn't match any eligible tenant", async () => {
+    await createTestPmsTenant();
 
     const result = await resolveWhatsAppGenericTenant(
-      "Looking for a liveaboard trip to Raja Ampat for 4 guests in August"
+      `Looking for a liveaboard trip to Raja Ampat for 4 guests in August ${randomUUID()}`
     );
 
     expect(result).toBeNull();
   });
 
   it("matches when the message names the tenant's own product", async () => {
-    const tenant = await createTestPmsTenant();
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = tenant.slug;
+    const productTitle = `Sunset Reef Snorkel Adventure ${randomUUID()}`;
+    const tenant = await createTestPmsTenant({ productTitle });
 
-    const result = await resolveWhatsAppGenericTenant(
-      "Do you have availability for the Sunset Reef Snorkel Adventure this weekend?"
-    );
+    const result = await resolveWhatsAppGenericTenant(`Do you have availability for the ${productTitle} this weekend?`);
 
     expect(result?.tenant.slug).toBe(tenant.slug);
   });
 
   it("matches when the message names the tenant's own business", async () => {
-    const tenant = await createTestPmsTenant({ name: "Reef Runner Charters" });
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = tenant.slug;
+    const name = `Reef Runner Charters ${randomUUID()}`;
+    const tenant = await createTestPmsTenant({ name });
 
-    const result = await resolveWhatsAppGenericTenant("Hi, is this Reef Runner Charters?");
+    const result = await resolveWhatsAppGenericTenant(`Hi, is this ${name}?`);
 
     expect(result?.tenant.slug).toBe(tenant.slug);
   });
 
-  it("skips an allowlisted slug that has no matching active tenant row", async () => {
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = `nonexistent-${randomUUID()}`;
-
-    const result = await resolveWhatsAppGenericTenant(
-      "Do you have the Sunset Reef Snorkel Adventure available?"
-    );
-
-    expect(result).toBeNull();
-  });
-
-  it("checks multiple allowlisted tenants and matches the correct one", async () => {
-    const otherTenant = await createTestPmsTenant({
-      name: "Coastal Kayak Co",
-      productTitle: "Mangrove Kayak Sunrise Paddle",
+  it("checks multiple eligible tenants and matches the correct one", async () => {
+    const otherProductTitle = `Mangrove Kayak Sunrise Paddle ${randomUUID()}`;
+    await createTestPmsTenant({
+      name: `Coastal Kayak Co ${randomUUID()}`,
+      productTitle: otherProductTitle,
       productDescription: "A guided kayak paddle through the mangroves at sunrise."
     });
-    const targetTenant = await createTestPmsTenant({ name: "Reef Runner Charters" });
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = `${otherTenant.slug},${targetTenant.slug}`;
+    const targetProductTitle = `Sunset Reef Snorkel Adventure ${randomUUID()}`;
+    const targetTenant = await createTestPmsTenant({
+      name: `Reef Runner Charters ${randomUUID()}`,
+      productTitle: targetProductTitle
+    });
 
-    const result = await resolveWhatsAppGenericTenant(
-      "Do you have availability for the Sunset Reef Snorkel Adventure?"
-    );
+    const result = await resolveWhatsAppGenericTenant(`Do you have availability for the ${targetProductTitle}?`);
 
     expect(result?.tenant.slug).toBe(targetTenant.slug);
-  });
+  }, 15_000);
 
   it("does not steal a generically-worded BluePass yacht-charter message against boattime's real catalog", async () => {
     const boattime = await prisma.tenant.create({
       data: {
         slug: `boattime-collision-test-${randomUUID()}`,
-        name: "Boattime Yacht Charters",
+        name: `Boattime Yacht Charters ${randomUUID()}`,
         widgetPublicKey: `pk_${randomUUID()}`,
         allowedOrigins: [],
         status: "ACTIVE",
@@ -167,7 +209,7 @@ describe("resolveWhatsAppGenericTenant", () => {
           create: {
             bookingMode: "MANUAL_INQUIRY",
             bookingWriteEnabled: false,
-            pmsProvider: "REZDY",
+            pmsProvider: "MOCK",
             publicProductCatalog: [
               {
                 publicTitle: "Gold Coast Whale Escape",
@@ -200,7 +242,7 @@ describe("resolveWhatsAppGenericTenant", () => {
                 bookingMode: "MANUAL_INQUIRY"
               }
             ],
-            enabledFeatures: [],
+            enabledFeatures: [WHATSAPP_GENERIC_ELIGIBLE_FEATURE],
             requiredSlots: {},
             escalationRules: [],
             responseGuardrails: []
@@ -208,35 +250,28 @@ describe("resolveWhatsAppGenericTenant", () => {
         }
       }
     });
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = boattime.slug;
 
-    const result = await resolveWhatsAppGenericTenant(
-      "I want a private yacht charter in Komodo for 6 guests"
-    );
+    const result = await resolveWhatsAppGenericTenant("I want a private yacht charter in Komodo for 6 guests");
+
+    expect(result?.tenant.slug === boattime.slug).toBe(false);
+  });
+
+  it("does not resolve any specific tenant for a bare region mention with no specific product named", async () => {
+    // A generic "I want to trip in Australia" never scores against any single AU product distinctly
+    // enough for matchPmsProduct to resolve it, and (unlike an earlier version of this behavior) is
+    // now deliberately NOT resolved here via a region-keyword shortcut either - now that
+    // listAuRecommendationCandidates() can hold more than one eligible AU tenant, guessing "the" AU
+    // tenant from a bare region mention would silently bypass the pick-an-operator recommendation the
+    // moment a second real operator is flagged eligible. See matchesTenantRegionKeywords's own doc
+    // comment: that keyword set now only feeds resolveWhatsAppTenantForMessage's last-resort
+    // recommendation trigger, not this function's explicit-match tier.
+    const result = await resolveWhatsAppGenericTenant("i want to trip in australia");
 
     expect(result).toBeNull();
   });
 
-  it("resolves the real bluepass-au tenant for a bare region mention with no specific product named", async () => {
-    // Regression: a generic "I want to trip in Australia" never scores against any single AU
-    // product distinctly enough for matchPmsProduct to resolve it (see
-    // matchesTenantRegionKeywords's own doc comment) - this proves the region-keyword escape hatch
-    // actually closes that gap for the one tenant it's scoped to, using the tenant already seeded
-    // in the shared database (not a throwaway test fixture), since the check is keyed by that exact
-    // slug.
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = "bluepass-au";
-
-    const result = await resolveWhatsAppGenericTenant("i want to trip in australia");
-
-    expect(result?.tenant.slug).toBe("bluepass-au");
-  });
-
   it("does not resolve bluepass-au for an ordinary Indonesia-flavored BluePass message", async () => {
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = "bluepass-au";
-
-    const result = await resolveWhatsAppGenericTenant(
-      "I want a liveaboard trip to Komodo for 6 guests next month"
-    );
+    const result = await resolveWhatsAppGenericTenant("I want a liveaboard trip to Komodo for 6 guests next month");
 
     expect(result).toBeNull();
   });
@@ -259,10 +294,9 @@ describe("matchesTenantRegionKeywords", () => {
 });
 
 describe("resolveStickyWhatsAppGenericTenant", () => {
-  it("sticks to the allowlisted tenant this phone most recently talked to", async () => {
+  it("sticks to the eligible tenant this phone most recently talked to", async () => {
     const genericTenant = await createTestPmsTenant({ name: `Sticky Recent ${randomUUID()}` });
     const bluePassSlug = await createBluePassStandInTenant("BluePass Sticky Stand-in A");
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = genericTenant.slug;
     process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = bluePassSlug;
     const phone = randomTestPhone();
 
@@ -277,7 +311,6 @@ describe("resolveStickyWhatsAppGenericTenant", () => {
     const genericTenant = await createTestPmsTenant({ name: `Sticky Stale ${randomUUID()}` });
     const bluePassSlug = await createBluePassStandInTenant("BluePass Sticky Stand-in B");
     const bluePassTenant = await prisma.tenant.findFirstOrThrow({ where: { slug: bluePassSlug } });
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = genericTenant.slug;
     process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = bluePassSlug;
     const phone = randomTestPhone();
 
@@ -290,8 +323,7 @@ describe("resolveStickyWhatsAppGenericTenant", () => {
   }, 15_000);
 
   it("returns null when this phone has no WhatsApp conversation history at all", async () => {
-    const genericTenant = await createTestPmsTenant({ name: `Sticky None ${randomUUID()}` });
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = genericTenant.slug;
+    await createTestPmsTenant({ name: `Sticky None ${randomUUID()}` });
 
     const result = await resolveStickyWhatsAppGenericTenant(randomTestPhone());
 
@@ -302,11 +334,10 @@ describe("resolveStickyWhatsAppGenericTenant", () => {
 describe("resolveWhatsAppTenantForMessage", () => {
   it("regression: stays with the AU tenant for a generic follow-up with no region keyword, instead of falling back to BluePass/Komodo", async () => {
     // Reproduces the exact bug found live: traveller says "id like to travel in australia" (routes
-    // to bluepass-au, creating its Conversation row), then later says something generic like "Show
+    // to the AU tenant, creating its Conversation row), then later says something generic like "Show
     // me yachts" with no region word in it - before this fix, that silently fell through to
     // BluePass's own separate Komodo conversation instead of continuing the Australia thread.
     const auTenant = await createTestPmsTenant({ name: `AU Regression ${randomUUID()}` });
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = auTenant.slug;
     const phone = randomTestPhone();
 
     await createConversationWithMessage({
@@ -317,12 +348,12 @@ describe("resolveWhatsAppTenantForMessage", () => {
 
     const result = await resolveWhatsAppTenantForMessage({ messageText: "Show me yachts", fromPhone: phone });
 
-    expect(result?.tenant.slug).toBe(auTenant.slug);
+    expect(result.kind).toBe("TENANT");
+    expect(result.kind === "TENANT" ? result.tenant.slug : null).toBe(auTenant.slug);
   }, 15_000);
 
   it("a 'new chat' reset always overrides stickiness", async () => {
     const auTenant = await createTestPmsTenant({ name: `AU Reset Override ${randomUUID()}` });
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = auTenant.slug;
     const phone = randomTestPhone();
     await prisma.conversation.create({
       data: { tenantId: auTenant.id, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: phone }
@@ -330,12 +361,11 @@ describe("resolveWhatsAppTenantForMessage", () => {
 
     const result = await resolveWhatsAppTenantForMessage({ messageText: "new chat", fromPhone: phone });
 
-    expect(result).toBeNull();
+    expect(result).toEqual({ kind: "NONE" });
   });
 
   it("an explicit Indonesia-market mention always overrides stickiness", async () => {
     const auTenant = await createTestPmsTenant({ name: `AU Indonesia Override ${randomUUID()}` });
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = auTenant.slug;
     const phone = randomTestPhone();
     await prisma.conversation.create({
       data: { tenantId: auTenant.id, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: phone }
@@ -346,18 +376,48 @@ describe("resolveWhatsAppTenantForMessage", () => {
       fromPhone: phone
     });
 
-    expect(result).toBeNull();
+    expect(result).toEqual({ kind: "NONE" });
   });
 
   it("an explicit product match still wins even with no sticky history", async () => {
-    const tenant = await createTestPmsTenant();
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = tenant.slug;
+    const productTitle = `Sunset Reef Snorkel Adventure ${randomUUID()}`;
+    const tenant = await createTestPmsTenant({ productTitle });
 
     const result = await resolveWhatsAppTenantForMessage({
-      messageText: "Do you have availability for the Sunset Reef Snorkel Adventure this weekend?",
+      messageText: `Do you have availability for the ${productTitle} this weekend?`,
       fromPhone: randomTestPhone()
     });
 
-    expect(result?.tenant.slug).toBe(tenant.slug);
+    expect(result.kind).toBe("TENANT");
+    expect(result.kind === "TENANT" ? result.tenant.slug : null).toBe(tenant.slug);
   });
+
+  it("shows the AU operator recommendation as a last resort when nothing else matches", async () => {
+    const bluePassSlug = await createBluePassStandInTenant("BluePass AU Recommend Stand-in");
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = bluePassSlug;
+    await createTestPmsTenant({ name: `Test AU Operator ${randomUUID()}` });
+
+    const result = await resolveWhatsAppTenantForMessage({
+      messageText: "I want a boat charter in australia",
+      fromPhone: randomTestPhone()
+    });
+
+    expect(result).toEqual({ kind: "HANDLED" });
+  }, 15_000);
+
+  it("hands off to the real AU operator when the traveller picks it by name from the recommendation", async () => {
+    const bluePassSlug = await createBluePassStandInTenant("BluePass AU Pick Stand-in");
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = bluePassSlug;
+    const operatorName = `Test AU Operator ${randomUUID()}`;
+    const realTenant = await createTestPmsTenant({ name: operatorName });
+    const phone = randomTestPhone();
+
+    await resolveWhatsAppTenantForMessage({ messageText: "boat charter in australia", fromPhone: phone });
+    // Pick by the exact (randomized, collision-free) name rather than a numbered position - other
+    // eligible tenants in this shared database may also appear in the list, at any position.
+    const result = await resolveWhatsAppTenantForMessage({ messageText: operatorName, fromPhone: phone });
+
+    expect(result.kind).toBe("TENANT");
+    expect(result.kind === "TENANT" ? result.tenant.slug : null).toBe(realTenant.slug);
+  }, 25_000);
 });

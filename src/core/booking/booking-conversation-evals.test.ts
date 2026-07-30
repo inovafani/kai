@@ -165,9 +165,14 @@ describe("booking conversation evals", () => {
     expect(turns[1].reply).toContain("2 guests");
     expect(turns[1].reply).toContain("2026-06-28");
     expect(turns[1].reply).not.toContain("Gold Coast Whale Escape is available");
+    // dateText now carries Twilight Drift's own single available time slot (17:30), not just the
+    // plain date the traveller typed - this AVAILABILITY_CHECKED turn now persists a
+    // bookingStatePatch (see booking-orchestrator.ts's captureAppliesToKnownProduct guard) so a
+    // later capture-intent turn can tell a real availability check already happened here, instead
+    // of silently discarding that evidence as it used to.
     expect(memory).toMatchObject({
       productTitle: "Twilight Drift",
-      dateText: "2026-06-28",
+      dateText: "2026-06-28 17:30:00",
       guests: 2
     });
   });

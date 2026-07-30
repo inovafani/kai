@@ -6,6 +6,11 @@ import {
   handleBluePassCheckoutSessionExpired,
   resolveBluePassStripeWebhookSecret
 } from "@/server/payments/bluepass-stripe";
+import { PMS_BOOKING_DIRECT_CHECKOUT_FLOW } from "@/server/payments/bluepass-pms-stripe";
+import {
+  handlePmsBookingCheckoutSessionCompleted,
+  handlePmsBookingCheckoutSessionExpired
+} from "@/server/payments/confirm-bluepass-pms-payment";
 
 export const runtime = "nodejs";
 
@@ -42,9 +47,19 @@ export async function POST(request: Request) {
 
   try {
     if (event.type === "checkout.session.completed") {
-      await handleBluePassCheckoutSessionCompleted(event.data.object as Stripe.Checkout.Session);
+      const session = event.data.object as Stripe.Checkout.Session;
+      if (session.metadata?.kaiFlow === PMS_BOOKING_DIRECT_CHECKOUT_FLOW) {
+        await handlePmsBookingCheckoutSessionCompleted(session);
+      } else {
+        await handleBluePassCheckoutSessionCompleted(session);
+      }
     } else if (event.type === "checkout.session.expired") {
-      await handleBluePassCheckoutSessionExpired(event.data.object as Stripe.Checkout.Session);
+      const session = event.data.object as Stripe.Checkout.Session;
+      if (session.metadata?.kaiFlow === PMS_BOOKING_DIRECT_CHECKOUT_FLOW) {
+        await handlePmsBookingCheckoutSessionExpired(session);
+      } else {
+        await handleBluePassCheckoutSessionExpired(session);
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

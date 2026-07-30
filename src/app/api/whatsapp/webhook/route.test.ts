@@ -1,13 +1,51 @@
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createOrReuseBluePassInquiry,
   dispatchBluePassOperatorWhatsApp,
   handleBluePassOperatorResponse
 } from "@/server/bluepass/bluepass-inquiry-repository";
 import { approveBluePassQuote } from "@/server/bluepass/bluepass-quote";
+import { WHATSAPP_GENERIC_ELIGIBLE_FEATURE } from "@/core/tenant/feature-flags";
 import { prisma } from "@/lib/prisma";
 import { GET, POST } from "./route";
+
+// This whole file's tests predate WHATSAPP_GENERIC_ELIGIBLE_FEATURE and were written when the
+// WhatsApp generic-tenant allowlist was an env var each test opted into individually - none of them
+// expect real, live-flagged tenants (e.g. the real "bluepass-au") to also be checked as candidates
+// for their (BluePass-only) messages. Rather than mutate that real tenant's data as a test side
+// effect (risky if this file's teardown ever fails to run), scope the eligible-tenant pool down to
+// just the tenants this file itself creates and flags (see genericEligibleTestTenantSlugPrefixes
+// below).
+//
+// This can't be done by mocking generic-tenant-router's exported listWhatsAppGenericEligibleTenants:
+// both resolveWhatsAppGenericTenant and resolveStickyWhatsAppGenericTenant call that function as a
+// plain local call *within the same module*, not through the imported binding, so vi.mock on that
+// module has zero effect on those call sites (a well-known ESM/vi.mock limitation - mocks only
+// intercept callers outside the module). Instead, spy on prisma.tenant.findMany itself - a method on
+// the one real, shared PrismaClient singleton every caller (regardless of which file or which
+// internal call chain) goes through - and filter its result only when the query shape matches the
+// WhatsApp-eligibility lookup, passing every other query through untouched.
+const realTenantFindMany = prisma.tenant.findMany.bind(prisma.tenant);
+// Untyped on purpose: Prisma's generated findMany signature is a complex conditional generic that
+// isn't worth fighting for a test-only mock - the runtime behavior (filter results, pass everything
+// else through) is what matters here, not a precise static type for the spy itself.
+let tenantFindManySpy: any;
+
+beforeAll(() => {
+  tenantFindManySpy = (vi.spyOn(prisma.tenant, "findMany") as any).mockImplementation(async (args: any) => {
+    const results = await realTenantFindMany(args);
+    const isEligibilityQuery = args?.where?.config?.enabledFeatures?.has === WHATSAPP_GENERIC_ELIGIBLE_FEATURE;
+    if (!isEligibilityQuery) return results;
+    return (results as Array<{ slug: string }>).filter((tenant) =>
+      genericEligibleTestTenantSlugPrefixes.some((prefix) => tenant.slug.startsWith(prefix))
+    );
+  });
+});
+
+afterAll(() => {
+  tenantFindManySpy.mockRestore();
+});
 
 const originalEnv = { ...process.env };
 const isolatedWhatsAppEnvKeys = [
@@ -21,7 +59,6 @@ const isolatedWhatsAppEnvKeys = [
   "WHATSAPP_PHONE_ID_OPS",
   "WHATSAPP_ACCESS_TOKEN",
   "WHATSAPP_BLUEPASS_TENANT_SLUG",
-  "WHATSAPP_GENERIC_TENANT_SLUGS",
   "ENABLE_LLM",
   "LLM_PROVIDER",
   "OPENAI_API_KEY",
@@ -37,9 +74,18 @@ beforeEach(() => {
   }
 });
 
-afterEach(() => {
+// The three inline WHATSAPP_GENERIC_ELIGIBLE_FEATURE-flagged tenants this file creates (slugs below)
+// are cleaned up after every test so they never linger as "eligible" for a later (or concurrently
+// running) test's global resolveWhatsAppGenericTenant() query - there is no more per-test env-var
+// scoping to isolate this.
+const genericEligibleTestTenantSlugPrefixes = ["pms-webhook-test-", "pms-webhook-unrelated-", "pms-sticky-webhook-"];
+
+afterEach(async () => {
   vi.unstubAllGlobals();
   process.env = { ...originalEnv };
+  await prisma.tenant.deleteMany({
+    where: { OR: genericEligibleTestTenantSlugPrefixes.map((prefix) => ({ slug: { startsWith: prefix } })) }
+  });
 });
 
 function getWhatsAppTextBodies(fetchMock: { mock: { calls: Parameters<typeof fetch>[] } }) {
@@ -2237,7 +2283,10 @@ describe("/api/whatsapp/webhook", () => {
           create: {
             bookingMode: "AUTO_BOOKING",
             bookingWriteEnabled: false,
-            pmsProvider: "REZDY",
+            // MOCK, not REZDY: publicProductCatalog below is non-empty so MappedPmsAdapter always
+            // wins here regardless of provider, but MOCK also protects any OTHER (concurrent or
+            // leftover) test that reaches this tenant from ever triggering a real network call.
+            pmsProvider: "MOCK",
             publicProductCatalog: [
               {
                 publicTitle: "Sunset Reef Snorkel Adventure",
@@ -2246,7 +2295,7 @@ describe("/api/whatsapp/webhook", () => {
                 bookingMode: "AUTO_BOOKING"
               }
             ],
-            enabledFeatures: [],
+            enabledFeatures: [WHATSAPP_GENERIC_ELIGIBLE_FEATURE],
             requiredSlots: {},
             escalationRules: [],
             responseGuardrails: []
@@ -2254,7 +2303,6 @@ describe("/api/whatsapp/webhook", () => {
         }
       }
     });
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = pmsTenant.slug;
 
     const phoneSuffix = randomUUID().replace(/\D/g, "").padEnd(9, "7").slice(0, 9);
     const inboundPhone = `6285${phoneSuffix}`;
@@ -2332,7 +2380,10 @@ describe("/api/whatsapp/webhook", () => {
           create: {
             bookingMode: "AUTO_BOOKING",
             bookingWriteEnabled: false,
-            pmsProvider: "REZDY",
+            // MOCK, not REZDY: publicProductCatalog below is non-empty so MappedPmsAdapter always
+            // wins here regardless of provider, but MOCK also protects any OTHER (concurrent or
+            // leftover) test that reaches this tenant from ever triggering a real network call.
+            pmsProvider: "MOCK",
             publicProductCatalog: [
               {
                 publicTitle: "Sunset Reef Snorkel Adventure",
@@ -2341,7 +2392,7 @@ describe("/api/whatsapp/webhook", () => {
                 bookingMode: "AUTO_BOOKING"
               }
             ],
-            enabledFeatures: [],
+            enabledFeatures: [WHATSAPP_GENERIC_ELIGIBLE_FEATURE],
             requiredSlots: {},
             escalationRules: [],
             responseGuardrails: []
@@ -2349,7 +2400,6 @@ describe("/api/whatsapp/webhook", () => {
         }
       }
     });
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = unrelatedPmsTenant.slug;
 
     const bluepassTenantSlug = `bluepass-webhook-fallback-${randomUUID()}`;
     process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = bluepassTenantSlug;
@@ -2460,7 +2510,10 @@ describe("/api/whatsapp/webhook", () => {
           create: {
             bookingMode: "AUTO_BOOKING",
             bookingWriteEnabled: false,
-            pmsProvider: "REZDY",
+            // MOCK, not REZDY: publicProductCatalog below is non-empty so MappedPmsAdapter always
+            // wins here regardless of provider, but MOCK also protects any OTHER (concurrent or
+            // leftover) test that reaches this tenant from ever triggering a real network call.
+            pmsProvider: "MOCK",
             publicProductCatalog: [
               {
                 publicTitle: "Sunset Reef Snorkel Adventure",
@@ -2469,7 +2522,7 @@ describe("/api/whatsapp/webhook", () => {
                 bookingMode: "AUTO_BOOKING"
               }
             ],
-            enabledFeatures: [],
+            enabledFeatures: [WHATSAPP_GENERIC_ELIGIBLE_FEATURE],
             requiredSlots: {},
             escalationRules: [],
             responseGuardrails: []
@@ -2477,7 +2530,6 @@ describe("/api/whatsapp/webhook", () => {
         }
       }
     });
-    process.env.WHATSAPP_GENERIC_TENANT_SLUGS = pmsTenant.slug;
 
     const phoneSuffix = randomUUID().replace(/\D/g, "").padEnd(9, "7").slice(0, 9);
     const inboundPhone = `6285${phoneSuffix}`;

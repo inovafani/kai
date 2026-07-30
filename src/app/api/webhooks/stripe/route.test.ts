@@ -6,6 +6,10 @@ import {
   handleBluePassCheckoutSessionExpired,
   resolveBluePassStripeWebhookSecret
 } from "@/server/payments/bluepass-stripe";
+import {
+  handlePmsBookingCheckoutSessionCompleted,
+  handlePmsBookingCheckoutSessionExpired
+} from "@/server/payments/confirm-bluepass-pms-payment";
 
 vi.mock("@/server/payments/bluepass-stripe", () => ({
   getBluePassStripeClient: vi.fn(),
@@ -14,10 +18,17 @@ vi.mock("@/server/payments/bluepass-stripe", () => ({
   handleBluePassCheckoutSessionExpired: vi.fn()
 }));
 
+vi.mock("@/server/payments/confirm-bluepass-pms-payment", () => ({
+  handlePmsBookingCheckoutSessionCompleted: vi.fn(),
+  handlePmsBookingCheckoutSessionExpired: vi.fn()
+}));
+
 const getBluePassStripeClientMock = vi.mocked(getBluePassStripeClient);
 const resolveBluePassStripeWebhookSecretMock = vi.mocked(resolveBluePassStripeWebhookSecret);
 const handleBluePassCheckoutSessionCompletedMock = vi.mocked(handleBluePassCheckoutSessionCompleted);
 const handleBluePassCheckoutSessionExpiredMock = vi.mocked(handleBluePassCheckoutSessionExpired);
+const handlePmsBookingCheckoutSessionCompletedMock = vi.mocked(handlePmsBookingCheckoutSessionCompleted);
+const handlePmsBookingCheckoutSessionExpiredMock = vi.mocked(handlePmsBookingCheckoutSessionExpired);
 
 function webhookRequest(body: string, signature: string | null = "t=1,v1=fake") {
   return new Request("http://localhost/api/webhooks/stripe", {
@@ -106,6 +117,54 @@ describe("POST /api/webhooks/stripe", () => {
 
     expect(response.status).toBe(200);
     expect(body).toEqual({ received: true, failures: ["DB unavailable"] });
+  });
+
+  it("routes a checkout.session.completed event with kaiFlow PMS_BOOKING_DIRECT metadata to the PMS booking handler, not the BluePass marketplace handler", async () => {
+    const session = { id: "cs_test_pms_1", metadata: { kaiFlow: "PMS_BOOKING_DIRECT" } };
+    resolveBluePassStripeWebhookSecretMock.mockReturnValue("whsec_test");
+    getBluePassStripeClientMock.mockReturnValue({
+      webhooks: {
+        constructEvent: vi.fn(() => ({ type: "checkout.session.completed", data: { object: session } }))
+      }
+    } as never);
+
+    const response = await POST(webhookRequest(JSON.stringify(session)));
+
+    expect(response.status).toBe(200);
+    expect(handlePmsBookingCheckoutSessionCompletedMock).toHaveBeenCalledWith(session);
+    expect(handleBluePassCheckoutSessionCompletedMock).not.toHaveBeenCalled();
+  });
+
+  it("routes a checkout.session.expired event with kaiFlow PMS_BOOKING_DIRECT metadata to the PMS booking handler", async () => {
+    const session = { id: "cs_test_pms_2", metadata: { kaiFlow: "PMS_BOOKING_DIRECT" } };
+    resolveBluePassStripeWebhookSecretMock.mockReturnValue("whsec_test");
+    getBluePassStripeClientMock.mockReturnValue({
+      webhooks: {
+        constructEvent: vi.fn(() => ({ type: "checkout.session.expired", data: { object: session } }))
+      }
+    } as never);
+
+    const response = await POST(webhookRequest(JSON.stringify(session)));
+
+    expect(response.status).toBe(200);
+    expect(handlePmsBookingCheckoutSessionExpiredMock).toHaveBeenCalledWith(session);
+    expect(handleBluePassCheckoutSessionExpiredMock).not.toHaveBeenCalled();
+  });
+
+  it("still routes an event with no kaiFlow metadata to the existing BluePass marketplace handler (regression guard)", async () => {
+    const session = { id: "cs_test_marketplace", metadata: null };
+    resolveBluePassStripeWebhookSecretMock.mockReturnValue("whsec_test");
+    getBluePassStripeClientMock.mockReturnValue({
+      webhooks: {
+        constructEvent: vi.fn(() => ({ type: "checkout.session.completed", data: { object: session } }))
+      }
+    } as never);
+
+    const response = await POST(webhookRequest(JSON.stringify(session)));
+
+    expect(response.status).toBe(200);
+    expect(handleBluePassCheckoutSessionCompletedMock).toHaveBeenCalledWith(session);
+    expect(handlePmsBookingCheckoutSessionCompletedMock).not.toHaveBeenCalled();
   });
 
   it("acknowledges but ignores an event type it doesn't handle", async () => {

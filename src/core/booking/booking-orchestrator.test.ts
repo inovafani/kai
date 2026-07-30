@@ -8,6 +8,22 @@ import {
 import type { GenericBookingRouterLlmClient } from "@/core/llm/generic-booking-router";
 
 describe("booking orchestrator", () => {
+  const komodoDayTripAvailabilityCheckedPatch = {
+    productExternalId: "mock-komodo-day-trip",
+    productTitle: "Komodo Day Trip",
+    dateText: "tomorrow",
+    guests: 3,
+    travellerName: null,
+    travellerEmail: null,
+    travellerPhone: null,
+    bookingStatus: "AVAILABILITY_CHECKED",
+    confirmationSummary: null,
+    externalBookingId: null,
+    externalProvider: null,
+    bookingError: null,
+    ticketQuantities: null
+  };
+
   it("checks PMS availability when product, date, and guests are known", async () => {
     const result = await handleTravellerBookingMessage({
       message: "Can you check Komodo Day Trip for 3 guests tomorrow?",
@@ -18,7 +34,8 @@ describe("booking orchestrator", () => {
       action: "AVAILABILITY_CHECKED",
       reply:
         "Good news, Komodo Day Trip has availability for 3 guests tomorrow. There are 7 spots left at USD 185.00 per guest. I have not confirmed anything yet, but I can help you continue if this looks good.",
-      replySource: "DETERMINISTIC"
+      replySource: "DETERMINISTIC",
+      bookingStatePatch: komodoDayTripAvailabilityCheckedPatch
     });
   });
 
@@ -37,7 +54,8 @@ describe("booking orchestrator", () => {
       action: "AVAILABILITY_CHECKED",
       reply:
         "Komodo Day Trip is available for 3 guests tomorrow. PMS shows 7 spots remaining at USD 185.00 per guest. I have not confirmed a booking yet.",
-      replySource: "LLM"
+      replySource: "LLM",
+      bookingStatePatch: komodoDayTripAvailabilityCheckedPatch
     });
   });
 
@@ -57,7 +75,8 @@ describe("booking orchestrator", () => {
       action: "AVAILABILITY_CHECKED",
       reply:
         "Good news, Komodo Day Trip has availability for 3 guests tomorrow. There are 7 spots left at USD 185.00 per guest. I have not confirmed anything yet, but I can help you continue if this looks good.",
-      replySource: "DETERMINISTIC"
+      replySource: "DETERMINISTIC",
+      bookingStatePatch: komodoDayTripAvailabilityCheckedPatch
     });
   });
 
@@ -253,7 +272,22 @@ describe("booking orchestrator", () => {
       action: "AVAILABILITY_CHECKED",
       reply:
         "Good news, Gold Coast Whale Escape has availability for 2 guests tomorrow. There are 22 spots left at AUD 99.00 per guest. I have not confirmed anything yet, but I can help you continue if this looks good.",
-      replySource: "DETERMINISTIC"
+      replySource: "DETERMINISTIC",
+      bookingStatePatch: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "tomorrow",
+        guests: 2,
+        travellerName: null,
+        travellerEmail: null,
+        travellerPhone: null,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        confirmationSummary: null,
+        externalBookingId: null,
+        externalProvider: null,
+        bookingError: null,
+        ticketQuantities: null
+      }
     });
   });
 
@@ -298,7 +332,22 @@ describe("booking orchestrator", () => {
       action: "AVAILABILITY_CHECKED",
       reply:
         "Good news, Gold Coast Whale Escape has availability for 2 guests on 2026-06-24. There are 18 spots left at AUD 99.00 per guest. I have not confirmed anything yet, but I can help you continue if this looks good.",
-      replySource: "DETERMINISTIC"
+      replySource: "DETERMINISTIC",
+      bookingStatePatch: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-06-24",
+        guests: 2,
+        travellerName: null,
+        travellerEmail: null,
+        travellerPhone: null,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        confirmationSummary: null,
+        externalBookingId: null,
+        externalProvider: null,
+        bookingError: null,
+        ticketQuantities: null
+      }
     });
   });
 
@@ -1627,7 +1676,7 @@ describe("booking orchestrator", () => {
     expect(result).toEqual({
       action: "NEEDS_PRODUCT_SELECTION",
       reply:
-        "Which tour should I check? Available options are Komodo Day Trip, Private Charter and Reef Day Snorkel.",
+        "For tomorrow, you can choose from:\n1. Komodo Day Trip - live availability\n2. Private Charter - operator confirmation required\n3. Reef Day Snorkel - live availability\n\nWhich one sounds closest to what you want?",
       replySource: "DETERMINISTIC"
     });
   });
@@ -1676,7 +1725,22 @@ describe("booking orchestrator", () => {
       action: "AVAILABILITY_CHECKED",
       reply:
         "Good news, Komodo Day Trip has availability for 3 guests on 2026-06-23. There are 7 spots left at USD 185.00 per guest. I have not confirmed anything yet, but I can help you continue if this looks good.",
-      replySource: "DETERMINISTIC"
+      replySource: "DETERMINISTIC",
+      bookingStatePatch: {
+        productExternalId: "mock-komodo-day-trip",
+        productTitle: "Komodo Day Trip",
+        dateText: "2026-06-23",
+        guests: 3,
+        travellerName: null,
+        travellerEmail: null,
+        travellerPhone: null,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        confirmationSummary: null,
+        externalBookingId: null,
+        externalProvider: null,
+        bookingError: null,
+        ticketQuantities: null
+      }
     });
   });
 
@@ -1719,7 +1783,13 @@ describe("booking orchestrator", () => {
     });
   });
 
-  it("uses auto-booking wording when collecting contact details for a writable product", async () => {
+  it("checks real availability instead of skipping straight to contact details for an unconfirmed auto-booking product", async () => {
+    // Regression: a free-text booking-intent phrase ("yes I want it") combined with an
+    // already-known product/date/guests used to let this skip straight to "give me your contact
+    // details", even though getAvailability had never actually been called - the traveller could
+    // reach a real Stripe/PMS booking without ever seeing a real time slot or ticket price. The
+    // capture shortcut now only applies once bookingMemory shows genuine evidence of a prior
+    // availability check.
     const result = await handleTravellerBookingMessage({
       message: "yes I want it",
       bookingMemory: {
@@ -1733,15 +1803,29 @@ describe("booking orchestrator", () => {
     });
 
     expect(result).toEqual({
-      action: "BOOKING_DETAILS_REQUIRED",
+      action: "AVAILABILITY_CHECKED",
       reply:
-        "Nice. To prepare Komodo Day Trip for 3 guests tomorrow, I just need your name, email, and phone number. After that I will show you the details once more before creating the booking.",
+        "Good news, Komodo Day Trip has availability for 3 guests tomorrow. There are 7 spots left at USD 185.00 per guest. I have not confirmed anything yet, but I can help you continue if this looks good.",
       replySource: "DETERMINISTIC",
-      inquiryDraft: null
+      bookingStatePatch: {
+        productExternalId: "mock-komodo-day-trip",
+        productTitle: "Komodo Day Trip",
+        dateText: "tomorrow",
+        guests: 3,
+        travellerName: null,
+        travellerEmail: null,
+        travellerPhone: null,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        confirmationSummary: null,
+        externalBookingId: null,
+        externalProvider: null,
+        bookingError: null,
+        ticketQuantities: null
+      }
     });
   });
 
-  it("continues to contact collection when traveller naturally accepts an available writable product", async () => {
+  it("checks real availability instead of continuing to contact collection when traveller naturally accepts an available writable product", async () => {
     const result = await handleTravellerBookingMessage({
       message: "yes please i want it",
       priorTravellerMessages: ["is it available for tomorrow for 2 guests?"],
@@ -1756,11 +1840,25 @@ describe("booking orchestrator", () => {
     });
 
     expect(result).toEqual({
-      action: "BOOKING_DETAILS_REQUIRED",
+      action: "AVAILABILITY_CHECKED",
       reply:
-        "Nice. To prepare Komodo Day Trip for 2 guests tomorrow, I just need your name, email, and phone number. After that I will show you the details once more before creating the booking.",
+        "Good news, Komodo Day Trip has availability for 2 guests tomorrow. There are 8 spots left at USD 185.00 per guest. I have not confirmed anything yet, but I can help you continue if this looks good.",
       replySource: "DETERMINISTIC",
-      inquiryDraft: null
+      bookingStatePatch: {
+        productExternalId: "mock-komodo-day-trip",
+        productTitle: "Komodo Day Trip",
+        dateText: "tomorrow",
+        guests: 2,
+        travellerName: null,
+        travellerEmail: null,
+        travellerPhone: null,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        confirmationSummary: null,
+        externalBookingId: null,
+        externalProvider: null,
+        bookingError: null,
+        ticketQuantities: null
+      }
     });
   });
 
@@ -1876,7 +1974,22 @@ describe("booking orchestrator", () => {
       action: "AVAILABILITY_CHECKED",
       reply:
         "Good news, Komodo Day Trip has availability for 2 guests tomorrow. There are 8 spots left at USD 185.00 per guest. I have not confirmed anything yet, but I can help you continue if this looks good.",
-      replySource: "DETERMINISTIC"
+      replySource: "DETERMINISTIC",
+      bookingStatePatch: {
+        productExternalId: "mock-komodo-day-trip",
+        productTitle: "Komodo Day Trip",
+        dateText: "tomorrow",
+        guests: 2,
+        travellerName: null,
+        travellerEmail: null,
+        travellerPhone: null,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        confirmationSummary: null,
+        externalBookingId: null,
+        externalProvider: null,
+        bookingError: null,
+        ticketQuantities: null
+      }
     });
   });
 
@@ -1902,7 +2015,7 @@ describe("booking orchestrator", () => {
     });
   });
 
-  it("starts booking capture when traveller says book it after availability is known", async () => {
+  it("still checks real availability when traveller says book it, even with product/date/guests already known", async () => {
     const result = await handleTravellerBookingMessage({
       message: "yes book it",
       bookingMemory: {
@@ -1915,15 +2028,33 @@ describe("booking orchestrator", () => {
     });
 
     expect(result).toEqual({
-      action: "BOOKING_DETAILS_REQUIRED",
+      action: "AVAILABILITY_CHECKED",
       reply:
-        "I can prepare that booking request for Komodo Day Trip on tomorrow for 3 guests. Please share your name, email, phone so the operator can follow up.",
+        "Good news, Komodo Day Trip has availability for 3 guests tomorrow. There are 7 spots left at USD 185.00 per guest. I have not confirmed anything yet, but I can help you continue if this looks good.",
       replySource: "DETERMINISTIC",
-      inquiryDraft: null
+      bookingStatePatch: {
+        productExternalId: "mock-komodo-day-trip",
+        productTitle: "Komodo Day Trip",
+        dateText: "tomorrow",
+        guests: 3,
+        travellerName: null,
+        travellerEmail: null,
+        travellerPhone: null,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        confirmationSummary: null,
+        externalBookingId: null,
+        externalProvider: null,
+        bookingError: null,
+        ticketQuantities: null
+      }
     });
   });
 
-  it("returns an inquiry draft when traveller contact details complete an active capture", async () => {
+  it("checks real availability instead of completing an inquiry draft, since no availability check ever happened", async () => {
+    // The traveller's contact details in this message are not captured here - since real
+    // availability was never confirmed for this booking, the correct, safe behavior is to check it
+    // now rather than accept contact details toward an inquiry/payment. The traveller would supply
+    // their details again on a later turn once availability is genuinely confirmed.
     const result = await handleTravellerBookingMessage({
       message: "My name is Maya Chen, email maya@example.com, phone +61 400 111 222",
       priorTravellerMessages: ["Can you check Komodo Day Trip for 3 guests tomorrow?", "yes book it"],
@@ -1937,23 +2068,29 @@ describe("booking orchestrator", () => {
     });
 
     expect(result).toEqual({
-      action: "BOOKING_INQUIRY_READY",
+      action: "AVAILABILITY_CHECKED",
       reply:
-        "Thanks, I have the details for Komodo Day Trip on tomorrow for 3 guests. I will send this to the operator for confirmation.",
+        "Good news, Komodo Day Trip has availability for 3 guests tomorrow. There are 7 spots left at USD 185.00 per guest. I have not confirmed anything yet, but I can help you continue if this looks good.",
       replySource: "DETERMINISTIC",
-      inquiryDraft: {
+      bookingStatePatch: {
         productExternalId: "mock-komodo-day-trip",
         productTitle: "Komodo Day Trip",
         dateText: "tomorrow",
         guests: 3,
-        travellerName: "Maya Chen",
-        travellerEmail: "maya@example.com",
-        travellerPhone: "+61 400 111 222"
+        travellerName: null,
+        travellerEmail: null,
+        travellerPhone: null,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        confirmationSummary: null,
+        externalBookingId: null,
+        externalProvider: null,
+        bookingError: null,
+        ticketQuantities: null
       }
     });
   });
 
-  it("keeps auto-booking products in safe operator fallback when booking-write is disabled", async () => {
+  it("still checks real availability even when booking-write is disabled, for an unconfirmed auto-booking product", async () => {
     const result = await handleTravellerBookingMessage({
       message: "My name is Maya Chen, email maya@example.com, phone +61 400 111 222",
       priorTravellerMessages: ["Can you check Komodo Day Trip for 3 guests tomorrow?", "yes book it"],
@@ -1968,23 +2105,34 @@ describe("booking orchestrator", () => {
     });
 
     expect(result).toEqual({
-      action: "BOOKING_WRITE_DISABLED",
+      action: "AVAILABILITY_CHECKED",
       reply:
-        "Thanks, I have the details for Komodo Day Trip on tomorrow for 3 guests. Booking confirmation is not enabled for this tenant yet, so I will send this to the operator for confirmation.",
+        "Good news, Komodo Day Trip has availability for 3 guests tomorrow. There are 7 spots left at USD 185.00 per guest. I have not confirmed anything yet, but I can help you continue if this looks good.",
       replySource: "DETERMINISTIC",
-      inquiryDraft: {
+      bookingStatePatch: {
         productExternalId: "mock-komodo-day-trip",
         productTitle: "Komodo Day Trip",
         dateText: "tomorrow",
         guests: 3,
-        travellerName: "Maya Chen",
-        travellerEmail: "maya@example.com",
-        travellerPhone: "+61 400 111 222"
+        travellerName: null,
+        travellerEmail: null,
+        travellerPhone: null,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        confirmationSummary: null,
+        externalBookingId: null,
+        externalProvider: null,
+        bookingError: null,
+        ticketQuantities: null
       }
     });
   });
 
-  it("moves auto-booking capture to secure payment when booking-write is enabled", async () => {
+  it("checks real availability instead of moving straight to secure payment for an unconfirmed auto-booking product", async () => {
+    // This is the exact real-money-risk scenario the guard exists for: a traveller's contact
+    // details plus a capture-intent phrase ("yes book it") earlier in the conversation used to be
+    // enough to request secure payment for an AUTO_BOOKING (live-Rezdy) product without Kai ever
+    // having called getAvailability - meaning the traveller could be sent to pay for a slot that was
+    // never actually confirmed available, at a price that was never actually confirmed correct.
     const result = await handleTravellerBookingMessage({
       message: "My name is Maya Chen, email maya@example.com, phone +61 400 111 222",
       priorTravellerMessages: ["Can you check Komodo Day Trip for 3 guests tomorrow?", "yes book it"],
@@ -1999,34 +2147,24 @@ describe("booking orchestrator", () => {
     });
 
     expect(result).toEqual({
-      action: "BOOKING_PAYMENT_REQUIRED",
+      action: "AVAILABILITY_CHECKED",
       reply:
-        "Thanks, I have everything for Komodo Day Trip tomorrow for 3 guests under Maya Chen, maya@example.com, +61 400 111 222.\n\n" +
-        "I saved this as a lead for the operator. Kai will not ask for or store card details; secure payment handoff is not connected yet.",
+        "Good news, Komodo Day Trip has availability for 3 guests tomorrow. There are 7 spots left at USD 185.00 per guest. I have not confirmed anything yet, but I can help you continue if this looks good.",
       replySource: "DETERMINISTIC",
-      inquiryDraft: {
-        productExternalId: "mock-komodo-day-trip",
-        productTitle: "Komodo Day Trip",
-        dateText: "tomorrow",
-        guests: 3,
-        travellerName: "Maya Chen",
-        travellerEmail: "maya@example.com",
-        travellerPhone: "+61 400 111 222"
-      },
       bookingStatePatch: {
         productExternalId: "mock-komodo-day-trip",
         productTitle: "Komodo Day Trip",
         dateText: "tomorrow",
         guests: 3,
-        travellerName: "Maya Chen",
-        travellerEmail: "maya@example.com",
-        travellerPhone: "+61 400 111 222",
-        bookingStatus: "PAYMENT_PENDING",
-        confirmationSummary:
-          "Komodo Day Trip on tomorrow for 3 guests under Maya Chen, maya@example.com, +61 400 111 222.",
+        travellerName: null,
+        travellerEmail: null,
+        travellerPhone: null,
+        bookingStatus: "AVAILABILITY_CHECKED",
+        confirmationSummary: null,
         externalBookingId: null,
         externalProvider: null,
-        bookingError: "Awaiting secure payment before creating the external booking."
+        bookingError: null,
+        ticketQuantities: null
       }
     });
   });
@@ -2515,6 +2653,147 @@ describe("booking orchestrator", () => {
     });
   });
 
+  it("does not reserve a PMS hold or populate pmsCheckoutHold when bluePassStripeCheckoutEnabled is explicitly false (regression guard)", async () => {
+    const result = await handleTravellerBookingMessage({
+      message: "My name is Test, email test@gmail.com, phone 086775428176",
+      priorTravellerMessages: ["option 2 please", "no extras thanks"],
+      bookingMemory: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-06-26 13:30:00",
+        guests: 2,
+        ticketQuantities: [{ optionLabel: "Adult", quantity: 2 }],
+        ticketOptions: [{ label: "Adult", unitPriceCents: 5000 }],
+        extraQuantities: []
+      },
+      bookingWriteEnabled: true,
+      bluePassStripeCheckoutEnabled: false,
+      pmsAdapter: {
+        provider: "MOCK",
+        listProducts: async () => [
+          {
+            externalProductId: "boattime-whale-escape",
+            title: "Gold Coast Whale Escape",
+            description: "Luxury whale watching cruise",
+            bookingMode: "AUTO_BOOKING"
+          }
+        ],
+        getAvailability: async () => {
+          throw new Error("Availability should not be rechecked when contact details complete payment draft.");
+        },
+        createBooking: async () => {
+          throw new Error("No PMS hold should be reserved when bluePassStripeCheckoutEnabled is false.");
+        },
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(result.pmsCheckoutHold).toBeUndefined();
+    expect(result.paymentHandoffUrl).toBeUndefined();
+    expect(result.reply).toContain("secure payment handoff is not connected yet");
+  });
+
+  it("reserves a PMS hold and populates pmsCheckoutHold with the computed price when bluePassStripeCheckoutEnabled is true and pricing is resolvable", async () => {
+    const result = await handleTravellerBookingMessage({
+      message: "My name is Test, email test@gmail.com, phone 086775428176",
+      priorTravellerMessages: ["option 2 please", "no extras thanks"],
+      bookingMemory: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-06-26 13:30:00",
+        guests: 2,
+        ticketQuantities: [{ optionLabel: "Adult", quantity: 2 }],
+        ticketOptions: [{ label: "Adult", unitPriceCents: 5000 }],
+        extraQuantities: []
+      },
+      bookingWriteEnabled: true,
+      bluePassStripeCheckoutEnabled: true,
+      pmsAdapter: {
+        provider: "REZDY",
+        listProducts: async () => [
+          {
+            externalProductId: "boattime-whale-escape",
+            title: "Gold Coast Whale Escape",
+            description: "Luxury whale watching cruise",
+            bookingMode: "AUTO_BOOKING"
+          }
+        ],
+        getAvailability: async () => {
+          throw new Error("Availability should not be rechecked when contact details complete payment draft.");
+        },
+        createBooking: async () => ({
+          externalBookingId: "RZ-HOLD-1",
+          provider: "REZDY",
+          status: "PENDING"
+        }),
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(result.action).toBe("BOOKING_PAYMENT_REQUIRED");
+    expect(result.paymentHandoffUrl).toBeUndefined();
+    expect(result.pmsCheckoutHold).toEqual({
+      externalBookingId: "RZ-HOLD-1",
+      pmsProvider: "REZDY",
+      productExternalId: "boattime-whale-escape",
+      productTitle: "Gold Coast Whale Escape",
+      dateText: "2026-06-26 13:30:00",
+      guests: 2,
+      travellerName: "Test",
+      travellerEmail: "test@gmail.com",
+      travellerPhone: "086775428176",
+      ticketQuantities: [{ optionLabel: "Adult", quantity: 2 }],
+      extraQuantities: [],
+      grossAmountCents: 10000,
+      currency: "AUD"
+    });
+    expect(result.reply).toContain("I'm preparing your secure payment link now.");
+  });
+
+  it("falls back to the existing lead-saved reply when bluePassStripeCheckoutEnabled is true but the price cannot be resolved", async () => {
+    const result = await handleTravellerBookingMessage({
+      message: "My name is Test, email test@gmail.com, phone 086775428176",
+      priorTravellerMessages: ["option 2 please", "no extras thanks"],
+      bookingMemory: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-06-26 13:30:00",
+        guests: 2,
+        ticketQuantities: [{ optionLabel: "Adult", quantity: 2 }],
+        ticketOptions: [{ label: "Senior", unitPriceCents: 5000 }],
+        extraQuantities: []
+      },
+      bookingWriteEnabled: true,
+      bluePassStripeCheckoutEnabled: true,
+      pmsAdapter: {
+        provider: "REZDY",
+        listProducts: async () => [
+          {
+            externalProductId: "boattime-whale-escape",
+            title: "Gold Coast Whale Escape",
+            description: "Luxury whale watching cruise",
+            bookingMode: "AUTO_BOOKING"
+          }
+        ],
+        getAvailability: async () => {
+          throw new Error("Availability should not be rechecked when contact details complete payment draft.");
+        },
+        createBooking: async () => ({
+          externalBookingId: "RZ-HOLD-2",
+          provider: "REZDY",
+          status: "PENDING"
+        }),
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(result.pmsCheckoutHold).toBeUndefined();
+    expect(result.reply).toContain("I saved this as a lead and created Rezdy pending cart RZ-HOLD-2");
+  });
+
 });
 
 function fakeRouterClient(intent: string) {
@@ -2582,17 +2861,27 @@ describe("handleTravellerBookingMessage with a generic booking router client", (
     expect(result.reply).not.toContain("email");
   });
 
-  it("regression: a router misreading a bare 'yes' as CHECK_AVAILABILITY does not stall an already-active booking capture", async () => {
+  it("regression: a router misreading a bare 'yes' as CHECK_AVAILABILITY does not stall the traveller forever, even once availability is genuinely unconfirmed", async () => {
     // Reproduces a real production regression: with product/date/guests already known and an
     // active capture in progress, a traveller replying with a bare "yes" (no "book"/"please"/etc.,
     // so the regex cascade itself resolves to GENERAL_QUESTION) used to correctly advance to
     // contact collection. Once the router could feed shouldHandleCapture, a router that guesses
     // CHECK_AVAILABILITY for this ambiguous "yes" silently re-triggered the availability check
     // instead - the traveller got stuck being told "availability confirmed, would you like to
-    // proceed?" forever. shouldHandleCapture must stay regex-only for this exact reason.
+    // proceed?" forever, since shouldHandleCapture used to consult the router's own guess.
+    //
+    // Updated for the AUTO_BOOKING/real-availability-evidence guard (see captureAppliesToKnownProduct
+    // above): this bookingMemory carries no evidence that getAvailability was ever actually called,
+    // so turn 1 now correctly reaches a real availability check first, rather than assuming it is
+    // safe to ask for contact details - this is the exact real-money-risk fix, not a regression of
+    // it. shouldHandleCapture itself is still regex-only, unaffected by the router's guess; what
+    // changed is that a fresh availability check is the right thing to do here regardless. Turn 2
+    // proves the original regression guard's real concern still holds: once availability HAS been
+    // checked (turn 1's own bookingStatePatch persists that evidence), a second bare "yes" still
+    // progresses forward to contact collection instead of looping on availability forever.
     const routerClient = fakeRouterClient("CHECK_AVAILABILITY");
 
-    const result = await handleTravellerBookingMessage({
+    const turn1 = await handleTravellerBookingMessage({
       message: "yes",
       bookingMemory: {
         productExternalId: "mock-komodo-day-trip",
@@ -2604,8 +2893,18 @@ describe("handleTravellerBookingMessage with a generic booking router client", (
       routerClient
     });
 
-    expect(result.action).not.toBe("AVAILABILITY_CHECKED");
-    expect(result.action).toBe("BOOKING_DETAILS_REQUIRED");
+    expect(turn1.action).toBe("AVAILABILITY_CHECKED");
+    expect(turn1.bookingStatePatch?.bookingStatus).toBe("AVAILABILITY_CHECKED");
+
+    const turn2 = await handleTravellerBookingMessage({
+      message: "yes",
+      bookingMemory: turn1.bookingStatePatch,
+      pmsAdapter: new MockPmsAdapter(),
+      routerClient
+    });
+
+    expect(turn2.action).not.toBe("AVAILABILITY_CHECKED");
+    expect(turn2.action).toBe("BOOKING_DETAILS_REQUIRED");
   });
 
   it("regression: a stale 'options' keyword from an earlier turn does not loop a typo'd detail reply back to product selection", async () => {

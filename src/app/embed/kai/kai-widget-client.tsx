@@ -17,8 +17,11 @@ type WidgetConfig = {
   capabilities: {
     supportedLocales: string[];
     pmsProvider: string;
+    enabledFeatures: string[];
   };
 };
+
+const BLUEPASS_STRIPE_PMS_CHECKOUT_FEATURE = "bluepass_stripe_pms_checkout";
 
 type ChatRole = "TRAVELLER" | "ASSISTANT";
 
@@ -141,6 +144,9 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
   const [error, setError] = useState("");
   const stripeRef = useRef<StripeInstance | null>(null);
   const cardElementRef = useRef<StripeCardElement | null>(null);
+  const hostedCheckoutRedirectEnabled = Boolean(
+    config?.capabilities.enabledFeatures.includes(BLUEPASS_STRIPE_PMS_CHECKOUT_FEATURE)
+  );
 
   useEffect(() => {
     let active = true;
@@ -676,7 +682,57 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
             </form>
           ) : null}
 
-          {paymentRequest ? (
+          {paymentRequest && hostedCheckoutRedirectEnabled ? (
+            <section
+              aria-label="Secure payment"
+              style={{
+                alignSelf: "stretch",
+                padding: 14,
+                border: "1px solid #cfded9",
+                borderRadius: 8,
+                background: "#ffffff",
+                boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)"
+              }}
+            >
+              <h2 style={{ margin: 0, fontSize: 16, lineHeight: 1.25 }}>Redirecting you to secure payment</h2>
+              <p style={{ margin: "8px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
+                {paymentRequest.productTitle ?? "Selected booking"}
+                {paymentRequest.dateText ? ` - ${paymentRequest.dateText}` : ""}
+                {paymentRequest.guests ? ` - ${paymentRequest.guests} guest${paymentRequest.guests === 1 ? "" : "s"}` : ""}
+              </p>
+              <p style={{ margin: "10px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
+                You&apos;ll be taken to a secure BluePass payment page; Kai never sees or stores your card details.
+              </p>
+              {paymentRequest.checkoutUrl ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const target = window.top ?? window;
+                    target.location.href = paymentRequest.checkoutUrl as string;
+                  }}
+                  style={{
+                    width: "100%",
+                    height: 42,
+                    marginTop: 12,
+                    border: "none",
+                    borderRadius: 8,
+                    background: accentColor,
+                    color: "#ffffff",
+                    fontWeight: 800,
+                    cursor: "pointer"
+                  }}
+                >
+                  Continue to secure payment
+                </button>
+              ) : (
+                <p style={{ margin: "10px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
+                  I could not prepare the secure payment link just now - the operator will follow up to complete payment.
+                </p>
+              )}
+            </section>
+          ) : null}
+
+          {paymentRequest && !hostedCheckoutRedirectEnabled ? (
             <section
               aria-label="Secure payment"
               style={{
