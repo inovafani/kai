@@ -1037,6 +1037,56 @@ describe("booking orchestrator", () => {
     expect(result.reply).toContain("with 1 2 people for $149.00");
   });
 
+  // Regression: confirmed live that a bare "2" (no "option"/"choice" prefix) matched nothing here,
+  // even though the exact same bare-number style already worked one step earlier for picking a
+  // product/operator from a numbered list. Silently falling through then re-ran availability from
+  // scratch, showing the same time-selection prompt again no matter what the traveller typed next -
+  // stuck in an unrecoverable loop the moment they replied with just a number, as most people
+  // naturally would after being shown a numbered list.
+  it("understands a bare numbered ticket option selection with no 'option' prefix", async () => {
+    const result = await handleTravellerBookingMessage({
+      message: "2",
+      bookingMemory: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-06-30 09:00:00",
+        guests: 2,
+        timeOptions: [
+          { label: "9:00 AM", startTimeLocal: "2026-06-30 09:00:00", remaining: 82 },
+          { label: "12:00 PM", startTimeLocal: "2026-06-30 12:00:00", remaining: 82 }
+        ],
+        ticketOptions: [
+          { label: "Family (2A +2C) 3-13", unitPriceCents: 24900 },
+          { label: '"2 people for $149.00', unitPriceCents: 14900 },
+          { label: "Child (3-13)", unitPriceCents: 5900 },
+          { label: "Infant (under 3)", unitPriceCents: 0 },
+          { label: "Adult (Winter Special)", unitPriceCents: 7900 }
+        ],
+        ticketQuantities: null
+      },
+      bookingWriteEnabled: true,
+      pmsAdapter: {
+        provider: "MOCK",
+        listProducts: async () => [],
+        getAvailability: async () => {
+          throw new Error("Availability should not be rechecked for ticket option parsing.");
+        },
+        createBooking: async () => {
+          throw new Error("Booking should not be created before contact details are captured.");
+        },
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(result).toMatchObject({
+      action: "BOOKING_DETAILS_REQUIRED",
+      bookingStatePatch: {
+        ticketQuantities: [{ optionLabel: '"2 people for $149.00', quantity: 1 }]
+      }
+    });
+  });
+
   it("understands mixed numbered ticket option selections from the displayed list", async () => {
     const result = await handleTravellerBookingMessage({
       message: "option 2 + option 5 please",
@@ -2572,6 +2622,47 @@ describe("booking orchestrator", () => {
           { label: "Sparkling for 2", unitPriceCents: 4000 }
         ],
         extraQuantities: []
+      }
+    });
+  });
+
+  // Same bare-number gap as ticket selection, fixed for the same reason: a traveller shouldn't need
+  // to say "option 1" or "extra 1" here when a bare "1" already worked for picking the ticket option
+  // one turn earlier in the same conversation.
+  it("understands a bare numbered extra option selection with no 'option'/'extra' prefix", async () => {
+    const result = await handleTravellerBookingMessage({
+      message: "1",
+      bookingMemory: {
+        productExternalId: "boattime-whale-escape",
+        productTitle: "Gold Coast Whale Escape",
+        dateText: "2026-06-26 13:30:00",
+        guests: 2,
+        ticketQuantities: [{ optionLabel: '"2 people for $149.00', quantity: 1 }],
+        extraOptions: [
+          { label: "Corona Bucket", unitPriceCents: 3000 },
+          { label: "Sparkling for 2", unitPriceCents: 4000 }
+        ],
+        extraQuantities: null
+      },
+      bookingWriteEnabled: true,
+      pmsAdapter: {
+        provider: "MOCK",
+        listProducts: async () => [],
+        getAvailability: async () => {
+          throw new Error("Availability should not be rechecked when choosing extras.");
+        },
+        createBooking: async () => {
+          throw new Error("Booking should not be created before payment.");
+        },
+        cancelBooking: async () => ({ cancelled: false }),
+        getBooking: async () => null
+      }
+    });
+
+    expect(result).toMatchObject({
+      action: "BOOKING_DETAILS_REQUIRED",
+      bookingStatePatch: {
+        extraQuantities: [{ optionLabel: "Corona Bucket", quantity: 1 }]
       }
     });
   });

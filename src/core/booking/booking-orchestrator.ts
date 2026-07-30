@@ -408,7 +408,13 @@ function findTicketOptionSelectedByNumber(message: string, options: PmsTicketOpt
   };
   const numberedSelection =
     normalizedMessage.match(/\b(?:option|choice|ticket|number|no)\s*#?\s*(\d{1,2})\b/) ??
-    normalizedMessage.match(/#\s*(\d{1,2})\b/);
+    normalizedMessage.match(/#\s*(\d{1,2})\b/) ??
+    // A bare number with nothing else ("2", "2 please") is a valid pick too, not just "option 2" -
+    // confirmed live that a traveller who had just picked a product/operator by a bare number got
+    // stuck: the very next bare-number reply here (meant to pick a ticket) matched nothing, silently
+    // fell through the whole booking flow, and re-ran availability from scratch, showing the same
+    // time-selection prompt forever regardless of what they typed next.
+    normalizedMessage.match(/^(\d{1,2})(?:\s*(?:please|pls|thanks|thank you))?$/);
   let selectedIndex = numberedSelection ? Number(numberedSelection[1]) : null;
 
   if (!selectedIndex) {
@@ -561,7 +567,11 @@ function findExtraOptionSelectedByNumber(message: string, options: PmsExtraOptio
   const normalizedMessage = message.toLowerCase().replace(/\./g, "").replace(/\s+/g, " ").trim();
   const numberedSelection =
     normalizedMessage.match(/\b(?:option|choice|extra|number|no)\s*#?\s*(\d{1,2})\b/) ??
-    normalizedMessage.match(/#\s*(\d{1,2})\b/);
+    normalizedMessage.match(/#\s*(\d{1,2})\b/) ??
+    // Same bare-number gap as findTicketOptionSelectedByNumber above, fixed for the same reason: a
+    // traveller shouldn't need to say "option 1" here when a bare "1" already worked for picking a
+    // product/ticket earlier in the same conversation.
+    normalizedMessage.match(/^(\d{1,2})(?:\s*(?:please|pls|thanks|thank you))?$/);
 
   if (!numberedSelection) return null;
 

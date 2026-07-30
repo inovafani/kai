@@ -87,9 +87,19 @@ export function buildAuOperatorRecommendationReply(candidates: AuRecommendationC
   return `Here's who I can check for you in Australia:\n${rows}\n\nReply with the number (or the name) to continue.`;
 }
 
-// Pure - only resolves a pick when the last assistant turn actually looks like our own
-// recommendation (mentions every candidate currently shown), so a bare "1" elsewhere in a
-// conversation is never misread as picking from this list.
+// The exact trailing sentence buildAuOperatorRecommendationReply always appends - nothing else in
+// the system produces this string, so checking for it is an unambiguous "the recommendation list
+// itself was the most recent reply" signal.
+const RECOMMENDATION_REPLY_MARKER = "reply with the number (or the name) to continue";
+
+// Pure - only resolves a pick when the last assistant turn actually IS our own recommendation list
+// (ends with its distinctive prompt), so a bare "1" elsewhere in the conversation is never misread
+// as picking from this list. Deliberately NOT "mentions every candidate's name": confirmed live that
+// with a single real candidate, the very next handoff reply ("Connecting you with Boattime Yacht
+// Charters now...") also mentions that same candidate's name, which made a bare "1" meant to pick a
+// PRODUCT from the handoff's own list get misread as re-picking the operator, forever - the
+// traveller was stuck seeing the same handoff reply on every subsequent turn no matter what they
+// typed, since this always won before the message ever reached the real booking engine.
 export function resolveAuOperatorRecommendationSelection(input: {
   lastAssistantMessage: string | null;
   message: string;
@@ -98,7 +108,7 @@ export function resolveAuOperatorRecommendationSelection(input: {
   if (input.candidates.length === 0) return null;
 
   const last = input.lastAssistantMessage?.toLowerCase() ?? "";
-  const wasShown = input.candidates.every((candidate) => last.includes(candidate.name.toLowerCase()));
+  const wasShown = last.includes(RECOMMENDATION_REPLY_MARKER);
   if (!wasShown) return null;
 
   const numbered = parseNumberedPick(input.message);

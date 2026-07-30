@@ -208,6 +208,27 @@ describe("buildAuOperatorRecommendationReply / resolveAuOperatorRecommendationSe
     ).toBeNull();
   });
 
+  // Regression: confirmed live that with a single real candidate, the handoff reply shown right
+  // after picking it ("Great choice! Connecting you with Test Real Operator now...") also mentions
+  // that same candidate's name - so a bare "1" the traveller sent next to pick a PRODUCT from that
+  // handoff's own list got misread as re-picking the operator all over again, on every single
+  // subsequent turn, no matter what they typed. The fix: only the recommendation list's own exact
+  // reply (ending in "reply with the number (or the name) to continue") counts as "was shown", not
+  // any later reply that happens to mention a candidate's name too.
+  it("does not resolve a pick against the handoff reply that follows a recommendation - only the recommendation itself", () => {
+    const singleCandidate = [candidates[0]];
+    const handoffReply =
+      "Great choice! Connecting you with Test Real Operator now.\n\nYou can choose from:\n1. Sunset Cruise - live availability\n2. Reef Snorkel - live availability\n\nWhich one sounds closest to what you want?";
+
+    expect(
+      resolveAuOperatorRecommendationSelection({
+        lastAssistantMessage: handoffReply,
+        message: "1",
+        candidates: singleCandidate
+      })
+    ).toBeNull();
+  });
+
   it("returns null when the reply matches neither option", () => {
     expect(
       resolveAuOperatorRecommendationSelection({ lastAssistantMessage, message: "what about tomorrow?", candidates })
