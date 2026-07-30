@@ -415,13 +415,9 @@ describe("resolveWhatsAppTenantForMessage", () => {
 
     await resolveWhatsAppTenantForMessage({ messageText: "boat charter in australia", fromPhone: phone });
 
-    // Picking by number (not name) deliberately: a name-based pick is also a literal substring match
-    // for resolveWhatsAppGenericTenant's own explicit-match tier (tier 1, checked before the pick tier
-    // below), so it would resolve to TENANT via that unrelated tier regardless of this test's fix -
-    // never actually exercising the pick-resolution code below. A bare number only ever resolves via
-    // the pick tier, which is what this test is about. Position is read back from the actual
-    // recommendation text sent (not hardcoded "1") since other eligible/placeholder tenants in this
-    // shared database may also appear in the list, at any position.
+    // Picking by number here (a separate test below covers picking by name) - position is read back
+    // from the actual recommendation text sent (not hardcoded "1") since other eligible/placeholder
+    // tenants in this shared database may also appear in the list, at any position.
     const sentTexts = (sendWhatsAppText as unknown as { mock: { calls: Array<[{ body: string }]> } }).mock.calls;
     const recommendationText = sentTexts.map((call) => call[0].body).find((body) => body.includes(operatorName));
     const position = recommendationText
@@ -449,5 +445,60 @@ describe("resolveWhatsAppTenantForMessage", () => {
 
     expect(followUp.kind).toBe("TENANT");
     expect(followUp.kind === "TENANT" ? followUp.tenant.slug : null).toBe(realTenant.slug);
+  }, 25_000);
+
+  // Regression: confirmed live on WhatsApp that picking the real operator BY NAME ("okay i want
+  // boattime yacht charters") skipped the pick-tier's reset+handoff entirely - resolveWhatsAppGenericTenant's
+  // own explicit-match tier ALSO matches on the tenant's name, and since it used to run before the
+  // pick tier, it resolved straight to TENANT and fed the raw pick message into the booking engine as
+  // if it were the traveller's first real question. With a stale Conversation already on file for this
+  // tenant+phone (from an earlier, unrelated session), that surfaced a completely fabricated-looking
+  // reply - a specific old product/date/guest count the traveller never mentioned this session,
+  // immediately after picking the operator by name. Fixed by running the pick tier first.
+  it("hands off cleanly when the traveller picks the real operator by NAME, even with a stale conversation on file", async () => {
+    const bluePassSlug = await createBluePassStandInTenant("BluePass AU Pick-By-Name Stand-in");
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = bluePassSlug;
+    const operatorName = `Test AU Operator ${randomUUID()}`;
+    const realTenant = await createTestPmsTenant({ name: operatorName });
+    const phone = randomTestPhone();
+
+    const staleConversation = await prisma.conversation.create({
+      data: { tenantId: realTenant.id, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: phone }
+    });
+    await prisma.conversationBookingState.create({
+      data: {
+        tenantId: realTenant.id,
+        conversationId: staleConversation.id,
+        productTitle: "Stale Old Product From A Past Session",
+        dateText: "2020-01-01",
+        guests: 99,
+        bookingStatus: "AVAILABILITY_CHECKED"
+      }
+    });
+
+    await resolveWhatsAppTenantForMessage({ messageText: "boat charter in australia", fromPhone: phone });
+
+    const pickResult = await resolveWhatsAppTenantForMessage({
+      messageText: `okay i want ${operatorName}`,
+      fromPhone: phone
+    });
+
+    // HANDLED, not TENANT: same reasoning as the numbered-pick test above - this pick message must be
+    // fully answered by the pick tier, never replayed through the booking engine.
+    expect(pickResult).toEqual({ kind: "HANDLED" });
+
+    const staleConversationAfterPick = await prisma.conversation.findUnique({ where: { id: staleConversation.id } });
+    expect(staleConversationAfterPick?.whatsappPhone).toBeNull();
+
+    const freshConversation = await prisma.conversation.findFirst({
+      where: { tenantId: realTenant.id, whatsappPhone: phone }
+    });
+    expect(freshConversation).not.toBeNull();
+    expect(freshConversation!.id).not.toBe(staleConversation.id);
+
+    const freshBookingState = await prisma.conversationBookingState.findUnique({
+      where: { conversationId: freshConversation!.id }
+    });
+    expect(freshBookingState).toBeNull();
   }, 25_000);
 });

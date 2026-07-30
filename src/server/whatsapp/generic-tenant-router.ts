@@ -180,13 +180,24 @@ export type WhatsAppTenantRouteOutcome =
   | { kind: "HANDLED" }
   | { kind: "NONE" };
 
-// Single entry point for the webhook: explicit signal first (resolveWhatsAppGenericTenant), then a
-// pending recommendation-pick, then the sticky recency fallback, then (last resort) a fresh AU
-// operator recommendation - except a "new chat" reset or an explicit Indonesia-market signal
-// ("Komodo", "Bali", ...) always means "go to BluePass now" and must override all of that, otherwise
-// a traveller who explicitly asks for Komodo while stuck in a sticky bluepass-au thread would wrongly
-// stay there. classifyBluePassMarket is BluePass's own existing country classifier
-// (core/bluepass/market.ts) - reused rather than a second hand-maintained keyword list.
+// Single entry point for the webhook: a pending recommendation-pick first, then the explicit signal,
+// then the sticky recency fallback, then (last resort) a fresh AU operator recommendation - except a
+// "new chat" reset or an explicit Indonesia-market signal ("Komodo", "Bali", ...) always means "go to
+// BluePass now" and must override all of that, otherwise a traveller who explicitly asks for Komodo
+// while stuck in a sticky bluepass-au thread would wrongly stay there. classifyBluePassMarket is
+// BluePass's own existing country classifier (core/bluepass/market.ts) - reused rather than a second
+// hand-maintained keyword list.
+//
+// Pick-resolution deliberately runs BEFORE the explicit-match tier (confirmed live this was the wrong
+// order): picking a real operator by NAME ("okay i want boattime yacht charters") also satisfies
+// resolveWhatsAppGenericTenant's own mentionsTenantByName check, which used to resolve it straight to
+// TENANT and feed that raw pick message into the booking engine as if it were a real first question -
+// surfacing whatever stale bookingMemory that tenant+phone happened to have from an earlier, unrelated
+// session (the exact bug already fixed once for numbered picks, resurfacing here for name picks via a
+// different tier). resolveAuOperatorRecommendationPick's own precondition (the last assistant message
+// must be the recommendation list's own exact text) is narrow enough that running it first never
+// steals a message that should legitimately reach the explicit-match tier instead - it only ever
+// activates in the specific turn right after a recommendation list was shown.
 //
 // The fresh recommendation trigger runs only after the sticky check finds nothing, so an ongoing
 // conversation with an eligible tenant is never hijacked back into "pick an operator" just because a
@@ -203,11 +214,11 @@ export async function resolveWhatsAppTenantForMessage(
   // was adding several sequential DB round-trips to every single inbound WhatsApp message.
   const eligibleTenants = await listWhatsAppGenericEligibleTenants();
 
-  const explicitMatch = await resolveWhatsAppGenericTenant(input.messageText, env, eligibleTenants);
-  if (explicitMatch) return { kind: "TENANT", tenant: explicitMatch.tenant };
-
   const pick = await resolveAuOperatorRecommendationPick(input, env, eligibleTenants);
   if (pick.kind !== "NONE") return pick;
+
+  const explicitMatch = await resolveWhatsAppGenericTenant(input.messageText, env, eligibleTenants);
+  if (explicitMatch) return { kind: "TENANT", tenant: explicitMatch.tenant };
 
   const sticky = await resolveStickyWhatsAppGenericTenant(input.fromPhone, env, eligibleTenants);
   if (sticky) return { kind: "TENANT", tenant: sticky.tenant };
