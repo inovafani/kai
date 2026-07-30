@@ -623,7 +623,7 @@ function composeMissingDetailsReply(input: {
   return `I can help with that. Please share the ${input.missingSlots.join(", ")} so I can check safely.`;
 }
 
-function formatRecommendationReply(products: PmsProduct[], dateText: string | null) {
+export function formatRecommendationReply(products: PmsProduct[], dateText: string | null) {
   const datePrefix = dateText ? `For ${dateText}, ` : "";
   const firstWord = dateText ? "you" : "You";
 

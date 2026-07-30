@@ -264,10 +264,10 @@ describe("resolveAuOperatorRecommendationPick", () => {
     expect(result).toEqual({ kind: "NONE" });
   }, 15_000);
 
-  it("hands off to the real tenant when picked by name, and seeds it for stickiness", async () => {
+  it("hands off to the real tenant when picked by name, seeding it for stickiness with a live product list", async () => {
     process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = await createBluePassStandIn();
     const operatorName = `Test AU Operator ${randomUUID()}`;
-    const { slug: realSlug, tenant: realTenant } = await createRealCandidate(operatorName);
+    const { tenant: realTenant } = await createRealCandidate(operatorName);
     const phone = randomTestPhone();
 
     await triggerAuOperatorRecommendation({
@@ -281,13 +281,73 @@ describe("resolveAuOperatorRecommendationPick", () => {
     // position.
     const pickResult = await resolveAuOperatorRecommendationPick({ messageText: operatorName, fromPhone: phone });
 
-    expect(pickResult.kind).toBe("TENANT");
-    expect(pickResult.kind === "TENANT" ? pickResult.tenant.slug : null).toBe(realSlug);
+    // HANDLED, not TENANT: this pick message has already been fully answered (the assertions below
+    // prove the seeded conversation + reply), so the caller must never also replay it through the
+    // generic booking engine - see resolveAuOperatorRecommendationPick's own comment for the bug this
+    // fixed (a second, confusing reply on top of whatever stale state the tenant+phone already had).
+    expect(pickResult).toEqual({ kind: "HANDLED" });
 
     const realTenantConversation = await prisma.conversation.findFirst({
       where: { tenantId: realTenant.id, whatsappPhone: phone }
     });
     expect(realTenantConversation).not.toBeNull();
+
+    const seededMessage = await prisma.message.findFirst({
+      where: { conversationId: realTenantConversation!.id, role: "ASSISTANT" },
+      orderBy: { createdAt: "desc" }
+    });
+    expect(seededMessage?.content).toContain(`Connecting you with ${operatorName}`);
+    // Proves the handoff shows this tenant's actual live product list (formatRecommendationReply's
+    // fixed closing line) instead of the old vague "what would you like to explore?" the traveller
+    // had no way to answer without already knowing the catalog.
+    expect(seededMessage?.content).toContain("Which one sounds closest to what you want?");
+  }, 20_000);
+
+  // Regression: confirmed live that picking a real operator resumed a stale Conversation left over
+  // from an unrelated earlier session with the same phone number (e.g. an old test run) - the
+  // traveller saw a specific old product/date/price they never mentioned this session, looking like
+  // Kai had fabricated it, immediately after picking the operator.
+  it("starts the handed-off tenant conversation fresh instead of resuming a stale one", async () => {
+    process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = await createBluePassStandIn();
+    const operatorName = `Test AU Operator ${randomUUID()}`;
+    const { tenant: realTenant } = await createRealCandidate(operatorName);
+    const phone = randomTestPhone();
+
+    const staleConversation = await prisma.conversation.create({
+      data: { tenantId: realTenant.id, channel: "WHATSAPP", controlMode: "AI", whatsappPhone: phone }
+    });
+    await prisma.conversationBookingState.create({
+      data: {
+        tenantId: realTenant.id,
+        conversationId: staleConversation.id,
+        productTitle: "Stale Old Product From A Past Session",
+        dateText: "2020-01-01",
+        guests: 99,
+        bookingStatus: "AVAILABILITY_CHECKED"
+      }
+    });
+
+    await triggerAuOperatorRecommendation({
+      messageText: "boat charter in australia",
+      fromPhone: phone,
+      isAuRegionSignal: true
+    });
+    const pickResult = await resolveAuOperatorRecommendationPick({ messageText: operatorName, fromPhone: phone });
+    expect(pickResult).toEqual({ kind: "HANDLED" });
+
+    const staleConversationAfterPick = await prisma.conversation.findUnique({ where: { id: staleConversation.id } });
+    expect(staleConversationAfterPick?.whatsappPhone).toBeNull();
+
+    const freshConversation = await prisma.conversation.findFirst({
+      where: { tenantId: realTenant.id, whatsappPhone: phone }
+    });
+    expect(freshConversation).not.toBeNull();
+    expect(freshConversation!.id).not.toBe(staleConversation.id);
+
+    const freshBookingState = await prisma.conversationBookingState.findUnique({
+      where: { conversationId: freshConversation!.id }
+    });
+    expect(freshBookingState).toBeNull();
   }, 20_000);
 
   it("replies honestly and resolves no tenant when a placeholder option is picked", async () => {

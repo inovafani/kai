@@ -22,6 +22,7 @@ import { getWidgetRequestOrigin } from "@/server/widget/request-origin";
 import { resolveWidgetRequest } from "@/server/widget/resolve-widget-request";
 import {
   buildAuOperatorRecommendationReply,
+  buildTenantProductsHandoffReply,
   listAuRecommendationCandidates,
   resolveAuOperatorRecommendationSelection
 } from "@/server/whatsapp/au-operator-recommendation";
@@ -246,7 +247,8 @@ export async function POST(request: NextRequest) {
   // scoped to widget tenants themselves flagged eligible for the shared recommendation (same flag
   // WhatsApp's explicit-match tier uses), so no other generic-flow tenant is affected, and the
   // candidate list (real + placeholder operators) is identical across both channels.
-  if (resolved.tenant.config?.enabledFeatures?.includes(WHATSAPP_GENERIC_ELIGIBLE_FEATURE)) {
+  const tenantConfigForAuRecommendation = resolved.tenant.config;
+  if (tenantConfigForAuRecommendation?.enabledFeatures?.includes(WHATSAPP_GENERIC_ELIGIBLE_FEATURE)) {
     const candidates = await listAuRecommendationCandidates();
 
     if (candidates.length > 0) {
@@ -266,8 +268,16 @@ export async function POST(request: NextRequest) {
         });
         const reply = picked.isPlaceholder
           ? `Sorry, ${picked.name} is not available right now - want to try one of the other options instead?`
-          : picked.tenantId === resolved.tenant.id
-            ? `Great choice! Let's get you sorted with ${resolved.tenant.name} - what would you like to explore?`
+          : picked.tenantId === resolved.tenant.id && tenantConfigForAuRecommendation
+            ? // Shows this tenant's actual live product list right away (same numbered "- live
+              // availability" format used everywhere else), instead of a vague "what would you like
+              // to explore?" the traveller has no way to answer without already knowing the catalog.
+              await buildTenantProductsHandoffReply({
+                id: resolved.tenant.id,
+                slug: resolved.tenant.slug,
+                name: resolved.tenant.name,
+                config: tenantConfigForAuRecommendation
+              })
             : // Picking a different real operator than the one this widget is already bound to isn't
               // wired up yet (no cross-tenant hand-off on the website today) - say so honestly rather
               // than silently mishandling it.

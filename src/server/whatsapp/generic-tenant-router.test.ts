@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { prisma } from "@/lib/prisma";
 import { WHATSAPP_GENERIC_ELIGIBLE_FEATURE } from "@/core/tenant/feature-flags";
+import { sendWhatsAppText } from "@/server/whatsapp/client";
 import {
   matchesTenantRegionKeywords,
   resolveStickyWhatsAppGenericTenant,
@@ -405,7 +406,7 @@ describe("resolveWhatsAppTenantForMessage", () => {
     expect(result).toEqual({ kind: "HANDLED" });
   }, 15_000);
 
-  it("hands off to the real AU operator when the traveller picks it by name from the recommendation", async () => {
+  it("hands off to the real AU operator when the traveller picks it by number from the recommendation", async () => {
     const bluePassSlug = await createBluePassStandInTenant("BluePass AU Pick Stand-in");
     process.env.WHATSAPP_BLUEPASS_TENANT_SLUG = bluePassSlug;
     const operatorName = `Test AU Operator ${randomUUID()}`;
@@ -413,11 +414,40 @@ describe("resolveWhatsAppTenantForMessage", () => {
     const phone = randomTestPhone();
 
     await resolveWhatsAppTenantForMessage({ messageText: "boat charter in australia", fromPhone: phone });
-    // Pick by the exact (randomized, collision-free) name rather than a numbered position - other
-    // eligible tenants in this shared database may also appear in the list, at any position.
-    const result = await resolveWhatsAppTenantForMessage({ messageText: operatorName, fromPhone: phone });
 
-    expect(result.kind).toBe("TENANT");
-    expect(result.kind === "TENANT" ? result.tenant.slug : null).toBe(realTenant.slug);
+    // Picking by number (not name) deliberately: a name-based pick is also a literal substring match
+    // for resolveWhatsAppGenericTenant's own explicit-match tier (tier 1, checked before the pick tier
+    // below), so it would resolve to TENANT via that unrelated tier regardless of this test's fix -
+    // never actually exercising the pick-resolution code below. A bare number only ever resolves via
+    // the pick tier, which is what this test is about. Position is read back from the actual
+    // recommendation text sent (not hardcoded "1") since other eligible/placeholder tenants in this
+    // shared database may also appear in the list, at any position.
+    const sentTexts = (sendWhatsAppText as unknown as { mock: { calls: Array<[{ body: string }]> } }).mock.calls;
+    const recommendationText = sentTexts.map((call) => call[0].body).find((body) => body.includes(operatorName));
+    const position = recommendationText
+      ?.split("\n")
+      .find((line) => line.includes(operatorName))
+      ?.match(/^(\d+)\./)?.[1];
+    expect(position).toBeTruthy();
+
+    const pickResult = await resolveWhatsAppTenantForMessage({ messageText: position!, fromPhone: phone });
+
+    // HANDLED, not TENANT: the pick message itself carries no real booking content, so it must be
+    // fully answered here (the handoff reply, seeded into the real tenant's own conversation for
+    // stickiness below) rather than also replayed through the generic booking engine as if it were
+    // the traveller's first real message - see resolveAuOperatorRecommendationPick's own comment for
+    // the confirmed-live bug this fixed (a second, confusing reply on top of stale booking state).
+    expect(pickResult).toEqual({ kind: "HANDLED" });
+
+    // The traveller's actual next message - generic, naming neither this tenant nor its product -
+    // now resolves to the real tenant via the sticky seed the pick left behind, proving the hand-off
+    // still works end to end even though the pick turn itself no longer returns TENANT.
+    const followUp = await resolveWhatsAppTenantForMessage({
+      messageText: "what's available this weekend?",
+      fromPhone: phone
+    });
+
+    expect(followUp.kind).toBe("TENANT");
+    expect(followUp.kind === "TENANT" ? followUp.tenant.slug : null).toBe(realTenant.slug);
   }, 25_000);
 });
