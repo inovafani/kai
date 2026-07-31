@@ -50,14 +50,37 @@ function cleanName(name: string) {
     .trim();
 }
 
-function extractTravellerName(text: string) {
-  const namedField = text.match(/\bname\s*[:=]\s*([a-z][a-z0-9 .'-]{1,60})/i);
-  if (namedField) {
-    return cleanName(namedField[1]);
+// Shared guard against "i'm looking for a trip in Gold Coast" style sentences being mistaken for a
+// name - both extractTravellerName's "i am/i'm/name is" capture and extractBareTravellerName's
+// whole-message capture only see a loose character-class match, with nothing checking that what
+// they grabbed is actually name-shaped rather than a continuing sentence. A real traveller name
+// essentially never contains any of these words, so this doubles as a length + vocabulary sanity
+// check for both capture paths.
+const NON_NAME_WORDS =
+  /\b(book|booking|ticket|option|extra|adult|child|infant|family|people|guest|guests|yes|no|thanks?|please|email|phone|mobile|pm|am|looking|trip|trying|planning|interested|hoping|want|wanting|need|needing|available|availability|price|pricing|cost|reserve|reservation|charter|cruise|tour|whale|watching|dolphin|snorkel|diving|fishing|sailing|sunset|sightseeing|excursion)\b/i;
+
+function looksLikeTravellerName(candidate: string, minWords: number) {
+  const words = candidate.trim().split(/\s+/).filter(Boolean);
+  return words.length >= minWords && words.length <= 5 && !NON_NAME_WORDS.test(candidate);
+}
+
+// Scans every match in the joined conversation, not just the first, since an earlier incidental
+// "i'm ___" (e.g. a browsing message) must not block a genuine later name declaration from the same
+// non-global regex only ever seeing the first hit in the text.
+function firstValidNameMatch(text: string, pattern: RegExp) {
+  for (const match of text.matchAll(pattern)) {
+    const candidate = cleanName(match[1]);
+    if (looksLikeTravellerName(candidate, 1)) return candidate;
   }
 
-  const naturalName = text.match(/\b(?:my name is|name is|i am|i'm)\s+([a-z][a-z0-9 .'-]{1,60})/i);
-  return naturalName ? cleanName(naturalName[1]) : null;
+  return null;
+}
+
+function extractTravellerName(text: string) {
+  return (
+    firstValidNameMatch(text, /\bname\s*[:=]\s*([a-z][a-z0-9 .'-]{1,60})/gi) ??
+    firstValidNameMatch(text, /\b(?:my name is|name is|i am|i'm)\s+([a-z][a-z0-9 .'-]{1,60})/gi)
+  );
 }
 
 function extractTravellerEmail(text: string) {
@@ -78,17 +101,7 @@ function extractBareTravellerName(text: string) {
   const trimmed = text.trim().replace(/[.!?,;:]+$/g, "");
 
   if (!/^[a-z][a-z .'-]{1,60}$/i.test(trimmed)) return null;
-
-  const words = trimmed.split(/\s+/).filter(Boolean);
-  if (words.length < 2 || words.length > 5) return null;
-
-  if (
-    /\b(book|booking|ticket|option|extra|adult|child|infant|family|people|guest|guests|yes|no|thanks?|please|email|phone|mobile|pm|am)\b/i.test(
-      trimmed
-    )
-  ) {
-    return null;
-  }
+  if (!looksLikeTravellerName(trimmed, 2)) return null;
 
   return trimmed;
 }

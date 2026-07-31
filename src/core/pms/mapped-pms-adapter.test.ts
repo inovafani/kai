@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { MappedPmsAdapter } from "./mapped-pms-adapter";
-import type { PmsAdapter, PmsCreateBookingResult, PmsProduct } from "./types";
+import type { PmsAdapter, PmsCreateBookingRequest, PmsCreateBookingResult, PmsProduct } from "./types";
 
 describe("MappedPmsAdapter", () => {
   it("exposes website products and checks availability with the mapped PMS product id", async () => {
@@ -63,6 +63,13 @@ describe("MappedPmsAdapter", () => {
   });
 
   it("delegates confirmBooking to the source adapter when it supports it", async () => {
+    const confirmRequest: PmsCreateBookingRequest = {
+      productId: "rezdy-whale-direct",
+      date: "2026-06-28 12:00:00",
+      guests: 2,
+      travellerName: "Test Traveller",
+      travellerEmail: "traveller@example.com"
+    };
     const sourceAdapter: PmsAdapter = {
       provider: "REZDY",
       listProducts: vi.fn(async () => []),
@@ -79,12 +86,12 @@ describe("MappedPmsAdapter", () => {
 
     const adapter = new MappedPmsAdapter(sourceAdapter, []);
 
-    await expect(adapter.confirmBooking?.("RZ-1")).resolves.toEqual({
+    await expect(adapter.confirmBooking?.("RZ-1", confirmRequest)).resolves.toEqual({
       externalBookingId: "RZ-1",
       provider: "REZDY",
       status: "CONFIRMED"
     });
-    expect(sourceAdapter.confirmBooking).toHaveBeenCalledWith("RZ-1");
+    expect(sourceAdapter.confirmBooking).toHaveBeenCalledWith("RZ-1", confirmRequest);
   });
 
   it("throws a clear error when the source adapter does not support confirmBooking", async () => {
@@ -98,8 +105,15 @@ describe("MappedPmsAdapter", () => {
     };
 
     const adapter = new MappedPmsAdapter(sourceAdapter, []);
+    const confirmRequest: PmsCreateBookingRequest = {
+      productId: "mock-product",
+      date: "2026-06-28 12:00:00",
+      guests: 1,
+      travellerName: "Test Traveller",
+      travellerEmail: "traveller@example.com"
+    };
 
-    await expect(adapter.confirmBooking?.("id-1")).rejects.toThrow(
+    await expect(adapter.confirmBooking?.("id-1", confirmRequest)).rejects.toThrow(
       "MOCK PMS adapter does not support confirmBooking."
     );
   });

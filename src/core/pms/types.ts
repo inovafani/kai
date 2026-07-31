@@ -84,8 +84,10 @@ export interface PmsAdapter {
   /**
    * Optional capability: explicitly confirm a booking that was previously created in a held/pending
    * state (e.g. via createBooking's PAYMENT_HOLD mode) once payment has been collected elsewhere.
-   * Only Rezdy implements this today - its Reseller API requires a separate confirm call rather than
-   * accepting payment itself. Callers must feature-detect (`if (adapter.confirmBooking)`) before use.
+   * Only Rezdy implements this today. Rezdy's confirm call is a full PUT replace of the booking
+   * resource, not a status-only patch - it rejects a request with no items ("Empty booking items"),
+   * so callers must re-supply the same request details used for the original createBooking call.
+   * Callers must feature-detect (`if (adapter.confirmBooking)`) before use.
    */
-  confirmBooking?(externalBookingId: string): Promise<PmsCreateBookingResult>;
+  confirmBooking?(externalBookingId: string, request: PmsCreateBookingRequest): Promise<PmsCreateBookingResult>;
 }

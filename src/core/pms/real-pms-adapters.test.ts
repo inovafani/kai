@@ -727,7 +727,17 @@ describe("real PMS adapter shells", () => {
     });
   });
 
-  it("confirms a Rezdy reserved booking and returns its confirmed status", async () => {
+  const confirmRequest = {
+    productId: "LWWVE",
+    date: "2026-06-28 12:00:00",
+    guests: 2,
+    travellerName: "Raga Test",
+    travellerEmail: "raga@example.com",
+    travellerPhone: "085664326198",
+    ticketQuantities: [{ optionLabel: "Adult (Winter Special)", quantity: 2 }]
+  };
+
+  it("confirms a Rezdy reserved booking by re-sending its items, and returns its confirmed status", async () => {
     const fetcher = vi.fn(async () => {
       return new Response(
         JSON.stringify({
@@ -742,20 +752,35 @@ describe("real PMS adapter shells", () => {
     const adapter = new RezdyPmsAdapter({
       baseUrl: "https://rezdy.example.test/v1",
       apiKey: "rezdy-secret",
-      confirmPath: "/bookings/confirm",
+      bookingPath: "/bookings",
       fetcher
     });
 
-    await expect(adapter.confirmBooking("RZ-PENDING")).resolves.toEqual({
+    await expect(adapter.confirmBooking("RZ-PENDING", confirmRequest)).resolves.toEqual({
       externalBookingId: "RZ-PENDING",
       provider: "REZDY",
       status: "CONFIRMED"
     });
 
     const [url, requestInit] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("https://rezdy.example.test/v1/bookings/confirm?apiKey=rezdy-secret");
-    expect(requestInit.method).toBe("POST");
-    expect(JSON.parse(requestInit.body as string)).toEqual({ orderNumber: "RZ-PENDING" });
+    expect(url).toBe("https://rezdy.example.test/v1/bookings/RZ-PENDING?apiKey=rezdy-secret");
+    expect(requestInit.method).toBe("PUT");
+    expect(JSON.parse(requestInit.body as string)).toEqual({
+      status: "CONFIRMED",
+      customer: {
+        firstName: "Raga",
+        lastName: "Test",
+        email: "raga@example.com",
+        phone: "085664326198"
+      },
+      items: [
+        {
+          productCode: "LWWVE",
+          startTimeLocal: "2026-06-28 12:00:00",
+          quantities: [{ optionLabel: "Adult (Winter Special)", value: 2 }]
+        }
+      ]
+    });
   });
 
   it("includes PMS error response details when a Rezdy confirm request is rejected", async () => {
@@ -765,11 +790,11 @@ describe("real PMS adapter shells", () => {
     const adapter = new RezdyPmsAdapter({
       baseUrl: "https://rezdy.example.test/v1",
       apiKey: "rezdy-secret",
-      confirmPath: "/bookings/confirm",
+      bookingPath: "/bookings",
       fetcher
     });
 
-    await expect(adapter.confirmBooking("RZ-1")).rejects.toThrow(
+    await expect(adapter.confirmBooking("RZ-1", confirmRequest)).rejects.toThrow(
       'REZDY PMS API request failed with status 409: {"error":"Order already confirmed"}'
     );
   });
@@ -781,25 +806,25 @@ describe("real PMS adapter shells", () => {
     const adapter = new RezdyPmsAdapter({
       baseUrl: "https://rezdy.example.test/v1",
       apiKey: "rezdy-secret",
-      confirmPath: "/bookings/confirm",
+      bookingPath: "/bookings",
       fetcher
     });
 
-    await expect(adapter.confirmBooking("RZ-1")).resolves.toEqual({
+    await expect(adapter.confirmBooking("RZ-1", confirmRequest)).resolves.toEqual({
       externalBookingId: "",
       provider: "REZDY",
       status: "FAILED"
     });
   });
 
-  it("fails closed with actionable setup requirements when Rezdy confirmPath is missing", async () => {
+  it("fails closed with actionable setup requirements when Rezdy bookingPath is missing", async () => {
     const adapter = new RezdyPmsAdapter({
       baseUrl: "https://rezdy.example.test/v1",
       apiKey: "rezdy-secret"
     });
 
-    await expect(adapter.confirmBooking("RZ-1")).rejects.toThrow(
-      "REZDY PMS adapter requires baseUrl, apiKey, and confirmPath before live calls."
+    await expect(adapter.confirmBooking("RZ-1", confirmRequest)).rejects.toThrow(
+      "REZDY PMS adapter requires baseUrl, apiKey, and bookingPath before live calls."
     );
   });
 

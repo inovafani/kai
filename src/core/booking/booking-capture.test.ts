@@ -100,4 +100,35 @@ describe("booking capture", () => {
     expect(result.details.travellerEmail).toBe("test4@gmail.com");
     expect(result.details.travellerPhone).toBe("087665234098");
   });
+
+  it("does not mistake an early browsing message like \"I'm looking for a trip in Gold Coast\" for a name", () => {
+    const result = evaluateBookingCapture({
+      message: "My email is maya@example.com, phone +61 400 111 222",
+      bookingMemory,
+      priorTravellerMessages: ["I'm looking for a trip in Gold Coast", "yes book it"]
+    });
+
+    expect(result.details.travellerName).toBeNull();
+    expect(result.missingContactSlots).toContain("name");
+  });
+
+  it("still captures a real name introduced with 'I'm' even when an earlier message also matched the pattern", () => {
+    const result = evaluateBookingCapture({
+      message: "I'm Maya Chen, email maya@example.com, phone +61 400 111 222",
+      bookingMemory,
+      priorTravellerMessages: ["I'm looking for a trip in Gold Coast", "yes book it"]
+    });
+
+    expect(result.details.travellerName).toBe("Maya Chen");
+  });
+
+  it("does not treat a bare browsing phrase as a name when it is the only message", () => {
+    const result = evaluateBookingCapture({
+      message: "looking for a trip",
+      bookingMemory,
+      priorTravellerMessages: ["yes book it"]
+    });
+
+    expect(result.details.travellerName).toBeNull();
+  });
 });

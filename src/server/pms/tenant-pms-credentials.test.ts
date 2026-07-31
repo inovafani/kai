@@ -78,14 +78,14 @@ describe("tenant PMS credentials", () => {
     });
   });
 
-  it("carries a tenant's Rezdy confirmPath credential through encryption and env mapping", async () => {
+  it("carries a tenant's Rezdy bookingPath credential through encryption and env mapping, reused by confirmBooking", async () => {
     const encryptionKey = generateTestEncryptionKey();
     process.env.PMS_CREDENTIAL_ENCRYPTION_KEY = encryptionKey;
     const tenant = await createTestTenant();
     const tenantCredentials = {
       baseUrl: "https://tenant-specific.rezdy.test",
       apiKey: "tenant-specific-secret",
-      confirmPath: "/v1/bookings/confirm"
+      bookingPath: "/v1/bookings"
     };
 
     await prisma.tenantIntegration.create({
@@ -100,7 +100,7 @@ describe("tenant PMS credentials", () => {
     const fallbackEnv = { REZDY_BASE_URL: "https://global.example.test", REZDY_API_KEY: "global-key" };
     const resolved = await resolveTenantPmsEnv(tenant.id, "REZDY", fallbackEnv);
 
-    expect(resolved).toMatchObject({ REZDY_CONFIRM_PATH: "/v1/bookings/confirm" });
+    expect(resolved).toMatchObject({ REZDY_BOOKING_PATH: "/v1/bookings" });
   });
 
   it("ignores a non-ACTIVE TenantIntegration row and falls back", async () => {

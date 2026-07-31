@@ -305,18 +305,43 @@ export class RezdyPmsAdapter extends RealPmsHttpAdapter {
   }
 
   /**
-   * Rezdy's Reseller API confirms a previously-held booking (see createBooking's PAYMENT_HOLD mode
-   * for the reserve step) via a separate call, rather than accepting payment itself - confirmed
-   * against Rezdy's own Reseller API docs. The confirm request body ({ orderNumber }) is inferred
-   * from how Rezdy's own booking responses identify orders elsewhere in this adapter, since the
-   * exact confirm request schema isn't publicly documented; verify against a live account once real
-   * confirmPath credentials exist. Not yet called from anywhere - there is no payment flow that
-   * triggers it until BluePass's own Stripe checkout exists.
+   * Confirms a previously-held PAYMENT_HOLD reservation (see createBooking) by PUT-ing onto the
+   * same booking resource used to create it - there is no separate confirm endpoint. Verified live
+   * against a real sandbox order: PUT is a full resource replace, not a status-only patch - sending
+   * just {status: "CONFIRMED"} was rejected with Rezdy's own "Empty booking items" error (errorCode
+   * 3), so items/customer must be re-supplied here exactly like createBooking's own POST does. No
+   * availability re-lookup is done - by the time a booking is being confirmed, request.date is
+   * already the Rezdy-normalized local datetime from the original reserve call, not free text.
    */
-  async confirmBooking(externalBookingId: string): Promise<PmsCreateBookingResult> {
-    this.assertConfigured(["baseUrl", "apiKey", "confirmPath"]);
-    const payload = await this.requestJson("POST", this.config.confirmPath as string, {
-      orderNumber: externalBookingId
+  async confirmBooking(externalBookingId: string, request: PmsCreateBookingRequest): Promise<PmsCreateBookingResult> {
+    this.assertConfigured(["baseUrl", "apiKey", "bookingPath"]);
+    const bookingPath = (this.config.bookingPath as string).replace(/\/$/, "");
+    const name = splitTravellerName(request.travellerName);
+    const ticketQuantities = (request.ticketQuantities ?? []).map((ticket) => ({
+      optionLabel: ticket.optionLabel,
+      value: ticket.quantity
+    }));
+    const extraQuantities =
+      request.extraQuantities && request.extraQuantities.length > 0
+        ? request.extraQuantities.map((extra) => ({ name: extra.optionLabel, quantity: extra.quantity }))
+        : undefined;
+
+    const payload = await this.requestJson("PUT", `${bookingPath}/${externalBookingId}`, {
+      status: "CONFIRMED",
+      customer: {
+        firstName: name.firstName,
+        lastName: name.lastName,
+        email: request.travellerEmail,
+        phone: request.travellerPhone ?? ""
+      },
+      items: [
+        {
+          productCode: request.productId,
+          startTimeLocal: request.date,
+          quantities: ticketQuantities,
+          ...(extraQuantities ? { extras: extraQuantities } : {})
+        }
+      ]
     });
 
     return this.mapBookingResponse(payload);

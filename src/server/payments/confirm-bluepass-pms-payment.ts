@@ -1,6 +1,7 @@
 import type Stripe from "stripe";
 import { prisma } from "@/lib/prisma";
 import { calculateBluePassLedgerSplit, type BluePassLedgerCurrency } from "@/core/bluepass/ledger";
+import type { PmsExtraQuantity, PmsTicketQuantity } from "@/core/pms/types";
 import { createAssistantMessage, upsertConversationBookingState } from "@/server/conversation/conversation-repository";
 import { getPmsAdapter } from "@/server/pms/pms-adapter-registry";
 import { resolveTenantPmsEnv } from "@/server/pms/tenant-pms-credentials";
@@ -52,7 +53,16 @@ export async function handlePmsBookingCheckoutSessionCompleted(session: Stripe.C
     if (!pmsAdapter.confirmBooking) {
       throw new Error(`${updated.pmsProvider} PMS adapter does not support confirmBooking.`);
     }
-    confirmResult = await pmsAdapter.confirmBooking(updated.externalBookingId);
+    confirmResult = await pmsAdapter.confirmBooking(updated.externalBookingId, {
+      productId: updated.productExternalId,
+      date: updated.dateText,
+      guests: updated.guests,
+      travellerName: updated.travellerName,
+      travellerEmail: updated.travellerEmail,
+      travellerPhone: updated.travellerPhone,
+      ticketQuantities: updated.ticketQuantities as unknown as PmsTicketQuantity[],
+      extraQuantities: updated.extraQuantities as unknown as PmsExtraQuantity[]
+    });
   } catch (error) {
     confirmError = error;
   }

@@ -40,7 +40,7 @@ describe("PMS adapter registry", () => {
     ]);
   });
 
-  it("passes Rezdy confirmPath environment credential into the real adapter", async () => {
+  it("confirms a Rezdy booking using the same bookingPath environment credential", async () => {
     const fetcher = async () =>
       new Response(JSON.stringify({ order: { orderNumber: "RZ-1", status: "CONFIRMED" } }), { status: 200 });
     const adapter = getPmsAdapter(
@@ -48,7 +48,7 @@ describe("PMS adapter registry", () => {
       {
         REZDY_BASE_URL: "https://rezdy.example.test",
         REZDY_API_KEY: "rezdy-secret",
-        REZDY_CONFIRM_PATH: "/bookings/confirm"
+        REZDY_BOOKING_PATH: "/bookings"
       },
       fetcher
     );
@@ -57,7 +57,15 @@ describe("PMS adapter registry", () => {
       throw new Error("Expected the Rezdy adapter to expose confirmBooking.");
     }
 
-    await expect(adapter.confirmBooking("RZ-1")).resolves.toEqual({
+    await expect(
+      adapter.confirmBooking("RZ-1", {
+        productId: "rz-1",
+        date: "2026-06-28 12:00:00",
+        guests: 2,
+        travellerName: "Test Traveller",
+        travellerEmail: "traveller@example.com"
+      })
+    ).resolves.toEqual({
       externalBookingId: "RZ-1",
       provider: "REZDY",
       status: "CONFIRMED"

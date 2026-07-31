@@ -22,7 +22,6 @@ export interface RealPmsHttpAdapterConfig {
   productListPath?: string;
   availabilityPath?: string;
   bookingPath?: string;
-  confirmPath?: string;
   timeoutMs?: number;
   fetcher?: Fetcher;
 }
@@ -75,7 +74,12 @@ export abstract class RealPmsHttpAdapter implements PmsAdapter {
     }
   }
 
-  protected async requestJson(method: "GET" | "POST", path: string, body?: unknown, query?: Record<string, string>) {
+  protected async requestJson(
+    method: "GET" | "POST" | "PUT",
+    path: string,
+    body?: unknown,
+    query?: Record<string, string>
+  ) {
     const abortController = new AbortController();
     const timeout = setTimeout(() => abortController.abort(), this.config.timeoutMs ?? 5000);
 
