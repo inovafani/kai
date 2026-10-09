@@ -552,6 +552,122 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.suggestedReplies).toBeNull();
   });
 
+  // Tony, 9 Oct: "Make it more conversational, like boardy.ai does." Naming a place used to return
+  // three boats, three prices, three links and a menu of ways to continue. Now it reads like
+  // someone who has been there: one fact, one question, and the boats when they're wanted.
+  it("opens a conversation when the traveller names a place, instead of listing boats", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "I'm planning a trip to Komodo",
+      priorTravellerMessages: []
+    });
+
+    expect(result.assistantContent).toContain("Komodo is a good call.");
+    expect(result.assistantContent).toContain("When are you thinking of going?");
+    expect(result.assistantContent.split("?").length - 1).toBe(1);
+    expect(result.assistantContent).not.toContain("https://");
+    expect(result.bluepassMatches).toEqual([]);
+    expect(result.replyMode).toBe("CONCIERGE");
+  });
+
+  it("compares the regions instead of guessing one when no place is named yet", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "hey, thinking about a boat trip somewhere in Indonesia",
+      priorTravellerMessages: []
+    });
+
+    expect(result.assistantContent).toContain("Komodo");
+    expect(result.assistantContent).toContain("Raja Ampat");
+    expect(result.assistantContent.endsWith("Which way are you leaning?")).toBe(true);
+    expect(result.bluepassMatches).toEqual([]);
+    expect(result.suggestedReplies).toEqual(["Komodo", "Raja Ampat"]);
+  });
+
+  it("shows the boats once the traveller gives Kai something to narrow by", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "July, just the two of us",
+      priorTravellerMessages: ["I'm planning a trip to Komodo"],
+      lastAssistantMessage: "Komodo is a good call. When are you thinking of going?"
+    });
+
+    expect(result.bluepassMatches.length).toBeGreaterThan(0);
+    expect(result.assistantContent).toContain("For the two of you");
+    expect(result.assistantContent).not.toContain("When are you thinking of going?");
+    expect(result.assistantContent.split("?").length - 1).toBe(1);
+  });
+
+  it("keeps talking when it only knows one thing about the trip", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "probably August",
+      priorTravellerMessages: ["I'm planning a trip to Komodo"],
+      lastAssistantMessage: "Komodo is a good call. When are you thinking of going?"
+    });
+
+    expect(result.assistantContent).toContain("How many of you are going?");
+    expect(result.assistantContent).not.toContain("https://");
+    expect(result.bluepassMatches).toEqual([]);
+  });
+
+  // Kai had one turn of memory, so three turns later "anything else?" cheerfully showed the same
+  // boats again. It now skips every boat it has put in front of this traveller.
+  it("remembers every boat it has shown, not just the last message", async () => {
+    const firstReply = [
+      "Here's what I'd put in front of you in Komodo:",
+      "1. Alila Purnama - Legend in Komodo.",
+      "2. Alexa - Premium in Komodo.",
+      "3. Calico Jack - Premium in Komodo."
+    ].join("\n");
+
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "anything else?",
+      priorTravellerMessages: ["liveaboards in komodo", "tell me about Dunia Baru"],
+      lastAssistantMessage: "Dunia Baru is a Legend phinisi in Komodo, with room for up to 14 guests across 7 cabins.",
+      priorAssistantMessages: [firstReply]
+    });
+
+    const shownNames = result.bluepassMatches.map((match) => match.name);
+    expect(shownNames.length).toBeGreaterThan(0);
+    for (const name of ["Alila Purnama", "Alexa", "Calico Jack", "Dunia Baru"]) {
+      expect(shownNames).not.toContain(name);
+    }
+    expect(result.assistantContent).toContain("Here's what else BluePass has in Komodo:");
+  });
+
+  it("shows boats they have not seen when they ask what else there is", async () => {
+    const tenantId = `tenant_${randomUUID()}`;
+    const conversationId = `conversation_${randomUUID()}`;
+
+    const first = await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: "liveaboards in komodo",
+      priorTravellerMessages: []
+    });
+
+    const second = await handleBluePassMarketplaceMessage({
+      tenantId,
+      conversationId,
+      content: "what else have you got?",
+      priorTravellerMessages: ["liveaboards in komodo"],
+      lastAssistantMessage: first.assistantContent
+    });
+
+    const firstNames = first.bluepassMatches.map((match) => match.name);
+    expect(second.bluepassMatches.length).toBeGreaterThan(0);
+    for (const name of second.bluepassMatches.map((match) => match.name)) {
+      expect(firstNames).not.toContain(name);
+    }
+  });
+
   it("answers Komodo browsing requests with recommendations instead of asking for contact details", async () => {
     const result = await handleBluePassMarketplaceMessage({
       tenantId: `tenant_${randomUUID()}`,
@@ -585,7 +701,7 @@ describe("handleBluePassMarketplaceMessage", () => {
 
     expect(result.bluepassInquiry).toBeNull();
     expect(result.assistantContent).toContain("Komodo");
-    expect(result.assistantContent).toContain("options");
+    expect(result.assistantContent).toContain(result.bluepassMatches[0].name);
     expect(result.assistantContent).not.toContain("name");
     expect(result.assistantContent).not.toContain("email");
     expect(result.assistantContent).not.toContain("phone");
@@ -899,7 +1015,7 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.bluepassMatches.map((match) => match.name)).toContain("Calico Jack");
     expect(result.bluepassInquiry).toBeNull();
     expect(result.bluepassDispatch).toBeNull();
-    expect(result.assistantContent).toContain("Here are a few good options");
+    expect(result.assistantContent).toContain("Here's what I'd put in front of you in Komodo");
     expect(result.assistantContent).not.toMatch(/\byour (?:name|email|phone number|WhatsApp number)\b/i);
     expect(result.assistantContent).not.toContain("email");
     expect(result.assistantContent).not.toContain("phone");
@@ -920,7 +1036,7 @@ describe("handleBluePassMarketplaceMessage", () => {
       content: "yachts in Komodo for 4 guests",
       priorTravellerMessages: []
     });
-    expect(first.assistantContent).toContain("Here are a few good options");
+    expect(first.assistantContent).toContain("Here's what I'd put in front of you in Komodo");
     expect(first.bluepassMatches.length).toBeGreaterThan(0);
 
     // Every Komodo preview yacht is well over USD 100/cabin - nothing should fit.
@@ -931,7 +1047,7 @@ describe("handleBluePassMarketplaceMessage", () => {
       priorTravellerMessages: ["yachts in Komodo for 4 guests"]
     });
 
-    expect(second.assistantContent).not.toContain("Here are a few good options");
+    expect(second.assistantContent).not.toContain("Here's what I'd put in front of you");
     expect(second.assistantContent).toContain("budget");
     expect(second.bluepassMatches).toEqual([]);
   });

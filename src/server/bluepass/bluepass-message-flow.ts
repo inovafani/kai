@@ -47,6 +47,11 @@ import {
   buildBluePassOpenQuestionReply,
   buildBluePassPriceObjectionReply,
   buildBluePassRecommendationReply,
+  buildBluePassDestinationInterestReply,
+  buildBluePassRegionChoiceReply,
+  bluePassQuestionSuggestedReplies,
+  isBluePassDestinationInterestReply,
+  isBluePassRegionChoiceReply,
   buildBluePassSeasonReply,
   buildBluePassEnquiryReminder,
   buildBluePassSmallTalkReply,
@@ -91,6 +96,8 @@ export type BluePassMarketplaceMessageInput = {
   routerClient?: BluePassRouterLlmClient | null;
   /** Kai's previous reply in this chat, so a reminder it just gave isn't repeated word for word. */
   lastAssistantMessage?: string | null;
+  /** Kai's own recent replies, so "what else have you got?" skips every boat it has already shown. */
+  priorAssistantMessages?: string[];
 };
 
 /**
@@ -554,6 +561,12 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     catalog
   );
   const missingFields = getMissingBluePassInquiryFields(intent);
+  // Boats Kai has put in front of this traveller already, anywhere in the chat.
+  const kaiHasShown = (name: string) =>
+    Boolean(input.lastAssistantMessage?.includes(name)) ||
+    (input.priorAssistantMessages ?? []).some((message) => message.includes(name));
+  // What Kai has been told, so every reply that ends in a question asks for what's still missing.
+  const knownTrip = { dateWindow: intent.dateWindow, guests: intent.guests, interests: intent.interests };
   const seasonDestination =
     (routerDecision?.action === "SEASON_QUESTION" ? routerDecision.seasonDestination : null) ?? regexSeasonDestination;
 
@@ -568,6 +581,66 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
     missingFields,
     knownRegions
   });
+
+  // Naming a place, or just saying they're planning something, starts a conversation: one useful
+  // fact and one question, not the catalogue. Travellers who have asked to see boats, here or
+  // earlier in the chat, or who have given Kai something to narrow by, still get the list.
+  if (action === "RECOMMENDATION" || action === "BROWSE_OPTIONS" || action === "TRAVEL_INSPIRATION") {
+    const askedToSeeOptions =
+      asksToSeeBluePassOptions(input.content) ||
+      input.priorTravellerMessages.some((message) => asksToSeeBluePassOptions(message));
+    // One detail isn't enough to pick well, so Kai asks for the next one. Two or more (August, four
+    // of us, diving, a budget) and the boats earn their place.
+    const narrowingSignals = [
+      intent.dateWindow,
+      intent.guests,
+      intent.budget,
+      intent.interests && intent.interests.length > 0 ? intent.interests : null
+    ].filter(Boolean).length;
+    const startingTripTalk = !askedToSeeOptions && narrowingSignals < 2 && isBluePassTripPlanningTalk(input.content);
+
+    if (
+      startingTripTalk &&
+      intent.destination &&
+      bluepassMatches.length > 0 &&
+      // Answering Kai's question moves the conversation on; saying nothing new doesn't, so Kai
+      // stops asking and shows the boats instead.
+      (narrowingSignals > 0 || !isBluePassDestinationInterestReply(input.lastAssistantMessage, intent.destination))
+    ) {
+      const destinationInterestReply = buildBluePassDestinationInterestReply({
+        destination: intent.destination,
+        known: knownTrip,
+        previousReply: input.lastAssistantMessage
+      });
+
+      return buildConciergeResponse(
+        persona,
+        destinationInterestReply,
+        [],
+        bluePassQuestionSuggestedReplies(destinationInterestReply) ?? showYachtsSuggestedReplies,
+        missingFields,
+        contactRequestYacht
+      );
+    }
+
+    // No place named yet either: the comparison that decides it beats a list from a region they
+    // haven't picked.
+    if (
+      startingTripTalk &&
+      !intent.destination &&
+      knownRegions.length > 1 &&
+      !isBluePassRegionChoiceReply(input.lastAssistantMessage)
+    ) {
+      return buildConciergeResponse(
+        persona,
+        buildBluePassRegionChoiceReply(knownRegions),
+        [],
+        knownRegions.slice(0, 3),
+        missingFields,
+        contactRequestYacht
+      );
+    }
+  }
 
   switch (action) {
     case "VALUE_QUESTION":
@@ -672,6 +745,21 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
         }
       }
 
+      // Anything Kai has already put in front of them in this chat, not just last turn: "what else
+      // have you got?" has to mean boats they haven't seen.
+      let showingSomethingNew = false;
+      if (isBluePassOtherOptionsRequest(input.content)) {
+        for (const yacht of searchBluePassYachts(
+          { destination: recommendationDestination ?? undefined },
+          catalog,
+          24
+        )) {
+          if (excludedYachtSlugs.has(yacht.slug) || !kaiHasShown(yacht.name)) continue;
+          excludedYachtSlugs.add(yacht.slug);
+          showingSomethingNew = true;
+        }
+      }
+
       const recommendationMatches = searchBluePassYachts(
         {
           destination: recommendationDestination,
@@ -688,12 +776,21 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
         .filter((match) => !excludedYachtSlugs.has(match.slug))
         .slice(0, 3);
 
+      // Kai showed this exact list last turn, so it moves the trip on instead of repeating itself.
+      const sameListLastTurn = recommendationMatches.every((match) =>
+        Boolean(input.lastAssistantMessage?.includes(match.name))
+      );
+
       return buildConciergeResponse(
         persona,
         buildBluePassRecommendationReply({
           destination: recommendationDestination,
           matches: recommendationMatches,
-          excludedYachtNames: excludedYachts.map((yacht) => yacht.name)
+          excludedYachtNames: excludedYachts.map((yacht) => yacht.name),
+          alreadyShown: recommendationMatches.length > 0 && sameListLastTurn,
+          showingSomethingNew: showingSomethingNew && recommendationMatches.length > 0,
+          known: knownTrip,
+          previousReply: input.lastAssistantMessage
         }),
         recommendationMatches,
         buildBrowsingSuggestedReplies(recommendationMatches),
@@ -742,7 +839,12 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
 
       return buildConciergeResponse(
         persona,
-        buildBluePassPriceObjectionReply({ matches: objectionMatches, destination: objectionDestination }),
+        buildBluePassPriceObjectionReply({
+          matches: objectionMatches,
+          destination: objectionDestination,
+          known: knownTrip,
+          previousReply: input.lastAssistantMessage
+        }),
         fittingMatches,
         fittingMatches.length > 0 ? buildBrowsingSuggestedReplies(fittingMatches) : showYachtsSuggestedReplies,
         missingFields,
@@ -774,7 +876,10 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
 
       return buildConciergeResponse(
         persona,
-        buildBluePassYachtOverviewReply(overviewMatch),
+        buildBluePassYachtOverviewReply(overviewMatch, {
+          known: knownTrip,
+          previousReply: input.lastAssistantMessage
+        }),
         [overviewMatch],
         [`Book ${overviewMatch.name}`, "Something else"],
         missingFields,
@@ -802,13 +907,30 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
       );
 
     case "BROWSE_OPTIONS": {
-      const browsingMatches = bluepassMatches.slice(0, 3);
+      // Same conversational rules as RECOMMENDATION: "what else have you got?" gets boats they
+      // haven't seen, and Kai never re-lists the same three word for word.
+      const wantsSomethingNew = isBluePassOtherOptionsRequest(input.content);
+      // The default search returns three, which is nothing to offer when they ask what else there
+      // is, so this looks deeper into the catalogue before answering.
+      const widerPool = wantsSomethingNew
+        ? searchBluePassYachts({ ...intent, budget: parseBluePassBudgetAmount(intent.budget) ?? undefined }, catalog, 12)
+        : bluepassMatches;
+      const unseen = widerPool.filter((match) => !kaiHasShown(match.name));
+      const browsingMatches = (wantsSomethingNew && unseen.length > 0 ? unseen : bluepassMatches).slice(0, 3);
+      const sameAsLastTurn =
+        browsingMatches.length > 0 &&
+        browsingMatches.every((match) => Boolean(input.lastAssistantMessage?.includes(match.name)));
 
       return buildConciergeResponse(
         persona,
         buildBluePassRecommendationReply({
           destination: intent.destination,
-          matches: browsingMatches
+          matches: browsingMatches,
+          showingSomethingNew: wantsSomethingNew && unseen.length > 0,
+          alreadyShown: sameAsLastTurn,
+          noMoreOptions: wantsSomethingNew && unseen.length === 0 && browsingMatches.length > 0,
+          known: knownTrip,
+          previousReply: input.lastAssistantMessage
         }),
         browsingMatches,
         buildBrowsingSuggestedReplies(browsingMatches),
@@ -1511,6 +1633,44 @@ function isBluePassYachtFollowUpInformationRequest(content: string) {
   );
 }
 
+// The other side of asksToSeeBluePassOptions: a traveller describing their trip ("we're planning
+// Komodo in the dry season") or just naming a place, rather than asking to browse. Naming a boat
+// noun ("liveaboards in komodo") is a search, so it is not this.
+function isBluePassTripPlanningTalk(content: string) {
+  const normalized = content.trim().toLowerCase();
+  if (asksToSeeBluePassOptions(normalized)) return false;
+  if (/\b(?:liveaboards?|yachts?|boats?|charters?)\b/.test(normalized)) {
+    return /\b(?:planning|thinking\s+(?:about|of)|want\s+to\s+go|keen\s+(?:on|to)|dreaming\s+of)\b/.test(
+      normalized
+    );
+  }
+
+  const words = normalized.replace(/[^a-z\s]/g, " ").trim().split(/\s+/).filter(Boolean);
+  // "Komodo", "Raja Ampat?", "komodo please" - a place and not much else.
+  if (words.length <= 3) return true;
+
+  return /\b(?:planning|thinking\s+(?:about|of)|want(?:ed)?\s+to\s+go|wanna\s+go|keen\s+(?:on|to)|heading\s+(?:to|over)|looking\s+at\s+going|hoping\s+to\s+(?:go|visit)|dreaming\s+of|interested\s+in\s+(?:going|visiting)|taking\s+(?:a|my|our)\s+(?:trip|holiday|break))\b/.test(
+    normalized
+  );
+}
+
+// RECOMMENDATION is also reached by "a trip to Komodo", which names a place without asking to see
+// anything. This is the narrower test: did the traveller actually ask for the catalogue?
+function asksToSeeBluePassOptions(content: string) {
+  const normalized = content.toLowerCase();
+  return (
+    /\b(?:recommend|recommendations?|suggest|suggestions?|options?|alternatives?)\b/.test(normalized) ||
+    /\b(?:anything else|something else|what else|another|other than|rather than|besides|instead of)\b/.test(
+      normalized
+    ) ||
+    /\b(?:show|see|send|list|compare|browse|pick|choose|find|got)\b[^.?!]{0,24}\b(?:liveaboards?|yachts?|boats?|trips?|charters?|availability)\b/.test(
+      normalized
+    ) ||
+    /\b(?:what|which|who)\b[^.?!]{0,24}\b(?:liveaboards?|yachts?|boats?|trips?|charters?)\b/.test(normalized) ||
+    /\b(?:what|which)\b[^.?!]{0,16}\b(?:you(?:'ve)?\s+(?:got|have)|do you have)\b/.test(normalized)
+  );
+}
+
 function isBluePassRecommendationRequest(content: string) {
   const normalized = content.toLowerCase();
   const asksForRecommendationOrAlternative =
@@ -1643,8 +1803,16 @@ function resolveRecommendationDestination(input: {
 }
 
 function isBluePassOtherOptionsRequest(content: string) {
-  return /\b(?:anything else|something else|another|other than|rather than|besides|instead of|those\s+\d+|the other ones)\b/i.test(
-    content
+  return (
+    /\b(?:anything else|something else|another|other than|rather than|besides|instead of|those\s+\d+|the other ones)\b/i.test(
+      content
+    ) ||
+    /\bany\s+others?\b/i.test(content) ||
+    /\b(?:show|see|got|have)\s+(?:me\s+)?(?:any\s+)?more\b/i.test(content) ||
+    /\bmore\s+(?:options|boats|yachts|liveaboards|choices)\b/i.test(content) ||
+    /\bwhat\s+else\s+(?:have|do|did)\s+(?:you|ya)\b/i.test(content) ||
+    /\bwhat\s+else\s+(?:is|'s|are)\s+(?:there|available|on|about)\b/i.test(content) ||
+    /\bwhat\s+else\s+(?:you|ya)\s+got\b/i.test(content)
   );
 }
 

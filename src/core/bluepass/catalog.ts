@@ -123,7 +123,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     tier: "Explorer",
     maxGuests: 8,
     cabins: 3,
-    priceSignal: "from USD 1,483 private charter signal",
+    priceSignal: "from USD 1,483",
     charterPriceSignal: "from USD 4,450 private charter",
     operatorId: "operator_anne_bonny",
     operatorName: "Anne Bonny",

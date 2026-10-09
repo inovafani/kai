@@ -1,6 +1,6 @@
 import type { BluePassRequiredInquiryField } from "./intent";
 import { resolveBluePassDisplayPrice, type BluePassYachtCard, type BluePassYachtCatalogItem } from "./catalog";
-import { buildDestinationComparison, buildDestinationSeasonNote } from "./destination-notes";
+import { buildDestinationComparison, buildDestinationSeasonNote, findDestinationNote } from "./destination-notes";
 import { bluePassVesselNoun, type BluePassMarket } from "./market";
 
 type BluePassYachtSummary = Pick<
@@ -122,7 +122,10 @@ const inquiryStatusUpdates: Record<string, string> = {
   CLOSED: "it's closed. If you'd like to start a new one, just tell me where and when."
 };
 
-export function buildBluePassYachtOverviewReply(yacht: BluePassYachtCard) {
+export function buildBluePassYachtOverviewReply(
+  yacht: BluePassYachtCard,
+  options?: { known?: BluePassKnownTrip; previousReply?: string | null }
+) {
   // kai-conversation-flow-notes.md item 12/14: one price (resolveBluePassDisplayPrice's pick), no
   // "Price signal:"/"Charter signal:" internal labels - the charter total only appears as a secondary
   // parenthetical when it's a genuinely different figure from the displayed price.
@@ -131,13 +134,138 @@ export function buildBluePassYachtOverviewReply(yacht: BluePassYachtCard) {
 
   const price = yacht.displayPrice ? ` ${capitalizeFirst(yacht.displayPrice)}.` : "";
 
-  return `${yacht.name} is ${articleFor(yacht.tier)} ${yacht.tier} ${bluePassVesselNoun(yacht.region)} in ${yacht.region}, with room for up to ${yacht.maxGuests} guests across ${countLabel(yacht.cabins, "cabin")}.${price}${charter} I can compare it with similar boats, or send the operator an enquiry to check real availability.`;
+  return `${yacht.name} is ${articleFor(yacht.tier)} ${yacht.tier} ${bluePassVesselNoun(yacht.region)} in ${yacht.region}, with room for up to ${yacht.maxGuests} guests across ${countLabel(yacht.cabins, "cabin")}.${price}${charter} ${overviewNextStep(options)}`;
+}
+
+// One question, then the honest next step: only the operator can say what's actually free.
+function overviewNextStep(options?: { known?: BluePassKnownTrip; previousReply?: string | null }) {
+  const ask = missingDetailQuestion(options?.known, options?.previousReply);
+
+  return ask
+    ? `${ask} Then I'll send the operator an enquiry to check what's free.`
+    : `Want me to send the operator an enquiry for ${describeDates(options?.known)} and check what's free?`;
+}
+
+/** What Kai has been told about the trip so far, so it asks for what's missing and never re-asks. */
+export interface BluePassKnownTrip {
+  dateWindow?: string | null;
+  guests?: number | null;
+  interests?: string[] | null;
+}
+
+const TRIP_DETAIL_QUESTIONS = {
+  dateWindow: "When are you thinking of going?",
+  guests: "How many of you are going?",
+  interests: "Are you more after the diving, or cruising the islands?"
+} as const;
+const LINE_UP_QUESTION = "Want me to line up what fits?";
+
+/**
+ * The one thing Kai still needs, asked on its own, in the order that narrows a trip fastest. A
+ * question the traveller has just skipped is not asked again word for word: Kai moves on.
+ */
+function missingDetailQuestion(known?: BluePassKnownTrip, previousReply?: string | null) {
+  const alreadyAsked = (question: string) => Boolean(previousReply?.includes(question));
+
+  if (!known?.dateWindow && !alreadyAsked(TRIP_DETAIL_QUESTIONS.dateWindow)) return TRIP_DETAIL_QUESTIONS.dateWindow;
+  if (!known?.guests && !alreadyAsked(TRIP_DETAIL_QUESTIONS.guests)) return TRIP_DETAIL_QUESTIONS.guests;
+  if (!known?.interests?.length && !alreadyAsked(TRIP_DETAIL_QUESTIONS.interests)) {
+    return TRIP_DETAIL_QUESTIONS.interests;
+  }
+
+  return null;
+}
+
+/** Chips that answer the question Kai just asked, where the answers are knowable. */
+export function bluePassQuestionSuggestedReplies(reply: string): string[] | null {
+  const trimmed = reply.trim();
+  if (trimmed.endsWith(TRIP_DETAIL_QUESTIONS.interests)) return ["Diving", "Cruising the islands"];
+  if (trimmed.endsWith(TRIP_DETAIL_QUESTIONS.guests)) return ["Just the two of us", "Four of us", "Six of us"];
+  return null;
+}
+
+/**
+ * True when Kai's previous message was this opener for the same place, so it asks the next thing
+ * instead of opening the same conversation twice.
+ */
+export function isBluePassDestinationInterestReply(text: string | null | undefined, destination: string) {
+  if (!text) return false;
+  const trimmed = text.trim();
+  const questions = [...Object.values(TRIP_DETAIL_QUESTIONS), LINE_UP_QUESTION];
+  if (!questions.some((question) => trimmed.endsWith(question))) return false;
+  const names = [destination, findDestinationNote(destination)?.displayName].filter(Boolean) as string[];
+  return names.some((name) => trimmed.toLowerCase().includes(name.toLowerCase()));
+}
+
+/**
+ * Naming a place is the start of a conversation, not a search query. Kai says something worth
+ * knowing about the place and asks the one thing that moves the trip forward, instead of answering
+ * "Komodo" with three boats, three prices and three links.
+ */
+export function buildBluePassDestinationInterestReply(input: {
+  destination: string;
+  /** What Kai already knows, so it asks for what's missing and never re-asks. */
+  known?: BluePassKnownTrip;
+  /** Kai's own last message, so it doesn't ask the same question twice in a row. */
+  previousReply?: string | null;
+}) {
+  const note = findDestinationNote(input.destination);
+  const place = note?.displayName ?? input.destination;
+  const hook = note ? firstSentence(note.season) : null;
+  const question = missingDetailQuestion(input.known, input.previousReply) ?? LINE_UP_QUESTION;
+
+  // Second time round, the traveller has already heard this. Kai just asks the next thing, the way
+  // a person would.
+  const alreadySaid =
+    input.previousReply?.includes(`${place} is a good call.`) || (hook ? input.previousReply?.includes(hook) : false);
+  if (alreadySaid) return question;
+
+  const opener = hook ? `${place} is a good call. ${hook}` : `${place} is a good call.`;
+
+  return `${opener} ${question}`;
+}
+
+const REGION_CHOICE_QUESTION = "Which way are you leaning?";
+
+export function isBluePassRegionChoiceReply(text: string | null | undefined) {
+  return Boolean(text?.trim().endsWith(REGION_CHOICE_QUESTION));
+}
+
+/**
+ * "Somewhere in Indonesia" is the start of a conversation too. Kai gives the one comparison that
+ * actually decides it and asks which way they're leaning, instead of listing boats in a place the
+ * traveller hasn't picked yet.
+ */
+export function buildBluePassRegionChoiceReply(regions: string[]) {
+  const places = Array.from(new Set(regions)).slice(0, 3);
+  const comparison = places.length > 1 ? buildDestinationComparison(places) : null;
+
+  if (comparison) return `${comparison} ${REGION_CHOICE_QUESTION}`;
+  if (places.length > 1) return `BluePass has boats in ${formatNaturalList(places)}. ${REGION_CHOICE_QUESTION}`;
+  if (places.length === 1) {
+    return `BluePass's boats are all in ${places[0]} for now. Is that the sort of trip you're after?`;
+  }
+
+  return "Where are you thinking of heading?";
+}
+
+function firstSentence(text: string) {
+  return text.split(/(?<=\.)\s/)[0];
 }
 
 export function buildBluePassRecommendationReply(input: {
   destination?: string;
   matches: BluePassYachtSummary[];
   excludedYachtNames?: string[];
+  /** Kai showed this same list last turn, so it moves on instead of repeating itself. */
+  alreadyShown?: boolean;
+  /** Kai has genuinely run out of boats to show for this search, so it says so. */
+  noMoreOptions?: boolean;
+  /** These are boats the traveller hasn't been shown yet, after asking what else there is. */
+  showingSomethingNew?: boolean;
+  known?: BluePassKnownTrip;
+  /** Kai's own last message, so it doesn't ask the same question twice in a row. */
+  previousReply?: string | null;
 }) {
   const destination = input.destination ? ` in ${input.destination}` : "";
   const excluded = input.excludedYachtNames?.length
@@ -146,15 +274,40 @@ export function buildBluePassRecommendationReply(input: {
   const matches = input.matches.slice(0, 3);
 
   if (matches.length === 0) {
-    return `Happy to help you find the right boat${destination}. Tell me when you're going, how many of you, and whether it's more diving or cruising, and I'll narrow it down.`;
+    // Asked for something other than what they've seen, and there is nothing else: say so.
+    if (input.excludedYachtNames?.length) {
+      return `Besides ${formatNaturalList(input.excludedYachtNames)}, that's everything BluePass has${destination} right now. Want me to look somewhere else?`;
+    }
+
+    // One question, not a form: the three-at-once version read like a booking screen.
+    const question =
+      missingDetailQuestion(input.known, input.previousReply) ??
+      "What matters most to you, and I'll find the closest fit?";
+    return `Happy to help you find the right boat${destination}. ${question}`;
   }
 
   const rows = formatYachtRows(matches);
-  const intro = input.destination
-    ? `Here are a few good options${destination}${excluded}:`
-    : `Here's what BluePass has in ${formatNaturalList(Array.from(new Set(matches.map((yacht) => yacht.region))))}${excluded}:`;
+  const regions = formatNaturalList(Array.from(new Set(matches.map((yacht) => yacht.region))));
+  const place = destination || ` in ${regions}`;
 
-  return `${intro}\n${rows}\n\nI can compare these, tell you who each one suits, or narrow it down by dates, group size, diving or cruising, and budget.`;
+  // The same boats are not sent again as a fresh list: the cards are already in the chat, so Kai
+  // says they're the same ones and moves the trip on.
+  if (input.alreadyShown && !input.noMoreOptions) {
+    return `Still the same ${countWord(matches.length)}${place}. ${nextStepQuestion(input.known, input.previousReply)}`;
+  }
+
+  // Never claims to be everything BluePass has unless it is.
+  const intro = input.noMoreOptions
+    ? `That's everything BluePass has${place} right now:`
+    : input.showingSomethingNew
+      ? `Here's what else BluePass has${place}:`
+      : input.destination
+        ? `Here's what I'd put in front of you${destination}${excluded}:`
+        : `Here's what BluePass has in ${regions}${excluded}:`;
+  // One steer and one question beats a menu of ways to continue.
+  const steer = matches.length > 1 ? `${pickReason(matches, input.known)} ` : "";
+
+  return `${intro}\n${rows}\n\n${steer}${nextStepQuestion(input.known, input.previousReply)}`;
 }
 
 // kai-conversation-flow-notes.md item 11: a traveller who objected to price ("way over budget, any
@@ -165,6 +318,8 @@ export function buildBluePassRecommendationReply(input: {
 export function buildBluePassPriceObjectionReply(input: {
   matches: (BluePassYachtSummary & { reasons?: string[] })[];
   destination?: string;
+  known?: BluePassKnownTrip;
+  previousReply?: string | null;
 }) {
   const destination = input.destination ? ` in ${input.destination}` : "";
   const fitting = input.matches.filter((yacht) => yacht.reasons?.includes("within budget")).slice(0, 3);
@@ -173,7 +328,7 @@ export function buildBluePassPriceObjectionReply(input: {
     return `Nothing${destination} fits that budget in the BluePass catalogue right now, and I'd rather be straight with you than stretch it. Happy to show you the full range anyway, or tell me what matters most and I'll find the closest fit.`;
   }
 
-  return `Here's what fits your budget${destination}:\n${formatYachtRows(fitting)}\n\nI can compare these or narrow it down by dates and group size.`;
+  return `Here's what fits your budget${destination}:\n${formatYachtRows(fitting)}\n\n${nextStepQuestion(input.known, input.previousReply)}`;
 }
 
 // Only seen word-for-word when the LLM is off or its rewrite is rejected; with the LLM on it is the
@@ -424,6 +579,50 @@ export function buildBluePassEnquiryReminder(input: {
   }
 
   return input.readyToSend ? `When you're ready, just say yes and I'll send your ${input.yachtName} enquiry to the operator.` : null;
+}
+
+// Kai's own steer, from what the catalogue actually says: the smallest boat for a couple, the one
+// with the most cabins for a group.
+function pickReason(matches: BluePassYachtSummary[], known?: BluePassKnownTrip) {
+  const smallest = [...matches].sort((a, b) => a.maxGuests - b.maxGuests)[0];
+  const largest = [...matches].sort((a, b) => b.maxGuests - a.maxGuests)[0];
+
+  // Once Kai knows the party size it gives one answer, not both sides of a choice already made,
+  // and it steers to the boat that actually fits rather than the biggest one in the list.
+  if (known?.guests) {
+    const guests = known.guests;
+    const fitting = matches.filter((yacht) => yacht.maxGuests >= guests);
+    const closest = [...(fitting.length > 0 ? fitting : matches)].sort((a, b) => a.maxGuests - b.maxGuests)[0];
+
+    if (guests <= 2) {
+      return closest.maxGuests <= 2
+        ? `For the two of you, ${closest.name} takes ${closest.maxGuests}, so you'd have it to yourselves.`
+        : `For the two of you I'd start with ${closest.name}, the smallest of these at ${closest.maxGuests} guests.`;
+    }
+
+    return `For ${guests} of you, ${closest.name} is the closest fit, up to ${closest.maxGuests} guests.`;
+  }
+
+  if (smallest.maxGuests <= 2 && smallest.name !== largest.name) {
+    return `If it's just the two of you, I'd take ${smallest.name}; for a group, ${largest.name}.`;
+  }
+
+  return `For a first liveaboard I'd start with ${largest.name}.`;
+}
+
+function nextStepQuestion(known?: BluePassKnownTrip, previousReply?: string | null) {
+  const missing = missingDetailQuestion(known, previousReply);
+  if (missing) return missing;
+
+  return `Which one takes your eye, and I'll put ${describeDates(known)} to the operator to check?`;
+}
+
+function describeDates(known?: BluePassKnownTrip) {
+  return known?.dateWindow && known.dateWindow.length <= 30 ? known.dateWindow : "your dates";
+}
+
+function countWord(count: number) {
+  return ["none", "one", "two", "three"][count] ?? `${count}`;
 }
 
 function formatYachtRows(matches: BluePassYachtSummary[]) {

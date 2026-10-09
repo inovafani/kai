@@ -164,7 +164,10 @@ export async function POST(request: NextRequest) {
       referral: body.referral ?? null,
       catalog: body.bluepassCatalog,
       routerClient: createBluePassRouterClient(process.env),
-      lastAssistantMessage: priorConversationMessages.filter((item) => item.role === "assistant").at(-1)?.content ?? null
+      lastAssistantMessage: priorConversationMessages.filter((item) => item.role === "assistant").at(-1)?.content ?? null,
+      priorAssistantMessages: priorConversationMessages
+        .filter((item) => item.role === "assistant")
+        .map((item) => item.content)
     });
     const shouldPolish = shouldPolishBluePassMarketplaceReply({
       persona: bluepassResult.persona,
