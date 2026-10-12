@@ -99,23 +99,36 @@ enum PmsBookingPaymentAttemptStatus {
   // refund is clean (funds were still held, no operator clawback needed). A CONFIRMED booking ends
   // up as either SETTLED (trip happened) or this (it didn't) - never both. Added 2026-08-10.
   CANCELLED_REFUNDED
+  // Native booking system only: the traveller has paid and the seats are held, and the operator now
+  // has until NativeBooking.operatorDeadlineAt to accept. No ledger entries exist yet; they are
+  // created on acceptance. Declined or unanswered ends in CONFIRM_FAILED_REFUNDED (a full refund,
+  // with the reason in failureReason). Added 2026-10-08.
+  AWAITING_OPERATOR
 }
 
 model Tenant {
-  id              String              @id @default(cuid())
-  slug            String              @unique
-  name            String
-  status          TenantStatus        @default(ACTIVE)
-  widgetPublicKey String              @unique
-  allowedOrigins  String[]
-  defaultLocale   String              @default("en")
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-  branding        TenantBranding?
-  config          TenantConfig?
-  integrations    TenantIntegration[]
-  conversations   Conversation[]
-  manualInquiries ManualInquiry[]
+  id                 String              @id @default(cuid())
+  slug               String              @unique
+  name               String
+  status             TenantStatus        @default(ACTIVE)
+  widgetPublicKey    String              @unique
+  allowedOrigins     String[]
+  defaultLocale      String              @default("en")
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  branding           TenantBranding?
+  config             TenantConfig?
+  integrations       TenantIntegration[]
+  conversations      Conversation[]
+  manualInquiries    ManualInquiry[]
+  // The BluePass operator profile this tenant was created for (one Kai tenant per operator). Makes
+  // tenant creation idempotent: asking twice for the same operator returns the same tenant.
+  externalOperatorId String?             @unique
+
+  nativeTrips      NativeTrip[]
+  nativeDepartures NativeDeparture[]
+  nativeBlackouts  NativeBlackout[]
+  nativeBookings   NativeBooking[]
 }
 
 model TenantBranding {
@@ -168,15 +181,15 @@ model TenantIntegration {
 }
 
 model Conversation {
-  id            String                  @id @default(cuid())
-  tenantId      String
-  controlMode   ConversationControlMode @default(AI)
-  channel       String
-  travellerId   String?
-  leadId        String?
+  id                String                  @id @default(cuid())
+  tenantId          String
+  controlMode       ConversationControlMode @default(AI)
+  channel           String
+  travellerId       String?
+  leadId            String?
   // E.164 digits (no "+") - set for WhatsApp-channel conversations so the webhook can find the
   // thread for an inbound sender, and so a Business-app human-takeover can be toggled per number.
-  whatsappPhone String?
+  whatsappPhone     String?
   // First-touch referral attribution, captured off the widget message payload's `referral` field
   // (see /api/widget/messages/route.ts) the first time it's present and these are still null -
   // durable per-conversation so it survives to checkout time regardless of how many turns later a
@@ -187,8 +200,8 @@ model Conversation {
   referralLinkId    String?
   referralCode      String?
   referralRole      String?
-  createdAt     DateTime                @default(now())
-  updatedAt     DateTime                @updatedAt
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @updatedAt
 
   tenant          Tenant                    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   messages        Message[]
@@ -578,4 +591,169 @@ model LlmUsageEvent {
   @@index([createdAt])
   @@index([tenantName, createdAt])
   @@index([callType, createdAt])
+}
+
+// ---------------------------------------------------------------------------------------------
+// BluePass native booking system (PmsProvider NATIVE): operators run their own trips, schedules
+// and seats on Kai instead of through Rezdy/FareHarbor. Everything is scoped by tenant, one Kai
+// tenant per operator. Local dates and times are plain strings ("2026-10-14", "09:00") evaluated in
+// the trip's IANA time zone, so a 9am sailing is 9am for everyone whatever the server clock says.
+// ---------------------------------------------------------------------------------------------
+
+enum NativeTripStatus {
+  DRAFT
+  PUBLISHED
+}
+
+enum NativeTicketKind {
+  TICKET
+  EXTRA
+}
+
+enum NativeDepartureStatus {
+  OPEN
+  CLOSED
+}
+
+enum NativeBookingStatus {
+  // Seats are reserved until holdExpiresAt, then free up on their own (no cleanup job).
+  HELD
+  // Paid, waiting for the operator to accept. Seats stay reserved. Decline or 24h of silence refunds.
+  WAITING_OPERATOR
+  CONFIRMED
+  DECLINED
+  CANCELLED
+  EXPIRED
+}
+
+model NativeTrip {
+  id              String           @id @default(cuid())
+  tenantId        String
+  title           String
+  description     String           @default("")
+  durationMinutes Int
+  meetingPoint    String           @default("")
+  photoUrls       String[]
+  currency        String
+  // IANA zone, e.g. "America/Barbados". Every local date/time on this trip is read in this zone.
+  timeZone        String
+  status          NativeTripStatus @default(DRAFT)
+  bookingMode     String           @default("AUTO_BOOKING")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  tenant      Tenant             @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ticketTypes NativeTicketType[]
+  schedules   NativeSchedule[]
+  departures  NativeDeparture[]
+  blackouts   NativeBlackout[]
+
+  @@index([tenantId, status])
+}
+
+model NativeTicketType {
+  id         String           @id @default(cuid())
+  tripId     String
+  label      String
+  priceCents Int
+  kind       NativeTicketKind @default(TICKET)
+  sortOrder  Int              @default(0)
+  active     Boolean          @default(true)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  trip NativeTrip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@unique([tripId, kind, label])
+}
+
+model NativeSchedule {
+  id         String   @id @default(cuid())
+  tripId     String
+  // 0 = Sunday ... 6 = Saturday, in the trip's time zone.
+  daysOfWeek Int[]
+  localTime  String
+  seats      Int
+  // Inclusive local dates ("yyyy-mm-dd"); null means open-ended.
+  validFrom  String?
+  validUntil String?
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  trip NativeTrip @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId])
+}
+
+// Created on demand the first time a date is asked about (see the native adapter), never by a job.
+// seats is a snapshot of the schedule at creation, so editing a schedule later cannot shrink a
+// departure that already has bookings. Seats left is never stored: it is seats minus the seats in
+// live bookings of this departure.
+model NativeDeparture {
+  id        String                @id @default(cuid())
+  tenantId  String
+  tripId    String
+  localDate String
+  localTime String
+  startsAt  DateTime
+  seats     Int
+  status    NativeDepartureStatus @default(OPEN)
+  createdAt DateTime              @default(now())
+  updatedAt DateTime              @updatedAt
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trip     NativeTrip      @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  bookings NativeBooking[]
+
+  @@unique([tripId, localDate, localTime])
+  @@index([tenantId, localDate])
+}
+
+model NativeBlackout {
+  id        String   @id @default(cuid())
+  tenantId  String
+  // Null blocks every trip of the tenant.
+  tripId    String?
+  fromDate  String
+  toDate    String
+  reason    String?
+  createdAt DateTime @default(now())
+
+  tenant Tenant      @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  trip   NativeTrip? @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, fromDate])
+}
+
+model NativeBooking {
+  id                 String              @id @default(cuid())
+  tenantId           String
+  departureId        String
+  seats              Int
+  ticketQuantities   Json
+  extraQuantities    Json?
+  travellerName      String
+  travellerEmail     String
+  travellerPhone     String?
+  totalCents         Int
+  currency           String
+  status             NativeBookingStatus @default(HELD)
+  holdExpiresAt      DateTime
+  // Filled in when the payment pipeline links the booking to its checkout attempt.
+  paymentAttemptId   String?             @unique
+  // When the operator accepted or declined, and the optional reason they gave.
+  // Set once, when the paid booking starts waiting for the operator. No answer by then refunds in full.
+  operatorDeadlineAt DateTime?
+  decidedAt          DateTime?
+  decisionNote       String?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  departure NativeDeparture @relation(fields: [departureId], references: [id], onDelete: Cascade)
+
+  @@index([departureId, status])
+  @@index([tenantId, status])
+  @@index([status, operatorDeadlineAt])
 }

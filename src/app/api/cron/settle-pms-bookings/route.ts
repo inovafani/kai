@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { runNativeOperatorExpirySweep, type NativeExpirySweepResult } from "@/server/payments/native-booking-decision";
 import { runSettlementSweep } from "@/server/payments/settlement-cron";
 
 export const runtime = "nodejs";
@@ -27,6 +28,14 @@ async function handleSettlementSweep(request: Request) {
   const startedAt = new Date();
   try {
     const result = await runSettlementSweep();
+    // Paid native bookings whose operator did not answer within 24 hours are refunded here too, on
+    // the same daily schedule (the hosting plan runs jobs once a day, so an unanswered booking is
+    // refunded within a day of its deadline, never earlier). A failure here must not hide the
+    // settlement result above, so it is reported inside the summary instead of thrown.
+    const nativeOperatorExpiry: NativeExpirySweepResult | { error: string } = await runNativeOperatorExpirySweep().catch((error) => ({
+      error: error instanceof Error ? error.message : String(error)
+    }));
+    const nativeProblem = "error" in nativeOperatorExpiry || nativeOperatorExpiry.skipped.length > 0;
     // Milestone 3.5: persist every run so a job that silently stops firing or starts failing leaves
     // a queryable trail (see CronRunLog's schema comment) - best-effort, never lets a logging hiccup
     // turn a real, already-succeeded sweep into an apparent failure.
@@ -34,14 +43,14 @@ async function handleSettlementSweep(request: Request) {
       .create({
         data: {
           jobName: JOB_NAME,
-          status: result.skipped.length > 0 ? "PARTIAL" : "SUCCESS",
-          summary: result as object,
+          status: result.skipped.length > 0 || nativeProblem ? "PARTIAL" : "SUCCESS",
+          summary: { ...result, nativeOperatorExpiry } as object,
           startedAt,
           finishedAt: new Date()
         }
       })
       .catch((error) => console.error("cron_run_log.write_failed", { jobName: JOB_NAME, error }));
-    return NextResponse.json({ ok: true, ...result });
+    return NextResponse.json({ ok: true, ...result, nativeOperatorExpiry });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     await prisma.cronRunLog

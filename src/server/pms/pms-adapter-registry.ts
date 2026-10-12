@@ -1,10 +1,12 @@
 import { FareHarborPmsAdapter } from "@/core/pms/fareharbor-pms-adapter";
 import { InseanqPmsAdapter } from "@/core/pms/inseanq-pms-adapter";
 import { MockPmsAdapter, type MockPmsCatalog } from "@/core/pms/mock-pms-adapter";
+import { NativePmsAdapter } from "@/core/pms/native-pms-adapter";
 import { RezdyAgentPmsAdapter } from "@/core/pms/rezdy-agent-pms-adapter";
 import { RezdyPmsAdapter } from "@/core/pms/rezdy-pms-adapter";
 import type { PmsAdapter } from "@/core/pms/types";
 import type { PmsProvider } from "@/core/tenant/types";
+import { PrismaNativeStore } from "@/server/native/prisma-native-store";
 
 type Fetcher = typeof fetch;
 type PmsAdapterEnvironment = Record<string, string | undefined>;
@@ -82,6 +84,15 @@ export function getPmsAdapter(
       timeoutMs: readTimeout(env.INSEANQ_TIMEOUT_MS),
       fetcher
     });
+  }
+
+  if (provider === "NATIVE") {
+    // BluePass's own booking system. It reads trips and seats from Kai's database, scoped to this
+    // one tenant, so it needs the slug - every caller already passes it.
+    if (!tenantSlug) {
+      throw new Error("The NATIVE PMS adapter needs a tenant slug.");
+    }
+    return new NativePmsAdapter({ store: new PrismaNativeStore(tenantSlug) });
   }
 
   throw new Error(`PMS provider ${provider} is configured but no adapter shell exists yet.`);

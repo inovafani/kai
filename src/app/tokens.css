@@ -1,0 +1,300 @@
+/* ---------------------------------------------------------------------------
+ * Bluepass Design System — tokens
+ * Ported from _ds/bluepass-design-system-12358043-…/tokens/*.css
+ * Values are verbatim; only the font stacks are rewired to next/font variables.
+ * ------------------------------------------------------------------------- */
+
+/* tokens/colors.css */
+:root {
+  --color-primary: #ffffff;
+  --color-on-primary: #0a0a09;
+  --color-accent-blue: #0099ff;
+  --color-accent-blue-soft: rgba(0, 153, 255, 0.15);
+  --color-canvas: #0a0a09;
+  --color-surface-1: #1a1a18;
+  --color-surface-2: #242422;
+  --color-hairline: rgba(255, 255, 255, 0.12);
+  --color-hairline-soft: rgba(255, 255, 255, 0.06);
+  --color-inverse-canvas: #ffffff;
+  --color-ink: #ffffff;
+  --color-ink-muted: #999999;
+  --color-semantic-success: #22c55e;
+  --color-gradient-magenta: #ff2d95;
+  --color-gradient-violet: #7c3aed;
+  --color-gradient-orange: #ff7a30;
+  --color-gradient-coral: #ff6b6b;
+  --gradient-violet: linear-gradient(135deg, #5b21b6 0%, #a855f7 55%, #ec4899 100%);
+  --gradient-magenta: linear-gradient(135deg, #7c1d6f 0%, #e0299e 50%, #ff5fa8 100%);
+  --gradient-orange: linear-gradient(135deg, #7a2e0e 0%, #ff7a30 55%, #ffc55c 100%);
+  --gradient-coral: linear-gradient(135deg, #7a1f3d 0%, #ff5f7a 55%, #ff9f8f 100%);
+}
+
+/* tokens/fonts.css — families come from next/font (see app/layout.tsx) */
+:root {
+  --font-display: var(--font-geist), "GT Walsheim Medium Placeholder", -apple-system, sans-serif;
+  --font-body: var(--font-inter), "Inter", -apple-system, sans-serif;
+  --font-body-static: var(--font-inter), "Inter", -apple-system, sans-serif;
+  --font-feature-body: "cv01" 1, "cv05" 1, "cv09" 1, "cv11" 1, "ss03" 1, "ss07" 1, "dlig" 1;
+}
+
+/* tokens/typography.css */
+:root {
+  --type-display-xxl-size: 110px;
+  --type-display-xxl-weight: 500;
+  --type-display-xxl-lh: 0.85;
+  --type-display-xxl-ls: -5.5px;
+  --type-display-xxl-family: var(--font-display);
+
+  --type-display-xl-size: 85px;
+  --type-display-xl-weight: 500;
+  --type-display-xl-lh: 0.95;
+  --type-display-xl-ls: -4.25px;
+  --type-display-xl-family: var(--font-display);
+  --type-display-xl-feature: "ss02" 1;
+
+  --type-display-lg-size: 62px;
+  --type-display-lg-weight: 500;
+  --type-display-lg-lh: 1;
+  --type-display-lg-ls: -3.1px;
+  --type-display-lg-family: var(--font-display);
+  --type-display-lg-feature: "ss02" 1;
+
+  --type-display-md-size: 32px;
+  --type-display-md-weight: 500;
+  --type-display-md-lh: 1.13;
+  --type-display-md-ls: -1px;
+  --type-display-md-family: var(--font-display);
+
+  --type-headline-size: 22px;
+  --type-headline-weight: 700;
+  --type-headline-lh: 1.2;
+  --type-headline-ls: -0.8px;
+  --type-headline-family: var(--font-body-static);
+  --type-headline-feature: "cv05" 1;
+
+  --type-subhead-size: 24px;
+  --type-subhead-weight: 400;
+  --type-subhead-lh: 1.3;
+  --type-subhead-ls: -0.01px;
+  --type-subhead-family: var(--font-body);
+  --type-subhead-feature: "cv11" 1;
+
+  --type-body-lg-size: 18px;
+  --type-body-lg-weight: 400;
+  --type-body-lg-lh: 1.3;
+  --type-body-lg-ls: -0.18px;
+  --type-body-lg-family: var(--font-body);
+  --type-body-lg-feature: "cv11" 1;
+
+  --type-body-size: 15px;
+  --type-body-weight: 400;
+  --type-body-lh: 1.3;
+  --type-body-ls: -0.15px;
+  --type-body-family: var(--font-body);
+  --type-body-feature: "cv11" 1;
+
+  --type-body-sm-size: 14px;
+  --type-body-sm-weight: 500;
+  --type-body-sm-lh: 1.4;
+  --type-body-sm-ls: -0.14px;
+  --type-body-sm-family: var(--font-body);
+  --type-body-sm-feature: "cv11" 1;
+
+  --type-caption-size: 13px;
+  --type-caption-weight: 500;
+  --type-caption-lh: 1.2;
+  --type-caption-ls: -0.13px;
+  --type-caption-family: var(--font-body);
+  --type-caption-feature: "cv11" 1;
+
+  --type-micro-size: 12px;
+  --type-micro-weight: 400;
+  --type-micro-lh: 1.2;
+  --type-micro-ls: -0.12px;
+  --type-micro-family: var(--font-body);
+  --type-micro-feature: "cv11" 1;
+
+  --type-button-size: 14px;
+  --type-button-weight: 500;
+  --type-button-lh: 1;
+  --type-button-ls: -0.14px;
+  --type-button-family: var(--font-body);
+  --type-button-feature: "cv11" 1;
+}
+
+/* tokens/spacing.css */
+:root {
+  --space-hair: 1px;
+  --space-xxs: 4px;
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 15px;
+  --space-lg: 20px;
+  --space-xl: 30px;
+  --space-xxl: 40px;
+  --space-section: 96px;
+}
+
+/* tokens/radius.css */
+:root {
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 15px;
+  --radius-xl: 20px;
+  --radius-xxl: 30px;
+  --radius-pill: 100px;
+  --radius-full: 9999px;
+}
+
+/* tokens/shadow.css */
+:root {
+  --shadow-0: none;
+  --shadow-1: none;
+  --shadow-2: inset 0 0.5px 0 rgba(255, 255, 255, 0.1), 0 10px 30px rgba(0, 0, 0, 0.25);
+  --shadow-3: 0 0 0 1px rgba(0, 153, 255, 0.15);
+  --shadow-outline-active: 0 0 0 2px rgba(0, 0, 0, 0.9);
+}
+
+/* tokens/base.css — utility type classes */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  font-feature-settings: var(--font-feature-body);
+  font-variant-numeric: tabular-nums;
+  margin: 0;
+}
+
+a {
+  color: var(--color-accent-blue);
+  text-decoration: none;
+}
+
+a:hover {
+  color: #4db8ff;
+  text-decoration: underline;
+}
+
+.ds-display-xxl {
+  font-family: var(--type-display-xxl-family);
+  font-size: var(--type-display-xxl-size);
+  font-weight: var(--type-display-xxl-weight);
+  line-height: var(--type-display-xxl-lh);
+  letter-spacing: var(--type-display-xxl-ls);
+  color: var(--color-ink);
+  margin: 0;
+}
+
+.ds-display-xl {
+  font-family: var(--type-display-xl-family);
+  font-size: var(--type-display-xl-size);
+  font-weight: var(--type-display-xl-weight);
+  line-height: var(--type-display-xl-lh);
+  letter-spacing: var(--type-display-xl-ls);
+  font-feature-settings: var(--type-display-xl-feature);
+  color: var(--color-ink);
+  margin: 0;
+}
+
+.ds-display-lg {
+  font-family: var(--type-display-lg-family);
+  font-size: var(--type-display-lg-size);
+  font-weight: var(--type-display-lg-weight);
+  line-height: var(--type-display-lg-lh);
+  letter-spacing: var(--type-display-lg-ls);
+  font-feature-settings: var(--type-display-lg-feature);
+  color: var(--color-ink);
+  margin: 0;
+}
+
+.ds-display-md {
+  font-family: var(--type-display-md-family);
+  font-size: var(--type-display-md-size);
+  font-weight: var(--type-display-md-weight);
+  line-height: var(--type-display-md-lh);
+  letter-spacing: var(--type-display-md-ls);
+  color: var(--color-ink);
+  margin: 0;
+}
+
+.ds-headline {
+  font-family: var(--type-headline-family);
+  font-size: var(--type-headline-size);
+  font-weight: var(--type-headline-weight);
+  line-height: var(--type-headline-lh);
+  letter-spacing: var(--type-headline-ls);
+  font-feature-settings: var(--type-headline-feature);
+  color: var(--color-ink);
+  margin: 0;
+}
+
+.ds-subhead {
+  font-family: var(--type-subhead-family);
+  font-size: var(--type-subhead-size);
+  font-weight: var(--type-subhead-weight);
+  line-height: var(--type-subhead-lh);
+  letter-spacing: var(--type-subhead-ls);
+  font-feature-settings: var(--type-subhead-feature);
+  color: var(--color-ink);
+  margin: 0;
+}
+
+.ds-body-lg {
+  font-family: var(--type-body-lg-family);
+  font-size: var(--type-body-lg-size);
+  font-weight: var(--type-body-lg-weight);
+  line-height: var(--type-body-lg-lh);
+  letter-spacing: var(--type-body-lg-ls);
+  font-feature-settings: var(--type-body-lg-feature);
+  color: var(--color-ink);
+  margin: 0;
+}
+
+.ds-body {
+  font-family: var(--type-body-family);
+  font-size: var(--type-body-size);
+  font-weight: var(--type-body-weight);
+  line-height: var(--type-body-lh);
+  letter-spacing: var(--type-body-ls);
+  font-feature-settings: var(--type-body-feature);
+  color: var(--color-ink);
+  margin: 0;
+}
+
+.ds-body-sm {
+  font-family: var(--type-body-sm-family);
+  font-size: var(--type-body-sm-size);
+  font-weight: var(--type-body-sm-weight);
+  line-height: var(--type-body-sm-lh);
+  letter-spacing: var(--type-body-sm-ls);
+  font-feature-settings: var(--type-body-sm-feature);
+  color: var(--color-ink-muted);
+  margin: 0;
+}
+
+.ds-caption {
+  font-family: var(--type-caption-family);
+  font-size: var(--type-caption-size);
+  font-weight: var(--type-caption-weight);
+  line-height: var(--type-caption-lh);
+  letter-spacing: var(--type-caption-ls);
+  font-feature-settings: var(--type-caption-feature);
+  color: var(--color-ink-muted);
+  margin: 0;
+}
+
+.ds-micro {
+  font-family: var(--type-micro-family);
+  font-size: var(--type-micro-size);
+  font-weight: var(--type-micro-weight);
+  line-height: var(--type-micro-lh);
+  letter-spacing: var(--type-micro-ls);
+  font-feature-settings: var(--type-micro-feature);
+  color: var(--color-ink-muted);
+  margin: 0;
+}

@@ -29,6 +29,8 @@ const bluepassAuTenant = {
   // KaiWebChat -> /api/kai/web-chat -> this tenant), which sends an explicit origin header of
   // KAI_CORE_ORIGIN (bluepass.co) rather than relying on the browser's own request origin.
   allowedOrigins: [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
     "http://localhost:3107",
     "http://127.0.0.1:3107",
     "https://bluepass.co",

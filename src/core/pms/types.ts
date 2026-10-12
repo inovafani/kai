@@ -37,6 +37,8 @@ export interface PmsTimeOption {
 export interface PmsTicketOption {
   label: string;
   unitPriceCents: number;
+  /** ISO currency of unitPriceCents when the PMS knows it. Adapters that omit it are read as AUD. */
+  currency?: string;
 }
 
 export interface PmsTicketQuantity {
@@ -47,6 +49,7 @@ export interface PmsTicketQuantity {
 export interface PmsExtraOption {
   label: string;
   unitPriceCents: number;
+  currency?: string;
 }
 
 export interface PmsExtraQuantity {

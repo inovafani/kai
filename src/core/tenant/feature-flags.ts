@@ -16,3 +16,8 @@ export const WHATSAPP_GENERIC_ELIGIBLE_FEATURE = "whatsapp_generic_eligible";
 // demos or UX testing) purely by adding a Tenant row, without a fake operator ever being routable
 // via the shared number's explicit-match/sticky logic (see WHATSAPP_GENERIC_ELIGIBLE_FEATURE).
 export const AU_RECOMMENDATION_PLACEHOLDER_FEATURE = "au_recommendation_placeholder";
+
+// Marks a tenant whose chat should offer the trips BluePass resells as a FareHarbor affiliate or
+// Rezdy agent (the Australian chat on bluepass.co): Kai recommends them and hands over each trip's booking link
+// before the tenant's own booking flow runs. Off by default, so turning it on is a data change.
+export const AFFILIATE_CATALOG_FEATURE = "affiliate_catalog";

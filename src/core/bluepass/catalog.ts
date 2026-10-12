@@ -1,3 +1,4 @@
+import { isAffiliateBookingUrl } from "@/core/affiliate/affiliate-trips";
 import type { TruthPolicy } from "@/core/business-pack/types";
 
 export type BluePassYachtCard = {
@@ -28,6 +29,10 @@ export type BluePassYachtCatalogItem = Omit<BluePassYachtCard, "reasons" | "scor
   cabinBookable?: boolean;
   about?: string | null;
   departuresPreview?: string[];
+  /** Set for trips resold as a FareHarbor affiliate or Rezdy agent: travellers book them on that
+      platform's own page, so Kai hands over this link instead of starting an operator enquiry. */
+  bookingUrl?: string | null;
+  bookingPlatform?: "FAREHARBOR" | "REZDY" | null;
 };
 
 // kai-conversation-flow-notes.md item 12: the single source of truth for which price string to show
@@ -442,7 +447,10 @@ function normalizeBluePassCatalogSnapshot(catalogInput?: BluePassCatalogSnapshot
         interests: Array.isArray(item.interests) ? item.interests.filter(Boolean) : [],
         cabinBookable: item.cabinBookable,
         about: item.about ?? null,
-        departuresPreview: Array.isArray(item.departuresPreview) ? item.departuresPreview.filter(Boolean) : []
+        departuresPreview: Array.isArray(item.departuresPreview) ? item.departuresPreview.filter(Boolean) : [],
+        ...(isAffiliateBookingUrl(item.bookingPlatform, item.bookingUrl)
+          ? { bookingUrl: (item.bookingUrl as string).trim(), bookingPlatform: item.bookingPlatform }
+          : {})
       } satisfies BluePassYachtCatalogItem;
     })
     .filter((item): item is NonNullable<typeof item> => Boolean(item));

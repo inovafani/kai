@@ -23,7 +23,9 @@ import { handleBluePassMarketplaceMessage,
 import { composeBluePassMarketplaceAssistantReply } from "@/server/bluepass/bluepass-marketplace-reply-composer";
 import { shouldPolishBluePassMarketplaceReply } from "@/server/bluepass/bluepass-marketplace-reply-gate";
 import type { BluePassCatalogSnapshotItem } from "@/core/bluepass/catalog";
-import { WHATSAPP_GENERIC_ELIGIBLE_FEATURE } from "@/core/tenant/feature-flags";
+import { AFFILIATE_CATALOG_FEATURE, WHATSAPP_GENERIC_ELIGIBLE_FEATURE } from "@/core/tenant/feature-flags";
+import { buildAffiliateTurnReply, decideAffiliateTurn } from "@/core/affiliate/affiliate-trips";
+import { fetchAffiliateTrips } from "@/server/affiliate/affiliate-trips-client";
 import { resolveTenantBusinessPack } from "@/server/business-pack/resolve-tenant-business-pack";
 import { getWidgetRequestOrigin } from "@/server/widget/request-origin";
 import { resolveWidgetRequest } from "@/server/widget/resolve-widget-request";
@@ -297,6 +299,54 @@ export async function POST(request: NextRequest) {
     tenantId: resolved.tenant.id,
     conversationId: conversation.id
   });
+
+  // Trips BluePass resells as a FareHarbor affiliate or Rezdy agent (Australia). When the traveller
+  // names one, picks one from Kai's list, or asks to book or for ideas that match, Kai answers with
+  // the trip and its booking link and stops there: these are booked on the platform's own page, so
+  // nothing here checks availability, takes payment or starts an operator enquiry. Anything else
+  // carries on to the tenant's usual flow below.
+  if (resolved.tenant.config?.enabledFeatures?.includes(AFFILIATE_CATALOG_FEATURE)) {
+    const affiliateTrips = await fetchAffiliateTrips();
+    const turn = decideAffiliateTurn({
+      message: content,
+      trips: affiliateTrips,
+      lastAssistantMessage: [...priorConversationMessages].reverse().find((entry) => entry.role === "assistant")?.content ?? null
+    });
+
+    if (turn.kind !== "NONE") {
+      const message = await createTravellerMessage({
+        tenantId: resolved.tenant.id,
+        conversationId: conversation.id,
+        content
+      });
+      const assistantMessage = await createAssistantMessage({
+        tenantId: resolved.tenant.id,
+        conversationId: conversation.id,
+        content: buildAffiliateTurnReply(turn)
+      });
+
+      return NextResponse.json({
+        message: {
+          id: message.id,
+          tenantSlug: resolved.tenant.slug,
+          conversationId: message.conversationId,
+          role: message.role,
+          content: message.content
+        },
+        assistantMessage: {
+          id: assistantMessage.id,
+          tenantSlug: resolved.tenant.slug,
+          conversationId: assistantMessage.conversationId,
+          role: assistantMessage.role,
+          content: assistantMessage.content
+        },
+        manualInquiry: null,
+        paymentRequest: null,
+        contactRequest: null,
+        productCards: null
+      });
+    }
+  }
 
   // AU recommend-then-pick moment, mirrored from the WhatsApp side (au-operator-recommendation.ts):
   // scoped to widget tenants themselves flagged eligible for the shared recommendation (same flag

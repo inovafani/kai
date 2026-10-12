@@ -1,8 +1,7 @@
-import { cookies } from "next/headers";
-import Link from "next/link";
 import { notFound } from "next/navigation";
-import { submitAdminTokenAction } from "../../../inquiries/actions";
+import { AdminFrame, AdminGate, AdminHeader, Card, humanize, Pill } from "../../../admin-ui";
 import { setConversationControlModeAction } from "./actions";
+import { readAdminSession } from "@/server/admin/admin-session";
 import { findConversationTranscriptForTenantSlug } from "@/server/conversation/conversation-repository";
 
 export const dynamic = "force-dynamic";
@@ -24,44 +23,12 @@ function formatGuestCount(guests: number | null | undefined) {
   return guests === 1 ? "1 guest" : String(guests ?? "Unknown") + " guests";
 }
 
-function AdminAccess({ tenantSlug }: { tenantSlug: string }) {
-  return (
-    <main style={{ minHeight: "100dvh", display: "grid", placeItems: "center", background: "#f5f7f6", color: "#10201c", padding: 24 }}>
-      <section style={{ width: "min(100%, 420px)", border: "1px solid #dbe5e1", borderRadius: 8, background: "#ffffff", padding: 24 }}>
-        <p style={{ margin: 0, color: "#0f766e", fontSize: 13, fontWeight: 800 }}>Kai Admin</p>
-        <h1 style={{ margin: "8px 0 10px", fontSize: 30, lineHeight: 1.1 }}>Admin access</h1>
-        <p style={{ margin: "0 0 18px", color: "#53655f", lineHeight: 1.5 }}>Enter the local admin token to view conversation transcripts.</p>
-        <form action={submitAdminTokenAction} style={{ display: "grid", gap: 10 }}>
-          <input type="hidden" name="tenantSlug" value={tenantSlug} />
-          <label style={{ display: "grid", gap: 6, color: "#53655f", fontSize: 13, fontWeight: 700 }}>
-            Admin token
-            <input
-              name="token"
-              type="password"
-              autoComplete="current-password"
-              style={{ border: "1px solid #b8cbc5", borderRadius: 8, fontSize: 16, padding: "11px 12px" }}
-            />
-          </label>
-          <button
-            type="submit"
-            style={{ border: "1px solid #0f766e", borderRadius: 8, background: "#0f766e", color: "#ffffff", cursor: "pointer", fontSize: 15, fontWeight: 800, padding: "11px 12px" }}
-          >
-            Continue
-          </button>
-        </form>
-      </section>
-    </main>
-  );
-}
-
 export default async function AdminConversationPage({ params }: AdminConversationPageProps) {
   const { tenantSlug, conversationId } = await params;
-  const cookieStore = await cookies();
-  const adminToken = cookieStore.get("kai_admin_token")?.value;
-  const isAllowed = Boolean(process.env.KAI_ADMIN_TOKEN && adminToken === process.env.KAI_ADMIN_TOKEN);
+  const session = await readAdminSession();
 
-  if (!isAllowed) {
-    return <AdminAccess tenantSlug={tenantSlug} />;
+  if (!session.allowed) {
+    return <AdminGate tenantSlug={tenantSlug} purpose="Enter the admin token to view conversation transcripts." />;
   }
 
   const conversation = await findConversationTranscriptForTenantSlug({ tenantSlug, conversationId });
@@ -70,104 +37,123 @@ export default async function AdminConversationPage({ params }: AdminConversatio
   }
 
   const inquiry = conversation.manualInquiries[0];
+  const state = conversation.bookingState;
+  const traveller = [
+    inquiry?.travellerName ?? state?.travellerName,
+    inquiry?.travellerEmail ?? state?.travellerEmail,
+    inquiry?.travellerPhone ?? state?.travellerPhone
+  ].filter(Boolean);
+  const kaiHasChat = conversation.controlMode === "AI";
+  // Only WhatsApp honours a take-over (the website chat has no way for a person to reply).
+  const isWhatsApp = conversation.channel === "WHATSAPP";
 
   return (
-    <main style={{ minHeight: "100dvh", background: "#f5f7f6", color: "#10201c" }}>
-      <section style={{ borderBottom: "1px solid #dbe5e1", background: "#ffffff" }}>
-        <div style={{ width: "min(100%, 1120px)", margin: "0 auto", padding: "28px 24px" }}>
-          <p style={{ margin: 0, color: "#0f766e", fontSize: 13, fontWeight: 800 }}>Kai Admin · {conversation.tenant.name}</p>
-          <div style={{ display: "flex", alignItems: "end", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-            <h1 style={{ margin: "6px 0 0", fontSize: 32, lineHeight: 1.1 }}>Conversation transcript</h1>
-            <Link href={"/admin/" + tenantSlug + "/inquiries"} style={{ color: "#0f766e", fontWeight: 800, textDecoration: "none" }}>
-              Back to inquiries
-            </Link>
-          </div>
-        </div>
-      </section>
+    <AdminFrame active="inquiries" tenantSlug={tenantSlug}>
+      <AdminHeader
+        title="Conversation"
+        context={conversation.tenant.name}
+        support="The whole chat with this traveller, and whether Kai or a person is answering it."
+        actions={
+          <a href={"/admin/" + tenantSlug + "/inquiries"} className="adm-btn">
+            Back to inquiries
+          </a>
+        }
+      />
 
-      <section style={{ width: "min(100%, 1120px)", margin: "0 auto", padding: "22px 24px 56px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, marginBottom: 12 }}>
-          <section style={{ border: "1px solid #dbe5e1", borderRadius: 8, background: "#ffffff", padding: 16 }}>
-            <p style={{ margin: 0, color: "#62746e", fontSize: 13 }}>Booking state</p>
-            <h2 style={{ margin: "6px 0 10px", fontSize: 20 }}>{inquiry?.productTitle ?? conversation.bookingState?.productTitle ?? "Unknown product"}</h2>
-            <p style={{ margin: 0, color: "#53655f", lineHeight: 1.5 }}>
-              {(inquiry?.dateText ?? conversation.bookingState?.dateText ?? "Date unknown") + " · " + formatGuestCount(inquiry?.guests ?? conversation.bookingState?.guests)}
+      <div className="adm-stack adm-stack--lg">
+        <div className="adm-grid">
+          <Card title="Booking state">
+            <h3 className="ds-headline">{inquiry?.productTitle ?? state?.productTitle ?? "Unknown product"}</h3>
+            <p className="ds-body-sm" style={{ marginTop: 8 }}>
+              {(inquiry?.dateText ?? state?.dateText ?? "Date unknown") + " · " + formatGuestCount(inquiry?.guests ?? state?.guests)}
             </p>
-            {conversation.bookingState?.bookingStatus ? (
-              <p style={{ margin: "8px 0 0", color: "#0f766e", fontWeight: 800, lineHeight: 1.5 }}>
-                {conversation.bookingState.bookingStatus}
+            {state?.bookingStatus ? (
+              <div style={{ marginTop: 10 }}>
+                <Pill tone="live">{state.bookingStatus}</Pill>
+              </div>
+            ) : null}
+            {traveller.length > 0 ? (
+              <p className="ds-body-sm" style={{ marginTop: 10 }}>
+                {traveller.join(" · ")}
               </p>
             ) : null}
-            {inquiry?.travellerName || inquiry?.travellerEmail || inquiry?.travellerPhone || conversation.bookingState?.travellerName || conversation.bookingState?.travellerEmail || conversation.bookingState?.travellerPhone ? (
-              <p style={{ margin: "8px 0 0", color: "#53655f", lineHeight: 1.5 }}>
-                {[
-                  inquiry?.travellerName ?? conversation.bookingState?.travellerName,
-                  inquiry?.travellerEmail ?? conversation.bookingState?.travellerEmail,
-                  inquiry?.travellerPhone ?? conversation.bookingState?.travellerPhone
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
+            {state?.confirmationSummary ? (
+              <p className="ds-body-sm" style={{ marginTop: 10 }}>
+                {state.confirmationSummary}
               </p>
             ) : null}
-            {conversation.bookingState?.confirmationSummary ? (
-              <p style={{ margin: "8px 0 0", color: "#53655f", lineHeight: 1.5 }}>
-                {conversation.bookingState.confirmationSummary}
-              </p>
-            ) : null}
-          </section>
+          </Card>
 
-          <section style={{ border: "1px solid #dbe5e1", borderRadius: 8, background: "#ffffff", padding: 16 }}>
-            <p style={{ margin: 0, color: "#62746e", fontSize: 13 }}>Conversation</p>
-            <h2 style={{ margin: "6px 0 10px", fontSize: 20 }}>
-              {conversation.controlMode === "AI" ? "Kai is replying" : "A person has this chat"}
-            </h2>
-            <p style={{ margin: 0, color: "#53655f", lineHeight: 1.5 }}>
-              {conversation.channel} · {conversation.messages.length} messages
-              {conversation.controlMode === "AI" ? "" : " · Kai is staying quiet until it's handed back"}
-            </p>
-            <form action={setConversationControlModeAction} style={{ marginTop: 12 }}>
-              <input type="hidden" name="tenantSlug" value={tenantSlug} />
-              <input type="hidden" name="conversationId" value={conversationId} />
-              <input type="hidden" name="controlMode" value={conversation.controlMode === "AI" ? "HUMAN" : "AI"} />
-              <button
-                type="submit"
-                style={{ border: "1px solid #0f766e", borderRadius: 8, background: conversation.controlMode === "AI" ? "#ffffff" : "#0f766e", color: conversation.controlMode === "AI" ? "#0f766e" : "#ffffff", cursor: "pointer", fontSize: 14, fontWeight: 800, padding: "9px 12px" }}
-              >
-                {conversation.controlMode === "AI" ? "Take over this chat" : "Hand back to Kai"}
-              </button>
-            </form>
-          </section>
+          <Card title="Who has this chat">
+            {isWhatsApp ? (
+              <>
+                <div className="adm-row">
+                  <Pill tone={kaiHasChat ? "good" : "warn"}>{kaiHasChat ? "Kai is replying" : "A person has this chat"}</Pill>
+                </div>
+                <p className="ds-body-sm" style={{ marginTop: 10 }}>
+                  WhatsApp · {conversation.messages.length} messages
+                  {kaiHasChat ? "" : " · Kai stays quiet until it's handed back"}
+                </p>
+                <p className="ds-body-sm" style={{ marginTop: 6 }}>
+                  {kaiHasChat
+                    ? "Take over to answer this traveller yourself. Kai stops replying to them until you hand the chat back."
+                    : "Reply to the traveller yourself, then hand the chat back so Kai answers again."}
+                </p>
+                <form action={setConversationControlModeAction} style={{ marginTop: 14 }}>
+                  <input type="hidden" name="tenantSlug" value={tenantSlug} />
+                  <input type="hidden" name="conversationId" value={conversationId} />
+                  <input type="hidden" name="controlMode" value={kaiHasChat ? "HUMAN" : "AI"} />
+                  <button type="submit" className={kaiHasChat ? "adm-btn" : "adm-btn adm-btn--primary"}>
+                    {kaiHasChat ? "Take over this chat" : "Hand back to Kai"}
+                  </button>
+                </form>
+              </>
+            ) : (
+              <>
+                <div className="adm-row">
+                  <Pill tone="good">Kai is replying</Pill>
+                </div>
+                <p className="ds-body-sm" style={{ marginTop: 10 }}>
+                  Website chat · {conversation.messages.length} messages
+                </p>
+                <p className="ds-body-sm" style={{ marginTop: 6 }}>
+                  A website chat can&apos;t be taken over: there is no way to reply into it, so Kai always answers here.
+                  When a traveller asks for a person, Kai asks for their WhatsApp number and passes it to the team.
+                </p>
+                {!kaiHasChat ? (
+                  /* Left over from before this card only offered take-over on WhatsApp. The website chat
+                     ignores it either way; handing back just tidies the record. */
+                  <form action={setConversationControlModeAction} style={{ marginTop: 14 }}>
+                    <input type="hidden" name="tenantSlug" value={tenantSlug} />
+                    <input type="hidden" name="conversationId" value={conversationId} />
+                    <input type="hidden" name="controlMode" value="AI" />
+                    <button type="submit" className="adm-btn">
+                      Hand back to Kai
+                    </button>
+                  </form>
+                ) : null}
+              </>
+            )}
+          </Card>
         </div>
 
-        <section style={{ border: "1px solid #dbe5e1", borderRadius: 8, background: "#ffffff", padding: 18 }}>
-          <h2 style={{ margin: "0 0 14px", fontSize: 18 }}>Messages</h2>
-          <div style={{ display: "grid", gap: 12 }}>
+        <Card title="Messages">
+          <div className="adm-thread">
             {conversation.messages.map((message) => {
               const isTraveller = message.role === "TRAVELLER";
               return (
-                <article
-                  key={message.id}
-                  style={{
-                    justifySelf: isTraveller ? "end" : "start",
-                    maxWidth: "min(100%, 720px)",
-                    border: "1px solid " + (isTraveller ? "#0f766e" : "#dbe5e1"),
-                    borderRadius: 8,
-                    background: isTraveller ? "#0f766e" : "#f7faf9",
-                    color: isTraveller ? "#ffffff" : "#10201c",
-                    padding: 14
-                  }}
-                >
-                  <div style={{ display: "flex", gap: 10, justifyContent: "space-between", marginBottom: 8 }}>
-                    <strong style={{ fontSize: 12 }}>{message.role}</strong>
-                    <span style={{ fontSize: 12, opacity: 0.78 }}>{formatCreatedAt(message.createdAt)}</span>
+                <article key={message.id} className={isTraveller ? "adm-bubble adm-bubble--traveller" : "adm-bubble"}>
+                  <div className="adm-bubble__meta">
+                    <strong>{message.role === "TRAVELLER" ? "Traveller" : message.role === "ASSISTANT" ? "Kai" : humanize(message.role)}</strong>
+                    <span>{formatCreatedAt(message.createdAt)}</span>
                   </div>
-                  <p style={{ margin: 0, lineHeight: 1.55 }}>{message.content}</p>
+                  <p>{message.content}</p>
                 </article>
               );
             })}
           </div>
-        </section>
-      </section>
-    </main>
+        </Card>
+      </div>
+    </AdminFrame>
   );
 }

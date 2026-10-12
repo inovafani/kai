@@ -189,7 +189,7 @@ export async function buildTenantProductsHandoffReply(
   return (await buildTenantProductsHandoffCards(tenant, env, travellerMessage)).reply;
 }
 
-async function resolveBluePassConversationContext(phone: string, env: Record<string, string | undefined>) {
+export async function resolveBluePassConversationContext(phone: string, env: Record<string, string | undefined>) {
   const bluePassTenantSlug = env.WHATSAPP_BLUEPASS_TENANT_SLUG?.trim() || defaultBluePassTenantSlug;
   const bluePassTenant = await prisma.tenant.findFirst({ where: { slug: bluePassTenantSlug, status: "ACTIVE" } });
   if (!bluePassTenant) return null;

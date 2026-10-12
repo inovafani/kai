@@ -1,7 +1,7 @@
-import Link from "next/link";
-import { cookies } from "next/headers";
-import { submitAdminTokenAction, updateManualInquiryStatusAction } from "./actions";
+import { AdminFrame, AdminGate, AdminHeader, humanize, Pill, Stat } from "../admin-ui";
+import { updateManualInquiryStatusAction } from "./actions";
 import { toManualInquiryViewModel } from "./manual-inquiry-view-model";
+import { readAdminSession } from "@/server/admin/admin-session";
 import { listBluePassInquiriesForTenantSlug } from "@/server/bluepass/bluepass-inquiry-repository";
 import { listManualInquiriesForTenantSlug } from "@/server/conversation/conversation-repository";
 
@@ -23,38 +23,10 @@ function formatCents(amountCents: number, currency: string) {
 }
 
 export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: string }) {
-  const cookieStore = await cookies();
-  const adminToken = cookieStore.get("kai_admin_token")?.value;
-  const isAllowed = Boolean(process.env.KAI_ADMIN_TOKEN && adminToken === process.env.KAI_ADMIN_TOKEN);
+  const session = await readAdminSession();
 
-  if (!isAllowed) {
-    return (
-      <main style={{ minHeight: "100dvh", display: "grid", placeItems: "center", background: "#f5f7f6", color: "#10201c", padding: 24 }}>
-        <section style={{ width: "min(100%, 420px)", border: "1px solid #dbe5e1", borderRadius: 8, background: "#ffffff", padding: 24 }}>
-          <p style={{ margin: 0, color: "#0f766e", fontSize: 13, fontWeight: 800 }}>Kai Admin</p>
-          <h1 style={{ margin: "8px 0 10px", fontSize: 30, lineHeight: 1.1 }}>Admin access</h1>
-          <p style={{ margin: "0 0 18px", color: "#53655f", lineHeight: 1.5 }}>Enter the local admin token to view manual inquiries.</p>
-          <form action={submitAdminTokenAction} style={{ display: "grid", gap: 10 }}>
-            <input type="hidden" name="tenantSlug" value={tenantSlug} />
-            <label style={{ display: "grid", gap: 6, color: "#53655f", fontSize: 13, fontWeight: 700 }}>
-              Admin token
-              <input
-                name="token"
-                type="password"
-                autoComplete="current-password"
-                style={{ border: "1px solid #b8cbc5", borderRadius: 8, fontSize: 16, padding: "11px 12px" }}
-              />
-            </label>
-            <button
-              type="submit"
-              style={{ border: "1px solid #0f766e", borderRadius: 8, background: "#0f766e", color: "#ffffff", cursor: "pointer", fontSize: 15, fontWeight: 800, padding: "11px 12px" }}
-            >
-              Continue
-            </button>
-          </form>
-        </section>
-      </main>
-    );
+  if (!session.allowed) {
+    return <AdminGate tenantSlug={tenantSlug} purpose="Enter the admin token to view manual inquiries." />;
   }
 
   const [inquiries, bluePassInquiries] = await Promise.all([
@@ -66,323 +38,157 @@ export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: strin
   const tenantName = inquiries[0]?.tenant.name ?? bluePassInquiries[0]?.tenant.name ?? tenantSlug;
 
   return (
-    <main style={{ minHeight: "100dvh", background: "#f5f7f6", color: "#10201c" }}>
-      <section style={{ borderBottom: "1px solid #dbe5e1", background: "#ffffff" }}>
-        <div style={{ width: "min(100%, 1120px)", margin: "0 auto", padding: "28px 24px" }}>
-          <p style={{ margin: 0, color: "#0f766e", fontSize: 13, fontWeight: 800 }}>Kai Admin · {tenantName}</p>
-          <h1 style={{ margin: "6px 0 0", fontSize: 32, lineHeight: 1.1 }}>Manual inquiries</h1>
-        </div>
-      </section>
+    <AdminFrame active="inquiries" tenantSlug={tenantSlug}>
+      <AdminHeader
+        title="Inquiries"
+        context={tenantName}
+        support="Requests Kai could not finish on its own, and every BluePass marketplace request routed to this operator."
+      />
 
-      <section style={{ width: "min(100%, 1120px)", margin: "0 auto", padding: "22px 24px 56px" }}>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-            gap: 12,
-            marginBottom: 18
-          }}
-        >
-          <div style={{ border: "1px solid #dbe5e1", borderRadius: 8, background: "#ffffff", padding: 16 }}>
-            <p style={{ margin: 0, color: "#62746e", fontSize: 13 }}>Open</p>
-            <strong style={{ display: "block", marginTop: 6, fontSize: 28 }}>{openCount}</strong>
-          </div>
-          <div style={{ border: "1px solid #dbe5e1", borderRadius: 8, background: "#ffffff", padding: 16 }}>
-            <p style={{ margin: 0, color: "#62746e", fontSize: 13 }}>Total captured</p>
-            <strong style={{ display: "block", marginTop: 6, fontSize: 28 }}>{inquiries.length}</strong>
-          </div>
-          <div style={{ border: "1px solid #dbe5e1", borderRadius: 8, background: "#ffffff", padding: 16 }}>
-            <p style={{ margin: 0, color: "#62746e", fontSize: 13 }}>BluePass marketplace</p>
-            <strong style={{ display: "block", marginTop: 6, fontSize: 28 }}>{bluePassInquiries.length}</strong>
-          </div>
+      <div className="adm-stack adm-stack--lg">
+        <div className="adm-grid adm-grid--tight">
+          <Stat label="Open" value={openCount} hint="Waiting on a person" icon="inbox" />
+          <Stat label="All inquiries" value={inquiries.length} hint="Every request Kai handed over" icon="inquiries" />
+          <Stat label="BluePass marketplace" value={bluePassInquiries.length} hint="Requests from bluepass.co" icon="bookings" />
         </div>
 
         {bluePassInquiries.length > 0 ? (
-          <section style={{ display: "grid", gap: 10, marginBottom: 22 }}>
-            <h2 style={{ margin: "0 0 2px", fontSize: 22, lineHeight: 1.2 }}>BluePass marketplace inquiries</h2>
+          <section className="adm-stack">
+            <h2 className="ds-subhead">BluePass marketplace inquiries</h2>
             {bluePassInquiries.map((inquiry) => (
-              <article
-                key={inquiry.id}
-                style={{
-                  display: "grid",
-                  gap: 12,
-                  gridTemplateColumns: "minmax(0, 1fr) auto",
-                  border: "1px solid #c7d2fe",
-                  borderRadius: 8,
-                  background: "#ffffff",
-                  padding: 16
-                }}
-              >
+              <article key={inquiry.id} className="adm-card adm-inq">
                 <div style={{ minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <h3 style={{ margin: 0, fontSize: 18 }}>{inquiry.selectedYachtName ?? "BluePass inquiry"}</h3>
-                    <span
-                      style={{
-                        border: "1px solid #c7d2fe",
-                        borderRadius: 999,
-                        color: "#3730a3",
-                        fontSize: 12,
-                        fontWeight: 800,
-                        padding: "3px 8px"
-                      }}
-                    >
-                      {inquiry.status}
-                    </span>
-                    {inquiry.dispatches[0] ? (
-                      <span
-                        style={{
-                          border: "1px solid #9acbc4",
-                          borderRadius: 999,
-                          color: "#0f766e",
-                          fontSize: 12,
-                          fontWeight: 800,
-                          padding: "3px 8px"
-                        }}
-                      >
-                        {inquiry.dispatches[0].status}
-                      </span>
-                    ) : null}
+                  <div className="adm-row">
+                    <h3 className="ds-headline">{inquiry.selectedYachtName ?? "BluePass inquiry"}</h3>
+                    <Pill tone="live">{inquiry.status}</Pill>
+                    {inquiry.dispatches[0] ? <Pill tone="good">{inquiry.dispatches[0].status}</Pill> : null}
                   </div>
-                  <p style={{ margin: "8px 0 0", color: "#53655f" }}>
+                  <p className="ds-body-sm" style={{ marginTop: 8 }}>
                     {[inquiry.destination, inquiry.dateWindow, inquiry.guests ? `${inquiry.guests} guests` : null, inquiry.budget]
                       .filter(Boolean)
                       .join(" · ")}
                   </p>
-                  <p style={{ margin: "8px 0 0", color: "#53655f" }}>
+                  <p className="ds-body-sm" style={{ marginTop: 6 }}>
                     {[inquiry.travellerName, inquiry.travellerEmail, inquiry.travellerPhone].filter(Boolean).join(" · ")}
                   </p>
                   {inquiry.referralCode ? (
-                    <p style={{ margin: "8px 0 0", color: "#10201c", fontWeight: 800 }}>
+                    <p className="ds-body adm-strong" style={{ marginTop: 8 }}>
                       Referral: {inquiry.referralRole ? `${inquiry.referralRole} / ` : null}
                       {inquiry.referralCode}
                     </p>
                   ) : null}
                   {inquiry.ledger.length > 0 ? (
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-                        gap: 8,
-                        marginTop: 12
-                      }}
-                    >
+                    <div className="adm-grid adm-grid--tight" style={{ marginTop: 12 }}>
                       {inquiry.ledger.map((entry) => (
-                        <div key={entry.id} style={{ border: "1px solid #dbe5e1", borderRadius: 8, background: "#f7faf9", padding: 10 }}>
-                          <p style={{ margin: 0, color: "#53655f", fontSize: 12, fontWeight: 800 }}>{entry.kind}</p>
-                          <strong style={{ display: "block", marginTop: 4 }}>{formatCents(entry.amountCents, entry.currency)}</strong>
+                        <div key={entry.id} className="adm-inq__box" style={{ marginTop: 0 }}>
+                          <p className="ds-caption">{humanize(entry.kind)}</p>
+                          <strong className="ds-body adm-strong">{formatCents(entry.amountCents, entry.currency)}</strong>
                         </div>
                       ))}
                     </div>
                   ) : null}
-                  <p style={{ margin: "12px 0 0", color: "#10201c" }}>{inquiry.travellerMessage}</p>
+                  <p className="ds-body" style={{ marginTop: 12 }}>
+                    {inquiry.travellerMessage}
+                  </p>
                 </div>
-                <div
-                  style={{
-                    display: "grid",
-                    alignContent: "space-between",
-                    justifyItems: "end",
-                    gap: 10,
-                    color: "#62746e",
-                    fontSize: 13,
-                    textAlign: "right",
-                    whiteSpace: "nowrap"
-                  }}
-                >
-                  <span>{formatCreatedAt(inquiry.createdAt)}</span>
-                  <Link
-                    href={"/admin/" + tenantSlug + "/conversations/" + inquiry.conversationId}
-                    style={{
-                      border: "1px solid #b8cbc5",
-                      borderRadius: 8,
-                      background: "#ffffff",
-                      color: "#10201c",
-                      fontWeight: 700,
-                      padding: "8px 10px",
-                      textDecoration: "none"
-                    }}
-                  >
+                <div className="adm-inq__aside">
+                  <span className="ds-caption">{formatCreatedAt(inquiry.createdAt)}</span>
+                  <a href={"/admin/" + tenantSlug + "/conversations/" + inquiry.conversationId} className="adm-btn adm-btn--sm">
                     View conversation
-                  </Link>
+                  </a>
                 </div>
               </article>
             ))}
           </section>
         ) : null}
 
-        <div style={{ display: "grid", gap: 10 }}>
+        <section className="adm-stack">
+          <h2 className="ds-subhead">Manual inquiries</h2>
           {inquiries.length === 0 ? (
-            <div style={{ border: "1px solid #dbe5e1", borderRadius: 8, background: "#ffffff", padding: 18 }}>
-              No manual inquiries yet.
+            <div className="adm-card">
+              <p className="adm-empty">No manual inquiries yet.</p>
             </div>
           ) : (
-            inquiryCards.map((inquiry) => (
-              <article
-                key={inquiry.id}
-                style={{
-                  display: "grid",
-                  gap: 12,
-                  gridTemplateColumns: "minmax(0, 1fr) auto",
-                  border: "1px solid #dbe5e1",
-                  borderRadius: 8,
-                  background: "#ffffff",
-                  padding: 16
-                }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                    <h2 style={{ margin: 0, fontSize: 18 }}>{inquiry.productTitle}</h2>
-                    <span
-                      style={{
-                        border: "1px solid #9acbc4",
-                        borderRadius: 999,
-                        color: "#0f766e",
-                        fontSize: 12,
-                        fontWeight: 800,
-                        padding: "3px 8px"
-                      }}
-                    >
-                      {inquiry.status}
-                    </span>
-                    {inquiry.bookingStatus ? (
-                      <span
-                        style={{
-                          border: "1px solid " + (inquiry.bookingStatus === "FAILED" ? "#fecaca" : "#c7d2fe"),
-                          borderRadius: 999,
-                          color: inquiry.bookingStatus === "FAILED" ? "#b91c1c" : "#3730a3",
-                          fontSize: 12,
-                          fontWeight: 800,
-                          padding: "3px 8px"
-                        }}
-                      >
-                        {inquiry.bookingStatus}
-                      </span>
-                    ) : null}
-                  </div>
-                  <p style={{ margin: "8px 0 0", color: "#53655f" }}>{inquiry.requestLine}</p>
-                  {inquiry.customerLine ? (
-                    <p style={{ margin: "8px 0 0", color: "#53655f" }}>{inquiry.customerLine}</p>
-                  ) : null}
-                  {inquiry.externalBookingId ? (
-                    <p style={{ margin: "8px 0 0", color: "#10201c", fontWeight: 800 }}>
-                      {inquiry.externalProvider ?? "PMS"} order:{" "}
-                      <code
-                        title="Copy this order number exactly into Rezdy."
-                        style={{
-                          background: "#eef6f4",
-                          border: "1px solid #cfe0dc",
-                          borderRadius: 6,
-                          fontFamily: "ui-monospace, SFMono-Regular, Consolas, monospace",
-                          fontSize: 16,
-                          letterSpacing: 0,
-                          padding: "2px 5px",
-                          userSelect: "all"
-                        }}
-                      >
-                        {inquiry.externalBookingId}
-                      </code>
+            inquiryCards.map((inquiry) => {
+              const failed = inquiry.bookingStatus === "FAILED";
+              return (
+                <article key={inquiry.id} className="adm-card adm-inq">
+                  <div style={{ minWidth: 0 }}>
+                    <div className="adm-row">
+                      <h3 className="ds-headline">{inquiry.productTitle}</h3>
+                      <Pill tone="good">{inquiry.status}</Pill>
+                      {inquiry.bookingStatus ? <Pill tone={failed ? "bad" : "live"}>{inquiry.bookingStatus}</Pill> : null}
+                    </div>
+                    <p className="ds-body-sm" style={{ marginTop: 8 }}>
+                      {inquiry.requestLine}
                     </p>
-                  ) : null}
-                  <div
-                    style={{
-                      border: "1px solid " + (inquiry.bookingStatus === "FAILED" ? "#fecaca" : "#dbe5e1"),
-                      borderRadius: 8,
-                      background: inquiry.bookingStatus === "FAILED" ? "#fff7f7" : "#f7faf9",
-                      marginTop: 12,
-                      padding: 12
-                    }}
-                  >
-                    <p style={{ margin: 0, color: inquiry.bookingStatus === "FAILED" ? "#b91c1c" : "#0f766e", fontSize: 13, fontWeight: 800 }}>
-                      {inquiry.operatorReason}
-                    </p>
-                    {inquiry.confirmationSummary ? (
-                      <p style={{ margin: "8px 0 0", color: "#10201c", lineHeight: 1.45 }}>{inquiry.confirmationSummary}</p>
-                    ) : null}
-                    {inquiry.bookingError ? (
-                      <p style={{ margin: "8px 0 0", color: "#7f1d1d", lineHeight: 1.45 }}>
-                        PMS error: {inquiry.bookingError}
+                    {inquiry.customerLine ? (
+                      <p className="ds-body-sm" style={{ marginTop: 6 }}>
+                        {inquiry.customerLine}
                       </p>
                     ) : null}
-                    <p style={{ margin: "8px 0 0", color: "#53655f", lineHeight: 1.45 }}>{inquiry.operatorNextStep}</p>
-                  </div>
-                  <p style={{ margin: "12px 0 0", color: "#10201c" }}>{inquiry.travellerMessage}</p>
-                </div>
-                <div
-                  style={{
-                    display: "grid",
-                    alignContent: "space-between",
-                    justifyItems: "end",
-                    gap: 10,
-                    color: "#62746e",
-                    fontSize: 13,
-                    textAlign: "right",
-                    whiteSpace: "nowrap"
-                  }}
-                >
-                  <span>{formatCreatedAt(inquiry.createdAt)}</span>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "end" }}>
-                    <Link
-                      href={"/admin/" + tenantSlug + "/conversations/" + inquiry.conversationId}
-                      style={{
-                        border: "1px solid #b8cbc5",
-                        borderRadius: 8,
-                        background: "#ffffff",
-                        color: "#10201c",
-                        fontWeight: 700,
-                        padding: "8px 10px",
-                        textDecoration: "none"
-                      }}
-                    >
-                      View conversation
-                    </Link>
-                    {inquiry.status === "OPEN" ? (
-                      <form action={updateManualInquiryStatusAction}>
-                        <input type="hidden" name="tenantSlug" value={tenantSlug} />
-                        <input type="hidden" name="inquiryId" value={inquiry.id} />
-                        <input type="hidden" name="status" value="OPERATOR_NOTIFIED" />
-                        <button
-                          type="submit"
-                          style={{
-                            border: "1px solid #b8cbc5",
-                            borderRadius: 8,
-                            background: "#ffffff",
-                            color: "#10201c",
-                            cursor: "pointer",
-                            fontWeight: 700,
-                            padding: "8px 10px"
-                          }}
-                        >
-                          Mark notified
-                        </button>
-                      </form>
+                    {inquiry.externalBookingId ? (
+                      <p className="ds-body adm-strong" style={{ marginTop: 8 }}>
+                        {inquiry.externalProvider ?? "PMS"} order:{" "}
+                        <code title="Copy this order number exactly into the booking system." style={{ userSelect: "all" }}>
+                          {inquiry.externalBookingId}
+                        </code>
+                      </p>
                     ) : null}
-                    {inquiry.status !== "CLOSED" ? (
-                      <form action={updateManualInquiryStatusAction}>
-                        <input type="hidden" name="tenantSlug" value={tenantSlug} />
-                        <input type="hidden" name="inquiryId" value={inquiry.id} />
-                        <input type="hidden" name="status" value="CLOSED" />
-                        <button
-                          type="submit"
-                          style={{
-                            border: "1px solid #0f766e",
-                            borderRadius: 8,
-                            background: "#0f766e",
-                            color: "#ffffff",
-                            cursor: "pointer",
-                            fontWeight: 800,
-                            padding: "8px 10px"
-                          }}
-                        >
-                          Close
-                        </button>
-                      </form>
-                    ) : null}
+                    <div className={failed ? "adm-inq__box adm-inq__box--bad" : "adm-inq__box"}>
+                      <p className="ds-body adm-strong">{inquiry.operatorReason}</p>
+                      {inquiry.confirmationSummary ? (
+                        <p className="ds-body" style={{ marginTop: 8 }}>
+                          {inquiry.confirmationSummary}
+                        </p>
+                      ) : null}
+                      {inquiry.bookingError ? (
+                        <p className="ds-body-sm" style={{ marginTop: 8 }}>
+                          PMS error: {inquiry.bookingError}
+                        </p>
+                      ) : null}
+                      <p className="ds-body-sm" style={{ marginTop: 8 }}>
+                        {inquiry.operatorNextStep}
+                      </p>
+                    </div>
+                    <p className="ds-body" style={{ marginTop: 12 }}>
+                      {inquiry.travellerMessage}
+                    </p>
                   </div>
-                </div>
-              </article>
-            ))
+                  <div className="adm-inq__aside">
+                    <span className="ds-caption">{formatCreatedAt(inquiry.createdAt)}</span>
+                    <div className="adm-row" style={{ justifyContent: "flex-end" }}>
+                      <a href={"/admin/" + tenantSlug + "/conversations/" + inquiry.conversationId} className="adm-btn adm-btn--sm">
+                        View conversation
+                      </a>
+                      {inquiry.status === "OPEN" ? (
+                        <form action={updateManualInquiryStatusAction}>
+                          <input type="hidden" name="tenantSlug" value={tenantSlug} />
+                          <input type="hidden" name="inquiryId" value={inquiry.id} />
+                          <input type="hidden" name="status" value="OPERATOR_NOTIFIED" />
+                          <button type="submit" className="adm-btn adm-btn--sm">
+                            Mark notified
+                          </button>
+                        </form>
+                      ) : null}
+                      {inquiry.status !== "CLOSED" ? (
+                        <form action={updateManualInquiryStatusAction}>
+                          <input type="hidden" name="tenantSlug" value={tenantSlug} />
+                          <input type="hidden" name="inquiryId" value={inquiry.id} />
+                          <input type="hidden" name="status" value="CLOSED" />
+                          <button type="submit" className="adm-btn adm-btn--primary adm-btn--sm">
+                            Close
+                          </button>
+                        </form>
+                      ) : null}
+                    </div>
+                  </div>
+                </article>
+              );
+            })
           )}
-        </div>
-      </section>
-    </main>
+        </section>
+      </div>
+    </AdminFrame>
   );
 }

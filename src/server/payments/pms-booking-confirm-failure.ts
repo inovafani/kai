@@ -19,6 +19,17 @@ export async function handlePmsBookingConfirmFailureRefundAndAlert(
     attempt: PmsBookingPaymentAttempt;
     tenant: Tenant & { config: TenantConfig | null };
     confirmError: unknown;
+    /**
+     * Wording for refunds that are not "the PMS could not confirm" (a native operator declining, or
+     * not answering in time). Omitted, the original messages and operator alert below are used, so
+     * Rezdy and Boattime behave exactly as before. The refund itself is identical either way.
+     */
+    wording?: {
+      travellerRefunded: string;
+      travellerManualRefund: string;
+      /** Returns the operator alert text, or null to send none. */
+      operatorAlert: (refundSucceeded: boolean) => string | null;
+    };
   },
   deps: { stripeClient?: Stripe; env?: BluePassStripeEnv } = {}
 ): Promise<void> {
@@ -86,9 +97,13 @@ export async function handlePmsBookingConfirmFailureRefundAndAlert(
   await createAssistantMessage({
     tenantId: input.attempt.tenantId,
     conversationId: input.attempt.conversationId,
-    content: refundSucceeded
-      ? `I'm sorry - ${input.attempt.productTitle} on ${input.attempt.dateText} is no longer available, so your payment has been fully refunded. Nothing further is needed from you.`
-      : `I'm sorry - ${input.attempt.productTitle} on ${input.attempt.dateText} is no longer available. Your refund is being processed manually by our team; you'll hear from us shortly.`
+    content: input.wording
+      ? refundSucceeded
+        ? input.wording.travellerRefunded
+        : input.wording.travellerManualRefund
+      : refundSucceeded
+        ? `I'm sorry - ${input.attempt.productTitle} on ${input.attempt.dateText} is no longer available, so your payment has been fully refunded. Nothing further is needed from you.`
+        : `I'm sorry - ${input.attempt.productTitle} on ${input.attempt.dateText} is no longer available. Your refund is being processed manually by our team; you'll hear from us shortly.`
   });
 
   const adminPhone = input.tenant.config?.adminWhatsAppPhone?.trim() || env.BOATTIME_ADMIN_WHATSAPP_PHONE?.trim();
@@ -100,9 +115,14 @@ export async function handlePmsBookingConfirmFailureRefundAndAlert(
     return;
   }
 
-  const alertBody = refundSucceeded
+  const customAlert = input.wording ? input.wording.operatorAlert(refundSucceeded) : undefined;
+  if (customAlert === null) return;
+
+  const alertBody =
+    customAlert ??
+    (refundSucceeded
     ? `Kai alert: payment for ${input.attempt.productTitle} on ${input.attempt.dateText} (${input.attempt.guests} guests, ${input.attempt.travellerName}) succeeded but the booking could not be confirmed (${reason}). Traveller was auto-refunded. PMS hold reference: ${input.attempt.externalBookingId}.`
-    : `Kai URGENT: payment for ${input.attempt.productTitle} on ${input.attempt.dateText} (${input.attempt.guests} guests, ${input.attempt.travellerName}) succeeded but the booking could not be confirmed (${reason}), AND the automatic refund also FAILED. The traveller has been charged with no booking - please refund manually right away. PMS hold reference: ${input.attempt.externalBookingId}.`;
+    : `Kai URGENT: payment for ${input.attempt.productTitle} on ${input.attempt.dateText} (${input.attempt.guests} guests, ${input.attempt.travellerName}) succeeded but the booking could not be confirmed (${reason}), AND the automatic refund also FAILED. The traveller has been charged with no booking - please refund manually right away. PMS hold reference: ${input.attempt.externalBookingId}.`);
 
   await sendWhatsAppText({ to: adminPhone, role: "ops", body: alertBody });
   await prisma.pmsBookingPaymentAttempt.update({

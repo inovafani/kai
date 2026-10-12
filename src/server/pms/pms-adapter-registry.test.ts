@@ -1,12 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { MockPmsAdapter } from "@/core/pms/mock-pms-adapter";
 import { InseanqPmsAdapter } from "@/core/pms/inseanq-pms-adapter";
+import { NativePmsAdapter } from "@/core/pms/native-pms-adapter";
 import { RezdyPmsAdapter } from "@/core/pms/rezdy-pms-adapter";
 import { getPmsAdapter } from "./pms-adapter-registry";
 
 describe("PMS adapter registry", () => {
   it("returns the mock adapter for MOCK tenants", () => {
     expect(getPmsAdapter("MOCK")).toBeInstanceOf(MockPmsAdapter);
+  });
+
+  it("returns the native adapter for NATIVE tenants, scoped by tenant slug", () => {
+    expect(getPmsAdapter("NATIVE", {}, fetch, "some-operator")).toBeInstanceOf(NativePmsAdapter);
+  });
+
+  it("refuses a NATIVE adapter without a tenant slug, so it can never read another operator's trips", () => {
+    expect(() => getPmsAdapter("NATIVE")).toThrow("tenant slug");
   });
 
   it("returns a fail-closed Rezdy adapter shell", () => {

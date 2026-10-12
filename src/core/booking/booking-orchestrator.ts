@@ -453,6 +453,17 @@ function stripEmbeddedPriceFromLabel(label: string) {
     .trim();
 }
 
+// The currency a remembered set of options is priced in. Adapters that know it (the native booking
+// system) stamp it on each option; the Rezdy adapters do not, and every Rezdy tenant is Australian,
+// so the fallback is AUD, which is what this flow always assumed.
+function optionsCurrency(...lists: (ReadonlyArray<{ currency?: string }> | null | undefined)[]) {
+  for (const list of lists) {
+    const found = list?.find((option) => option.currency)?.currency;
+    if (found) return found;
+  }
+  return "AUD";
+}
+
 function formatTicketOptionsList(options: PmsTicketOption[], currency: string) {
   return formatNumberedList(
     options.map(
@@ -1750,7 +1761,7 @@ async function handleTravellerBookingMessageInner(
             input.bookingMemory?.guests === 1 ? "" : "s"
           }.\n\nTicket options:\n${formatTicketOptionsList(
             rememberedTicketOptions,
-            "AUD"
+            optionsCurrency(rememberedTicketOptions)
           )}\n\nWhich ticket suits? Just say "option 2" or "${optionExample(rememberedTicketOptions)}".`,
           replySource: "DETERMINISTIC",
           bookingStatePatch: timeStatePatch
@@ -1842,7 +1853,7 @@ async function handleTravellerBookingMessageInner(
             parsedTicketQuantities
           )}.\n\nOptional extras:\n${formatExtraOptionsList(
             extraOptions,
-            "AUD"
+            optionsCurrency(extraOptions, ticketOptions)
           )}\n\nWant to add any? Just say "no extras" or "${optionExample(extraOptions)}".`,
           replySource: "DETERMINISTIC",
           bookingStatePatch: ticketStatePatch
@@ -1893,7 +1904,7 @@ async function handleTravellerBookingMessageInner(
           input.bookingMemory?.guests === 1 ? "" : "s"
         }.\n\nTicket options:\n${formatTicketOptionsList(
           ticketOptions,
-          "AUD"
+          optionsCurrency(ticketOptions)
         )}\n\nWhich ticket suits, and how many?`,
         replySource: "DETERMINISTIC",
         bookingStatePatch: correctedTimeStatePatch
@@ -1912,7 +1923,7 @@ async function handleTravellerBookingMessageInner(
           input.bookingMemory?.guests === 1 ? "person" : "people"
         }:\n${formatTicketOptionsList(
           ticketOptions,
-          "AUD"
+          optionsCurrency(ticketOptions)
         )}\n\nWhich would you like? For example, "1 x 2 people" or "2 adults".`,
         replySource: "DETERMINISTIC"
       };
@@ -1960,7 +1971,7 @@ async function handleTravellerBookingMessageInner(
       action: "BOOKING_EXTRAS_SELECTION_REQUIRED",
       reply: `Optional extras:\n${formatExtraOptionsList(
         extraOptions,
-        "AUD"
+        optionsCurrency(extraOptions, input.bookingMemory?.ticketOptions)
       )}\n\nWant to add any? Just say "no extras" or "${optionExample(extraOptions)}".`,
       replySource: "DETERMINISTIC"
     };
@@ -2169,7 +2180,7 @@ async function handleTravellerBookingMessageInner(
               ticketQuantities: pricing.resolvedTicketQuantities,
               extraQuantities: readyState.extraQuantities ?? null,
               grossAmountCents: pricing.grossAmountCents,
-              currency: "AUD"
+              currency: optionsCurrency(readyState.ticketOptions, readyState.extraOptions)
             };
 
             return {

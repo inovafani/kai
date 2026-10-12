@@ -28,7 +28,7 @@ function normalizeTicketOptions(value: Prisma.JsonValue): PmsTicketOption[] | nu
       if (!item || typeof item !== "object" || Array.isArray(item)) return null;
       const record = item as Record<string, unknown>;
       return typeof record.label === "string" && typeof record.unitPriceCents === "number"
-        ? { label: record.label, unitPriceCents: record.unitPriceCents }
+        ? { label: record.label, unitPriceCents: record.unitPriceCents, ...(typeof record.currency === "string" ? { currency: record.currency } : {}) }
         : null;
     })
     .filter((item): item is PmsTicketOption => Boolean(item));
@@ -84,7 +84,7 @@ function normalizeExtraOptions(value: Prisma.JsonValue): PmsExtraOption[] | null
       if (!item || typeof item !== "object" || Array.isArray(item)) return null;
       const record = item as Record<string, unknown>;
       return typeof record.label === "string" && typeof record.unitPriceCents === "number"
-        ? { label: record.label, unitPriceCents: record.unitPriceCents }
+        ? { label: record.label, unitPriceCents: record.unitPriceCents, ...(typeof record.currency === "string" ? { currency: record.currency } : {}) }
         : null;
     })
     .filter((item): item is PmsExtraOption => Boolean(item));

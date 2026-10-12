@@ -1,3 +1,4 @@
+import { buildAffiliateTripReply } from "@/core/affiliate/affiliate-trips";
 import { buildEmergencyReply, isEmergencyMessage } from "@/core/conversation/emergency";
 import {
   buildCallbackNumberThanksReply,
@@ -299,6 +300,39 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
   // details: a vague follow-up right after Kai already asked for name/email/phone shouldn't make the
   // contact form disappear. Falls back to the same recency signal overviewYacht already uses.
   const contactRequestYacht = selectedYacht ?? historyMentionedYachts[0] ?? null;
+
+  // A trip BluePass resells as a FareHarbor affiliate or Rezdy agent is booked on that platform's
+  // own page. When the traveller names it, or asks to book it, hand over the link and stop: never
+  // collect details for an operator enquiry or promise availability Kai cannot see.
+  const affiliateTrip = latestMentionedYachts[0]?.bookingUrl
+    ? latestMentionedYachts[0]
+    : selectedYacht?.bookingUrl && (hasBluePassBookingLanguage(input.content) || isBluePassInquirySubmissionRequest(input.content))
+      ? selectedYacht
+      : null;
+  if (affiliateTrip?.bookingUrl && affiliateTrip.bookingPlatform) {
+    return {
+      replyMode: "ACTION" as const,
+      persona: classifyBluePassPersona([...input.priorTravellerMessages, input.content]),
+      assistantContent: buildAffiliateTripReply({
+        slug: affiliateTrip.slug,
+        title: affiliateTrip.name,
+        operatorName: affiliateTrip.operatorName,
+        region: affiliateTrip.region,
+        category: affiliateTrip.tier,
+        description: affiliateTrip.about ?? "",
+        priceSignal: affiliateTrip.priceSignal && affiliateTrip.priceSignal !== "Quote on request" ? affiliateTrip.priceSignal : null,
+        bookingPlatform: affiliateTrip.bookingPlatform,
+        bookingUrl: affiliateTrip.bookingUrl
+      }),
+      bluepassMatches: [],
+      bluepassInquiry: null,
+      bluepassLedger: [],
+      bluepassDispatch: null,
+      paymentRequest: null,
+      contactRequest: null,
+      suggestedReplies: null
+    };
+  }
   const regexIntent = mergeBluePassInquiryIntent(historyIntent, {
     ...messageIntent,
     destination: messageIntent.destination ?? (selectedYacht ? selectedYacht.region : undefined),
@@ -1020,7 +1054,8 @@ function buildConciergeResponse(
     bluepassDispatch: null,
     paymentRequest: null,
     contactRequest:
-      selectedYacht && missingContactFields.length > 0
+      // A resold trip is booked on its platform's page, so there are no details for Kai to collect.
+      selectedYacht && !selectedYacht.bookingUrl && missingContactFields.length > 0
         ? {
             status: "CONTACT_DETAILS_REQUIRED" as const,
             fields: getContactRequestFields(missingContactFields)

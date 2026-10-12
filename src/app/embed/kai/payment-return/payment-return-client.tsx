@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 type AttemptStatus =
   | "AWAITING_PAYMENT"
   | "PAID_AWAITING_CONFIRM"
+  | "AWAITING_OPERATOR"
   | "CONFIRMED"
   | "PAYMENT_FAILED"
   | "CONFIRM_FAILED_REFUNDED"
@@ -34,6 +35,13 @@ function describeStatus(attempt: Attempt): { title: string; body: string } {
         body: `Payment received - your booking for ${attempt.productTitle} on ${attempt.dateText} for ${attempt.guests} guest${
           attempt.guests === 1 ? "" : "s"
         } is confirmed. Booking reference: ${attempt.externalBookingId}.`
+      };
+    case "AWAITING_OPERATOR":
+      return {
+        title: "Payment received",
+        body: `Your seats for ${attempt.productTitle} on ${attempt.dateText} for ${attempt.guests} guest${
+          attempt.guests === 1 ? "" : "s"
+        } are held. The operator has 24 hours to accept. If they can't take you, you're refunded in full automatically. Reference: ${attempt.externalBookingId}.`
       };
     case "CONFIRM_FAILED_REFUNDED":
       return {

@@ -9,6 +9,7 @@ import type { GenericBookingTurnTenant } from "@/server/booking/generic-booking-
 import { normalizeLocalPhone } from "@/server/phone/normalize-local-phone";
 import { getPmsAdapter } from "@/server/pms/pms-adapter-registry";
 import { resolveTenantPmsEnv } from "@/server/pms/tenant-pms-credentials";
+import { resolveWhatsAppAffiliateTurn } from "@/server/whatsapp/affiliate-whatsapp";
 import {
   resolveAuOperatorRecommendationPick,
   triggerAuOperatorRecommendation
@@ -217,11 +218,20 @@ export async function resolveWhatsAppTenantForMessage(
   const pick = await resolveAuOperatorRecommendationPick(input, env, eligibleTenants);
   if (pick.kind !== "NONE") return pick;
 
+  // A trip BluePass resells, named by its title or picked from Kai's own list: answered with its
+  // booking link before any operator conversation can claim the message (see affiliate-whatsapp.ts).
+  const affiliateNamed = await resolveWhatsAppAffiliateTurn(input, "STRICT", env);
+  if (affiliateNamed.kind !== "NONE") return affiliateNamed;
+
   const explicitMatch = await resolveWhatsAppGenericTenant(input.messageText, env, eligibleTenants);
   if (explicitMatch) return { kind: "TENANT", tenant: explicitMatch.tenant };
 
   const sticky = await resolveStickyWhatsAppGenericTenant(input.fromPhone, env, eligibleTenants);
   if (sticky) return { kind: "TENANT", tenant: sticky.tenant };
+
+  // A general request that fits resold trips, only once no operator conversation is in progress.
+  const affiliateIdeas = await resolveWhatsAppAffiliateTurn(input, "BROAD", env);
+  if (affiliateIdeas.kind !== "NONE") return affiliateIdeas;
 
   const isAuRegionSignal = matchesTenantRegionKeywords("bluepass-au", input.messageText);
   return triggerAuOperatorRecommendation({ ...input, isAuRegionSignal }, env, eligibleTenants);

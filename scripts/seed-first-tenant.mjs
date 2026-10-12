@@ -18,7 +18,7 @@ const tenants = [
     slug: "kai-demo",
     name: "Kai Demo",
     widgetPublicKey: "pk_test_kai_demo",
-    allowedOrigins: ["http://localhost:3107", "http://127.0.0.1:3107"],
+    allowedOrigins: ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3107", "http://127.0.0.1:3107"],
     defaultLocale: "en",
     branding: {
       logoUrl: null,
@@ -43,7 +43,7 @@ const tenants = [
     slug: "boattime",
     name: "Boattime Yacht Charters",
     widgetPublicKey: "pk_test_boattime",
-    allowedOrigins: ["http://localhost:3107", "http://127.0.0.1:3107"],
+    allowedOrigins: ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3107", "http://127.0.0.1:3107"],
     defaultLocale: "en-AU",
     branding: {
       logoUrl: null,
@@ -116,6 +116,8 @@ const tenants = [
     allowedOrigins: [
       "https://bluepass.co",
       "https://www.bluepass.co",
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
       "http://localhost:3107",
       "http://127.0.0.1:3107"
     ],
@@ -162,6 +164,8 @@ const tenants = [
     // localhost:3107 for the /embed/kai iframe pattern; bluepass.co for the server-to-server
     // proxy pattern (bluepass-app's homepage widget), which sends an explicit origin header.
     allowedOrigins: [
+      "http://localhost:3000",
+      "http://127.0.0.1:3000",
       "http://localhost:3107",
       "http://127.0.0.1:3107",
       "https://bluepass.co",
