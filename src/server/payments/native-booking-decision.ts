@@ -74,7 +74,7 @@ export async function handleNativePaymentAwaitingOperator(attempt: PmsBookingPay
       role: "ops",
       body: `Kai: new booking request, already paid. ${attempt.productTitle} on ${attempt.dateText}, ${guestsLabel(
         attempt.guests
-      )}, ${attempt.travellerName}. Reference ${attempt.externalBookingId}. Please accept or decline before ${deadline.toISOString()}. If there is no answer by then, the traveller is refunded in full.`
+      )}, ${attempt.travellerName}. Reference ${attempt.externalBookingId}. Reply ACCEPT ${attempt.externalBookingId} or DECLINE ${attempt.externalBookingId}, or answer in your BluePass dashboard, before ${deadline.toISOString()}. If there is no answer by then, the traveller is refunded in full.`
     }).catch((error) => console.error("native_booking.operator_alert_failed", { attemptId: attempt.id, error: String(error) }));
     await prisma.pmsBookingPaymentAttempt.update({ where: { id: attempt.id }, data: { adminAlertSentAt: new Date() } });
   } else {

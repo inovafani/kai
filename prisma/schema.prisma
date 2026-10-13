@@ -14,6 +14,15 @@ enum TenantStatus {
   DISABLED
 }
 
+// What a tenant is. An OPERATOR is a business that works with BluePass (Boattime, a native operator):
+// it owns trips and gets bookings. A PLATFORM tenant is BluePass's own chat, the conversation home
+// for Kai on bluepass.co: it recommends operators and never appears in a recommendation itself.
+// Every conversation needs a tenant, which is the only reason PLATFORM tenants exist.
+enum TenantKind {
+  OPERATOR
+  PLATFORM
+}
+
 enum PmsProvider {
   MOCK
   REZDY
@@ -111,6 +120,7 @@ model Tenant {
   slug               String              @unique
   name               String
   status             TenantStatus        @default(ACTIVE)
+  kind               TenantKind          @default(OPERATOR)
   widgetPublicKey    String              @unique
   allowedOrigins     String[]
   defaultLocale      String              @default("en")

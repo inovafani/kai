@@ -23,7 +23,8 @@ import { handleBluePassMarketplaceMessage,
 import { composeBluePassMarketplaceAssistantReply } from "@/server/bluepass/bluepass-marketplace-reply-composer";
 import { shouldPolishBluePassMarketplaceReply } from "@/server/bluepass/bluepass-marketplace-reply-gate";
 import type { BluePassCatalogSnapshotItem } from "@/core/bluepass/catalog";
-import { AFFILIATE_CATALOG_FEATURE, WHATSAPP_GENERIC_ELIGIBLE_FEATURE } from "@/core/tenant/feature-flags";
+import { AFFILIATE_CATALOG_FEATURE } from "@/core/tenant/feature-flags";
+import { startsOperatorRecommendation } from "@/core/tenant/tenant-kind";
 import { buildAffiliateTurnReply, decideAffiliateTurn } from "@/core/affiliate/affiliate-trips";
 import { fetchAffiliateTrips } from "@/server/affiliate/affiliate-trips-client";
 import { resolveTenantBusinessPack } from "@/server/business-pack/resolve-tenant-business-pack";
@@ -111,7 +112,7 @@ export async function POST(request: NextRequest) {
   // different real AU tenant (see the cross-tenant handoff below). The client keeps sending the same
   // static key on every turn (it has no way to know a handoff happened), so this fallback is what
   // lets turn 2+ of a handed-off conversation keep working instead of 404ing the moment it moves.
-  if (!conversation && resolved.tenant.config?.enabledFeatures?.includes(WHATSAPP_GENERIC_ELIGIBLE_FEATURE)) {
+  if (!conversation && startsOperatorRecommendation(resolved.tenant)) {
     const candidates = await listAuRecommendationCandidates();
     const realCandidateTenantIds = candidates.filter((candidate) => !candidate.isPlaceholder).map((candidate) => candidate.tenantId);
     const handedOffConversation = await findConversationAmongTenants({
@@ -353,7 +354,7 @@ export async function POST(request: NextRequest) {
   // WhatsApp's explicit-match tier uses), so no other generic-flow tenant is affected, and the
   // candidate list (real + placeholder operators) is identical across both channels.
   const tenantConfigForAuRecommendation = resolved.tenant.config;
-  if (tenantConfigForAuRecommendation?.enabledFeatures?.includes(WHATSAPP_GENERIC_ELIGIBLE_FEATURE)) {
+  if (startsOperatorRecommendation(resolved.tenant)) {
     const candidates = await listAuRecommendationCandidates();
 
     // Shared by the explicit-pick branch below and the single-operator auto-skip (item 13): a lone
@@ -480,15 +481,31 @@ export async function POST(request: NextRequest) {
         });
         // kai-conversation-flow-notes.md item 13: a single operator never needs the "which one?"
         // turn - skip straight to the same handoff a traveller would reach by picking option 1.
-        const { reply: singleReply, productCards: singleProductCards } =
-          candidates.length === 1
-            ? await buildPickedReply(candidates[0])
-            : { reply: buildAuOperatorRecommendationReply(candidates), productCards: [] as BookingProductCard[] };
-        const assistantMessage = await createAssistantMessage({
-          tenantId: resolved.tenant.id,
-          conversationId: conversation.id,
-          content: singleReply
-        });
+        const {
+          reply: singleReply,
+          productCards: singleProductCards,
+          handoff: singleHandoff
+        } = candidates.length === 1
+          ? await buildPickedReply(candidates[0])
+          : {
+              reply: buildAuOperatorRecommendationReply(candidates),
+              productCards: [] as BookingProductCard[],
+              handoff: undefined
+            };
+        // When BluePass's own chat hands the traveller to an operator, the reply belongs to that
+        // operator's conversation (the same as picking a number from the list), so the next turn
+        // books against the operator's own catalogue rather than this chat's.
+        const assistantMessage = singleHandoff
+          ? await createAssistantMessage({
+              tenantId: singleHandoff.tenantId,
+              conversationId: singleHandoff.conversationId,
+              content: singleReply
+            })
+          : await createAssistantMessage({
+              tenantId: resolved.tenant.id,
+              conversationId: conversation.id,
+              content: singleReply
+            });
 
         return NextResponse.json({
           message: {
@@ -500,7 +517,7 @@ export async function POST(request: NextRequest) {
           },
           assistantMessage: {
             id: assistantMessage.id,
-            tenantSlug: resolved.tenant.slug,
+            tenantSlug: singleHandoff?.tenantSlug ?? resolved.tenant.slug,
             conversationId: assistantMessage.conversationId,
             role: assistantMessage.role,
             content: assistantMessage.content

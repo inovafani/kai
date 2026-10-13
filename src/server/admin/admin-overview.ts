@@ -21,6 +21,7 @@ export async function getAdminOverview() {
         slug: true,
         name: true,
         status: true,
+        kind: true,
         config: { select: { pmsProvider: true, bookingWriteEnabled: true } },
         _count: { select: { conversations: true, manualInquiries: true } }
       }
@@ -30,25 +31,35 @@ export async function getAdminOverview() {
     prisma.manualInquiry.count({ where: { status: "OPEN" } })
   ]);
 
-  const tenants = allTenants.filter((tenant) => !isTestFixtureTenantSlug(tenant.slug));
-  const testFixtureCount = allTenants.length - tenants.length;
+  const real = allTenants.filter((tenant) => !isTestFixtureTenantSlug(tenant.slug));
+  const testFixtureCount = allTenants.length - real.length;
+  // Operators are the businesses that work with BluePass. A PLATFORM tenant is BluePass's own chat,
+  // listed separately so it never reads as one more operator.
+  const tenants = real.filter((tenant) => tenant.kind === "OPERATOR");
+  const platformTenants = real.filter((tenant) => tenant.kind === "PLATFORM");
 
-  return { tenants, testFixtureCount, stats, latestCronRuns, openInquiries };
+  return { tenants, platformTenants, testFixtureCount, stats, latestCronRuns, openInquiries };
 }
 
 export async function listCronRuns(limit = 50) {
   return prisma.cronRunLog.findMany({ orderBy: { finishedAt: "desc" }, take: limit });
 }
 
-/** Active operators for the tenant picker, busiest inbox first. Test fixtures and suspended tenants are left out. */
+/**
+ * Active tenants for the picker: operators first (busiest inbox first), then BluePass's own chat.
+ * Test fixtures and suspended tenants are left out.
+ */
 export async function listRealTenantsForPicker() {
   const tenants = await prisma.tenant.findMany({
     where: { status: "ACTIVE" },
-    select: { slug: true, name: true, _count: { select: { manualInquiries: true } } },
+    select: { slug: true, name: true, kind: true, _count: { select: { manualInquiries: true } } },
     orderBy: { createdAt: "asc" }
   });
   return tenants
     .filter((tenant) => !isTestFixtureTenantSlug(tenant.slug))
-    .sort((a, b) => b._count.manualInquiries - a._count.manualInquiries)
-    .map((tenant) => ({ slug: tenant.slug, name: tenant.name }));
+    .sort(
+      (a, b) =>
+        Number(a.kind === "PLATFORM") - Number(b.kind === "PLATFORM") || b._count.manualInquiries - a._count.manualInquiries
+    )
+    .map((tenant) => ({ slug: tenant.slug, name: tenant.name, kind: tenant.kind }));
 }

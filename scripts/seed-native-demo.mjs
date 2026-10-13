@@ -54,7 +54,7 @@ async function seed() {
       slug: SLUG,
       name: "Blue Water Tours (native demo)",
       widgetPublicKey: KEY,
-      allowedOrigins: ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3107"],
+      allowedOrigins: ["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3107", "https://kai-six-virid.vercel.app"],
       status: "ACTIVE",
       branding: { create: branding },
       config: { create: config }

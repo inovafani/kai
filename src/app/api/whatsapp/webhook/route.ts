@@ -5,6 +5,7 @@ import {
   resolveLatestPendingBluePassInquiryIdForOperatorPhone
 } from "@/server/bluepass/bluepass-inquiry-repository";
 import { handleBluePassWhatsAppInboundMessage } from "@/server/bluepass/bluepass-whatsapp-conversation";
+import { handleNativeOperatorWhatsApp } from "@/server/native/native-operator-whatsapp";
 import { handleGenericWhatsAppInboundMessage } from "@/server/whatsapp/generic-whatsapp-conversation";
 import { resolveWhatsAppTenantForMessage } from "@/server/whatsapp/generic-tenant-router";
 import {
@@ -29,9 +30,33 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   const payload = await request.json().catch(() => null);
-  const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook(payload);
+  const inboundMessages = extractWhatsAppInboundTextMessagesFromWebhook(payload);
+
+  // An operator answering a paid native booking ("ACCEPT <ref>" / "DECLINE <ref>") is settled first
+  // and taken out of everything below, so a plain "accept" is never read as a BluePass inquiry reply.
+  const answeredNatively = new Set<string>();
+  const nativeFailures: Array<{ providerMessageId: string | null; reason: string }> = [];
+  for (const message of inboundMessages) {
+    try {
+      if ((await handleNativeOperatorWhatsApp(message)).handled && message.providerMessageId) {
+        answeredNatively.add(message.providerMessageId);
+      }
+    } catch (error) {
+      nativeFailures.push({
+        providerMessageId: message.providerMessageId,
+        reason: error instanceof Error ? error.message : "Native booking answer failed."
+      });
+    }
+  }
+
+  const responses = extractBluePassOperatorResponsesFromWhatsAppWebhook(payload).filter(
+    (response) => !response.providerMessageId || !answeredNatively.has(response.providerMessageId)
+  );
   const statuses = extractWhatsAppMessageStatusesFromWebhook(payload);
-  const contextMessages = responses.length === 0 ? extractWhatsAppInboundTextMessagesFromWebhook(payload) : [];
+  const contextMessages =
+    responses.length === 0
+      ? inboundMessages.filter((message) => !message.providerMessageId || !answeredNatively.has(message.providerMessageId))
+      : [];
   const failures: Array<{ inquiryId: string; reason: string }> = [];
   const statusFailures: Array<{ providerMessageId: string; reason: string }> = [];
   const contextFailures: Array<{ providerMessageId: string | null; reason: string }> = [];
@@ -109,7 +134,7 @@ export async function POST(request: Request) {
     statusesFailed: statusFailures.length,
     statusFailures,
     contextHandled,
-    contextFailed: contextFailures.length,
-    contextFailures
+    contextFailed: contextFailures.length + nativeFailures.length,
+    contextFailures: [...contextFailures, ...nativeFailures]
   });
 }

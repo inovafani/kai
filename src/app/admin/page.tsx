@@ -4,6 +4,8 @@ import { AdminFrame, AdminGate, AdminHeader, Card, Pill, Stat } from "./admin-ui
 import { readAdminSession } from "@/server/admin/admin-session";
 import { getAdminOverview } from "@/server/admin/admin-overview";
 
+type TenantRow = Awaited<ReturnType<typeof getAdminOverview>>["tenants"][number];
+
 export const dynamic = "force-dynamic";
 
 function formatMoney(amountCents: number, currency: string) {
@@ -22,13 +24,32 @@ function cronTone(status: string) {
   return status === "SUCCESS" ? "good" : status === "PARTIAL" ? "warn" : "bad";
 }
 
+function TenantCard({ tenant }: { tenant: TenantRow }) {
+  return (
+    <a href={`/admin/${tenant.slug}/settings`} className="adm-card adm-card--link">
+      <div className="adm-card__top">
+        <Pill tone={tenantTone(tenant.status)}>{tenant.status}</Pill>
+        <span className="adm-card__go ds-caption">Open</span>
+      </div>
+      <h3 className="ds-headline">{tenant.name}</h3>
+      <p className="ds-body-sm">
+        {tenant.slug} · {tenant.config?.pmsProvider ?? "No PMS set"} ·{" "}
+        {tenant.config?.bookingWriteEnabled ? "Booking-write on" : "Booking-write off"}
+      </p>
+      <p className="ds-body-sm">
+        {tenant._count.conversations} conversations · {tenant._count.manualInquiries} inquiries
+      </p>
+    </a>
+  );
+}
+
 export default async function AdminOverviewPage() {
   const session = await readAdminSession();
   if (!session.allowed) {
     return <AdminGate tenantSlug="kai-demo" purpose="Enter the admin token to open the Kai console." />;
   }
 
-  const { tenants, testFixtureCount, stats, latestCronRuns, openInquiries } = await getAdminOverview();
+  const { tenants, platformTenants, testFixtureCount, stats, latestCronRuns, openInquiries } = await getAdminOverview();
   const regions = [
     { label: "Australia", region: stats.au },
     { label: "Indonesia", region: stats.indonesia }
@@ -52,25 +73,13 @@ export default async function AdminOverviewPage() {
 
         <section className="adm-stack">
           <h2 className="ds-subhead">Operators</h2>
+          <p className="ds-body-sm">Businesses that work with BluePass. Each one has its own trips, bookings and inbox.</p>
           {tenants.length === 0 ? (
-            <p className="adm-empty">No tenants yet.</p>
+            <p className="adm-empty">No operators yet.</p>
           ) : (
             <div className="adm-grid">
               {tenants.map((tenant) => (
-                <a key={tenant.id} href={`/admin/${tenant.slug}/settings`} className="adm-card adm-card--link">
-                  <div className="adm-card__top">
-                    <Pill tone={tenantTone(tenant.status)}>{tenant.status}</Pill>
-                    <span className="adm-card__go ds-caption">Open</span>
-                  </div>
-                  <h3 className="ds-headline">{tenant.name}</h3>
-                  <p className="ds-body-sm">
-                    {tenant.slug} · {tenant.config?.pmsProvider ?? "No PMS set"} ·{" "}
-                    {tenant.config?.bookingWriteEnabled ? "Booking-write on" : "Booking-write off"}
-                  </p>
-                  <p className="ds-body-sm">
-                    {tenant._count.conversations} conversations · {tenant._count.manualInquiries} inquiries
-                  </p>
-                </a>
+                <TenantCard key={tenant.id} tenant={tenant} />
               ))}
             </div>
           )}
@@ -80,6 +89,20 @@ export default async function AdminOverviewPage() {
             </p>
           ) : null}
         </section>
+
+        {platformTenants.length > 0 ? (
+          <section className="adm-stack">
+            <h2 className="ds-subhead">BluePass chat</h2>
+            <p className="ds-body-sm">
+              Kai on bluepass.co. It is not an operator: it recommends the operators above and hands the traveller to the one they pick.
+            </p>
+            <div className="adm-grid">
+              {platformTenants.map((tenant) => (
+                <TenantCard key={tenant.id} tenant={tenant} />
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <section className="adm-stack">
           <h2 className="ds-subhead">Finalized ledger</h2>

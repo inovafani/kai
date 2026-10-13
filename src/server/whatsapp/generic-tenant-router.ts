@@ -28,7 +28,8 @@ export interface ResolvedWhatsAppGenericTenant {
 // WHATSAPP_GENERIC_ELIGIBLE_FEATURE on its TenantConfig.enabledFeatures), not a code/env edit.
 export async function listWhatsAppGenericEligibleTenants() {
   return prisma.tenant.findMany({
-    where: { status: "ACTIVE", config: { enabledFeatures: { has: WHATSAPP_GENERIC_ELIGIBLE_FEATURE } } },
+    // Operators only: BluePass's own (PLATFORM) chat recommends operators and is never one of them.
+    where: { status: "ACTIVE", kind: "OPERATOR", config: { enabledFeatures: { has: WHATSAPP_GENERIC_ELIGIBLE_FEATURE } } },
     include: { branding: true, config: true }
   });
 }

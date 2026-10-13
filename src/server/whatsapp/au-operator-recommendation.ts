@@ -48,7 +48,7 @@ export async function listAuRecommendationCandidates(
   const [realTenants, placeholderTenants] = await Promise.all([
     prefetchedEligibleTenants ?? listWhatsAppGenericEligibleTenants(),
     prisma.tenant.findMany({
-      where: { status: "ACTIVE", config: { enabledFeatures: { has: AU_RECOMMENDATION_PLACEHOLDER_FEATURE } } },
+      where: { status: "ACTIVE", kind: "OPERATOR", config: { enabledFeatures: { has: AU_RECOMMENDATION_PLACEHOLDER_FEATURE } } },
       select: { id: true, slug: true, name: true }
     })
   ]);
