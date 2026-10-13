@@ -199,11 +199,12 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
   // bluepass-message-flow core would double-ask website travellers. A known directory identity
   // (registered operator/partner) skips the gate - their market comes from their own onboarding,
   // not a fresh "which country" question on every conversation.
-  const previousKaiMessage = options.resetConversation
-    ? null
-    : (await listRecentConversationMessages({ tenantId: tenant.id, conversationId: conversation.id, take: 4 }))
+  const priorKaiMessages = options.resetConversation
+    ? []
+    : (await listRecentConversationMessages({ tenantId: tenant.id, conversationId: conversation.id, take: 12 }))
         .filter((item) => item.role === "assistant")
-        .at(-1)?.content ?? null;
+        .map((item) => item.content);
+  const previousKaiMessage = priorKaiMessages.at(-1) ?? null;
   // Someone who's hurt, or who asks for a person, never gets "Australia or Indonesia?" first.
   const skipsGate = isEmergencyMessage(input.body) || shouldHandOffToPerson(input.body, previousKaiMessage);
   const gatePrompt =
@@ -237,7 +238,8 @@ async function handleBluePassTravellerMarketplaceWhatsAppMessage(
         identityName: options.identityName,
         routerClient,
         catalog,
-        lastAssistantMessage
+        lastAssistantMessage,
+        priorAssistantMessages: priorKaiMessages
       });
   const assistantContent =
     effectiveOverrideContent ??

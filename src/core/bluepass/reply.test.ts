@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildBluePassDestinationInterestReply,
   buildBluePassEnquiryReminder,
+  buildBluePassRecommendationReply,
+  buildBluePassRegionChoiceReply,
   buildBluePassSmallTalkReply,
   buildBluePassConservationReply,
   buildBluePassInquiryConfirmationReply,
@@ -12,6 +15,8 @@ import {
   buildBluePassYachtComparisonReply,
   buildBluePassYachtOverviewReply,
   isBluePassConservationQuestion,
+  isBluePassDestinationInterestReply,
+  isBluePassRegionChoiceReply,
   isBluePassValuePropQuestion
 } from "./reply";
 
@@ -28,6 +33,8 @@ const yacht = {
 } as any;
 
 const rajaYacht = { ...yacht, name: "Manta Queen", region: "Raja Ampat" } as any;
+// A couple's boat, so the steer has something smaller to pick than Sea Dragon.
+const couple = { ...yacht, name: "Little Wing", maxGuests: 2, cabins: 1, priceSignal: "from IDR 9M/night" } as any;
 
 // Every traveller-facing reply, across representative inputs.
 function allTravellerReplies(): string[] {
@@ -45,9 +52,158 @@ function allTravellerReplies(): string[] {
     buildBluePassValueReply(),
     buildBluePassSeasonReply("Komodo"),
     buildBluePassSeasonReply("Raja Ampat"),
-    buildBluePassYachtComparisonReply([yacht, rajaYacht] as any)
+    buildBluePassYachtComparisonReply([yacht, rajaYacht] as any),
+    buildBluePassDestinationInterestReply({ destination: "Komodo" }),
+    buildBluePassDestinationInterestReply({ destination: "Raja Ampat", known: { dateWindow: "March", guests: 6 } }),
+    buildBluePassRegionChoiceReply(["Komodo", "Raja Ampat"]),
+    buildBluePassRecommendationReply({ destination: "Komodo", matches: [yacht, couple] as any }),
+    buildBluePassRecommendationReply({
+      destination: "Komodo",
+      matches: [yacht, couple] as any,
+      known: { dateWindow: "July", guests: 2, interests: ["dive"] }
+    }),
+    buildBluePassRecommendationReply({ destination: "Komodo", matches: [yacht] as any, alreadyShown: true }),
+    buildBluePassRecommendationReply({ destination: "Komodo", matches: [yacht] as any, noMoreOptions: true })
   ];
 }
+
+// Kai answers a named place like a person who knows it, not like a search box. One fact, one
+// question, and the boats only once there's a reason to show them.
+describe("conversational openers", () => {
+  const questionCount = (reply: string) => reply.split("?").length - 1;
+
+  it("acknowledges the place, says something useful, and asks one thing", () => {
+    const reply = buildBluePassDestinationInterestReply({ destination: "Komodo" });
+
+    expect(reply).toContain("Komodo is a good call.");
+    expect(reply).toContain("April to November");
+    expect(reply.endsWith("When are you thinking of going?")).toBe(true);
+    expect(questionCount(reply)).toBe(1);
+  });
+
+  it("asks for the one thing it still needs, in turn", () => {
+    const dates = { dateWindow: "July" };
+    expect(buildBluePassDestinationInterestReply({ destination: "Komodo", known: dates })).toContain(
+      "How many of you are going?"
+    );
+    expect(
+      buildBluePassDestinationInterestReply({ destination: "Komodo", known: { ...dates, guests: 2 } })
+    ).toContain("Are you more after the diving, or cruising the islands?");
+    expect(
+      buildBluePassDestinationInterestReply({
+        destination: "Komodo",
+        known: { ...dates, guests: 2, interests: ["dive"] }
+      })
+    ).toContain("Want me to line up what fits?");
+  });
+
+  it("does not ask the same question twice in a row when the traveller skips it", () => {
+    const reply = buildBluePassDestinationInterestReply({
+      destination: "Komodo",
+      previousReply: "Komodo is a good call. When are you thinking of going?"
+    });
+
+    expect(reply).not.toContain("When are you thinking of going?");
+    expect(reply).toContain("How many of you are going?");
+  });
+
+  it("knows its own opener, so the flow can tell it has already been asked", () => {
+    const opener = buildBluePassDestinationInterestReply({ destination: "Komodo" });
+
+    expect(isBluePassDestinationInterestReply(opener, "Komodo")).toBe(true);
+    expect(isBluePassDestinationInterestReply(opener, "Raja Ampat")).toBe(false);
+    expect(isBluePassDestinationInterestReply("Here are three boats in Komodo:", "Komodo")).toBe(false);
+  });
+
+  it("decides the region with a comparison instead of a list, when no place is named", () => {
+    const reply = buildBluePassRegionChoiceReply(["Komodo", "Raja Ampat"]);
+
+    expect(reply).toContain("Komodo");
+    expect(reply).toContain("Raja Ampat");
+    expect(reply.endsWith("Which way are you leaning?")).toBe(true);
+    expect(questionCount(reply)).toBe(1);
+    expect(isBluePassRegionChoiceReply(reply)).toBe(true);
+  });
+});
+
+describe("recommendation lists that keep the conversation going", () => {
+  const questionCount = (reply: string) => reply.split("?").length - 1;
+
+  it("ends with one question, not a menu of ways to continue", () => {
+    const reply = buildBluePassRecommendationReply({ destination: "Komodo", matches: [yacht, couple] as any });
+
+    expect(questionCount(reply)).toBe(1);
+    expect(reply.endsWith("When are you thinking of going?")).toBe(true);
+    expect(reply).not.toContain("I can compare");
+  });
+
+  it("steers to the boat that fits the party, not the biggest one in the list", () => {
+    const forTwo = buildBluePassRecommendationReply({
+      destination: "Komodo",
+      matches: [yacht, couple] as any,
+      known: { dateWindow: "July", guests: 2 }
+    });
+    expect(forTwo).toContain("For the two of you, Little Wing takes 2");
+
+    const forTen = buildBluePassRecommendationReply({
+      destination: "Komodo",
+      matches: [yacht, couple] as any,
+      known: { dateWindow: "July", guests: 10 }
+    });
+    expect(forTen).toContain("For 10 of you, Sea Dragon is the closest fit, up to 12 guests.");
+  });
+
+  it("asks what it still needs instead of re-asking what it was just told", () => {
+    const reply = buildBluePassRecommendationReply({
+      destination: "Komodo",
+      matches: [yacht, couple] as any,
+      known: { dateWindow: "July", guests: 2 }
+    });
+
+    expect(reply).not.toContain("When are you thinking of going?");
+    expect(reply).toContain("Are you more after the diving, or cruising the islands?");
+  });
+
+  it("offers the operator check once it knows the dates and the group", () => {
+    const reply = buildBluePassRecommendationReply({
+      destination: "Komodo",
+      matches: [yacht, couple] as any,
+      known: { dateWindow: "July", guests: 2, interests: ["dive"] }
+    });
+
+    expect(reply).toContain("Which one takes your eye, and I'll put July to the operator to check?");
+    expect(questionCount(reply)).toBe(1);
+  });
+
+  it("says when it is showing the same boats again, and when there are no others", () => {
+    // The cards are already in the chat, so the same list isn't sent again as though it were new.
+    const sameAgain = buildBluePassRecommendationReply({
+      destination: "Komodo",
+      matches: [yacht, couple] as any,
+      alreadyShown: true
+    });
+    expect(sameAgain).toContain("Still the same two in Komodo.");
+    expect(sameAgain).not.toContain(yacht.productUrl);
+    expect(sameAgain).toContain("When are you thinking of going?");
+    expect(
+      buildBluePassRecommendationReply({ destination: "Komodo", matches: [yacht] as any, noMoreOptions: true })
+    ).toContain("That's everything BluePass has in Komodo right now:");
+    expect(
+      buildBluePassRecommendationReply({
+        destination: "Komodo",
+        matches: [yacht, couple] as any,
+        showingSomethingNew: true
+      })
+    ).toContain("Here's what else BluePass has in Komodo:");
+    expect(
+      buildBluePassRecommendationReply({
+        destination: "Komodo",
+        matches: [],
+        excludedYachtNames: ["Sea Dragon", "Little Wing"]
+      })
+    ).toContain("that's everything BluePass has in Komodo right now");
+  });
+});
 
 describe("bluepass traveller replies (reply.ts)", () => {
   it("never uses an emoji", () => {
