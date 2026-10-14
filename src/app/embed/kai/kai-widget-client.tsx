@@ -22,6 +22,7 @@ type WidgetConfig = {
 };
 
 const BLUEPASS_STRIPE_PMS_CHECKOUT_FEATURE = "bluepass_stripe_pms_checkout";
+const REZDY_CHECKOUT_HANDOFF_FEATURE = "rezdy_checkout_handoff";
 
 type ChatRole = "TRAVELLER" | "ASSISTANT";
 
@@ -144,9 +145,11 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
   const [error, setError] = useState("");
   const stripeRef = useRef<StripeInstance | null>(null);
   const cardElementRef = useRef<StripeCardElement | null>(null);
-  const hostedCheckoutRedirectEnabled = Boolean(
-    config?.capabilities.enabledFeatures.includes(BLUEPASS_STRIPE_PMS_CHECKOUT_FEATURE)
-  );
+  // The operator's own Rezdy page, opened in a new tab: the widget sits inside the operator's website,
+  // and taking the whole page away to a payment page would lose the conversation behind it.
+  const rezdyHandoffEnabled = Boolean(config?.capabilities.enabledFeatures.includes(REZDY_CHECKOUT_HANDOFF_FEATURE));
+  const hostedCheckoutRedirectEnabled =
+    rezdyHandoffEnabled || Boolean(config?.capabilities.enabledFeatures.includes(BLUEPASS_STRIPE_PMS_CHECKOUT_FEATURE));
 
   useEffect(() => {
     let active = true;
@@ -696,19 +699,27 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
                 boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)"
               }}
             >
-              <h2 style={{ margin: 0, fontSize: 16, lineHeight: 1.25 }}>Redirecting you to secure payment</h2>
+              <h2 style={{ margin: 0, fontSize: 16, lineHeight: 1.25 }}>
+                {rezdyHandoffEnabled ? "Finish your booking" : "Redirecting you to secure payment"}
+              </h2>
               <p style={{ margin: "8px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
                 {paymentRequest.productTitle ?? "Selected booking"}
                 {paymentRequest.dateText ? ` - ${paymentRequest.dateText}` : ""}
                 {paymentRequest.guests ? ` - ${paymentRequest.guests} guest${paymentRequest.guests === 1 ? "" : "s"}` : ""}
               </p>
               <p style={{ margin: "10px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
-                You&apos;ll be taken to a secure BluePass payment page; Kai never sees or stores your card details.
+                {rezdyHandoffEnabled
+                  ? "The booking page opens in a new tab, where you pay the operator securely. Kai never sees or stores your card details."
+                  : "You'll be taken to a secure BluePass payment page; Kai never sees or stores your card details."}
               </p>
               {paymentRequest.checkoutUrl ? (
                 <button
                   type="button"
                   onClick={() => {
+                    if (rezdyHandoffEnabled) {
+                      window.open(paymentRequest.checkoutUrl as string, "_blank", "noopener,noreferrer");
+                      return;
+                    }
                     const target = window.top ?? window;
                     target.location.href = paymentRequest.checkoutUrl as string;
                   }}
@@ -724,7 +735,7 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
                     cursor: "pointer"
                   }}
                 >
-                  Continue to secure payment
+                  {rezdyHandoffEnabled ? "Open the booking page" : "Continue to secure payment"}
                 </button>
               ) : (
                 <p style={{ margin: "10px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>

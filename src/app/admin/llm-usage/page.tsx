@@ -1,4 +1,5 @@
 import { AdminFrame, AdminGate, AdminHeader, Card, Stat } from "../admin-ui";
+import { warmTenantPicker } from "@/server/admin/admin-overview";
 import { readAdminSession } from "@/server/admin/admin-session";
 import { getBluePassLlmUsageSummary, type LlmUsageGroupTotals, type LlmUsagePeriodTotals } from "@/server/llm/llm-usage-repository";
 
@@ -65,6 +66,9 @@ export default async function LlmUsagePage() {
   if (!session.allowed) {
     return <AdminGate tenantSlug="llm-usage" purpose="Enter the admin token to view LLM usage." />;
   }
+
+  // Start the navigation frame's operator list now, so it loads alongside this page's own data.
+  warmTenantPicker();
 
   const summary = await getBluePassLlmUsageSummary();
 

@@ -1,6 +1,6 @@
 import { AdminFrame, AdminGate, AdminHeader, Card, JsonBlock, Pill } from "../admin-ui";
 import { readAdminSession } from "@/server/admin/admin-session";
-import { listCronRuns } from "@/server/admin/admin-overview";
+import { listCronRuns, warmTenantPicker } from "@/server/admin/admin-overview";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +17,9 @@ export default async function AdminSystemPage() {
   if (!session.allowed) {
     return <AdminGate tenantSlug="kai-demo" purpose="Enter the admin token to view background jobs." />;
   }
+
+  // Start the navigation frame's operator list now, so it loads alongside this page's own data.
+  warmTenantPicker();
 
   const runs = await listCronRuns(50);
 

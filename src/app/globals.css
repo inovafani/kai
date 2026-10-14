@@ -831,3 +831,68 @@ html:has(.embed-root) a:hover {
 html:has(.embed-root) ::selection {
   background: Highlight;
 }
+
+/* Page-change progress line ------------------------------------------------- */
+/* Shown by route-progress.tsx only when a click on a link has waited a moment for its page. */
+.route-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 200;
+  pointer-events: none;
+  background: var(--color-accent-blue);
+  transform: scaleX(0);
+  transform-origin: left;
+  opacity: 0;
+}
+.route-progress[data-phase="loading"] {
+  opacity: 1;
+  transform: scaleX(0.85);
+  transition: transform 12s cubic-bezier(0.05, 0.6, 0.15, 1), opacity 0.15s linear;
+}
+.route-progress[data-phase="done"] {
+  opacity: 0;
+  transform: scaleX(1);
+  transition: transform 0.2s ease-out, opacity 0.3s linear 0.2s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .route-progress[data-phase="loading"],
+  .route-progress[data-phase="done"] {
+    transition: none;
+  }
+}
+
+/* Operator context: breadcrumb above an operator's pages, and the overview's operator cards ------ */
+.adm-crumb {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-bottom: var(--space-md);
+  font-size: 14px;
+}
+.adm-crumb__link {
+  color: var(--color-ink-muted);
+  text-decoration: none;
+}
+.adm-crumb__link:hover {
+  color: var(--color-ink);
+}
+.adm-crumb__sep {
+  color: var(--color-ink-muted);
+}
+.adm-crumb .shell-picker__label {
+  display: none;
+}
+.adm-card--tenant {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+.adm-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}

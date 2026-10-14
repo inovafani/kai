@@ -1,6 +1,8 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AdminFrame, AdminGate, AdminHeader, Card, ChipList, JsonBlock, KeyValue, Pill } from "../../admin-ui";
 import { parsePublicProductCatalog } from "@/core/pms/public-product-catalog";
+import { warmTenantPicker } from "@/server/admin/admin-overview";
 import { readAdminSession } from "@/server/admin/admin-session";
 import { getKaiLlmRuntimeSettings } from "@/server/config/kai-environment";
 import { findTenantSettingsBySlug } from "@/server/tenant/tenant-repository";
@@ -92,6 +94,9 @@ export default async function TenantSettingsPage({ params, searchParams }: Tenan
     return <AdminGate tenantSlug={tenantSlug} purpose="Enter the admin token to view tenant settings." />;
   }
 
+  // Start the navigation frame's operator list now, so it loads alongside this page's own data.
+  warmTenantPicker();
+
   const tenant = await findTenantSettingsBySlug(tenantSlug);
   const llm = getKaiLlmRuntimeSettings(process.env);
   if (!tenant) {
@@ -107,9 +112,9 @@ export default async function TenantSettingsPage({ params, searchParams }: Tenan
         context={tenant.name}
         support="How Kai talks for this operator, which booking system it writes to, and which website products it knows about."
         actions={
-          <a href={"/admin/" + tenant.slug + "/inquiries"} className="adm-btn">
+          <Link href={"/admin/" + tenant.slug + "/inquiries"} className="adm-btn">
             View inquiries
-          </a>
+          </Link>
         }
       />
 

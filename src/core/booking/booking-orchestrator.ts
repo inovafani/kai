@@ -137,6 +137,8 @@ export interface BookingOrchestratorResult {
   inquiryDraft?: BookingCaptureDetails | null;
   bookingStatePatch?: BookingFlowState | null;
   paymentHandoffUrl?: string | null;
+  /** True when paymentHandoffUrl is the operator's own Rezdy booking page, where the traveller pays. */
+  rezdyHandoff?: boolean;
   pmsCheckoutHold?: PmsCheckoutHold | null;
   productCards?: BookingProductCard[] | null;
   /** ISO yyyy-mm-dd dates, present only alongside an AVAILABILITY_CHECKED "not available" reply,
@@ -167,6 +169,16 @@ export interface HandleTravellerBookingMessageInput {
    * the PMS's own payment link (see PmsCheckoutHold). Only meaningful when the PMS adapter
    * implements confirmBooking. */
   bluePassStripeCheckoutEnabled?: boolean;
+  /** Tenant-scoped: do not reserve a hold or charge through BluePass. Send the traveller to the
+   * operator's own Rezdy booking page (with the chosen time selected when known) to pay there. */
+  rezdyCheckoutHandoff?: {
+    buildUrl: (args: {
+      productExternalId: string | null;
+      productUrl: string | null;
+      dateText: string | null;
+      timeOptions: PmsTimeOption[] | null;
+    }) => string | null;
+  } | null;
   llmClient?: AssistantLlmClient | null;
   routerClient?: GenericBookingRouterLlmClient | null;
   tenantContext?: AssistantTenantContext | null;
@@ -2115,6 +2127,34 @@ async function handleTravellerBookingMessageInner(
           bookingStatus: "PAYMENT_PENDING",
           bookingError: "Awaiting secure payment before creating the external booking."
         };
+        if (input.rezdyCheckoutHandoff) {
+          const handoffUrl =
+            input.rezdyCheckoutHandoff.buildUrl({
+              productExternalId: readyState.productExternalId ?? null,
+              productUrl: product.productUrl ?? null,
+              dateText: readyState.dateText ?? null,
+              timeOptions: input.bookingMemory?.timeOptions ?? null
+            }) ?? product.productUrl ?? null;
+
+          if (handoffUrl) {
+            const operatorName = input.tenantContext?.tenantName ?? "the operator";
+            return {
+              action: "BOOKING_PAYMENT_REQUIRED",
+              reply:
+                `Thanks, I've got everything for ${readyState.productTitle} ${formatDateAndTime(readyState.dateText)} for ${
+                  readyState.guests
+                } guest${readyState.guests === 1 ? "" : "s"}${ticketSummary}${extraSummary} under ${readyState.travellerName}.\n\n` +
+                `To finish, open ${operatorName}'s own booking page and pay securely there: ${handoffUrl}\n\n` +
+                `I never see or store your card details, and your confirmation and booking reference come from ${operatorName} by email.`,
+              replySource: "DETERMINISTIC",
+              bookingStatePatch: { ...paymentState, bookingError: null },
+              paymentHandoffUrl: handoffUrl,
+              rezdyHandoff: true
+            };
+          }
+          // No page to send them to: fall through to the usual "the operator will be in touch" reply.
+        }
+
         let paymentOrder:
           | {
               externalBookingId: string;

@@ -197,3 +197,43 @@ describe("runGenericBookingTurn - BluePass Stripe PMS checkout", () => {
     expect(result.assistantContent).not.toContain("funds ocean and reef conservation");
   }, 30000);
 });
+
+describe("runGenericBookingTurn - hand the payment to the operator's Rezdy page", () => {
+  const withTime = {
+    ...previousBookingState,
+    timeOptions: [{ label: "1:30 PM", startTimeLocal: "2026-06-26 13:30:00", remaining: 6, checkoutItemKey: "item-431872-480938442" }]
+  };
+
+  it("sends the traveller to Rezdy for the chosen time instead of BluePass Stripe, even if the Stripe flag is still on", async () => {
+    const { tenantId, conversationId } = await createTestConversation();
+    const checkoutClient: BluePassPmsCheckoutClient = { createCheckoutSession: vi.fn() };
+    // Nothing may be fetched: BluePass's refund tiers are not quoted for a Rezdy booking.
+    const fetcher = vi.fn(async () => {
+      throw new Error("No lookup is expected for a Rezdy hand-off.");
+    });
+
+    const result = await runGenericBookingTurn({
+      tenant: baseTenant(tenantId, { enabledFeatures: ["bluepass_stripe_pms_checkout", "rezdy_checkout_handoff"] }),
+      conversationId,
+      content: "confirmed",
+      previousBookingState: withTime,
+      priorTravellerMessages: [],
+      priorConversationMessages: [],
+      bluePassPmsCheckoutClient: checkoutClient,
+      fetcher: fetcher as unknown as typeof fetch
+    });
+
+    const expectedUrl = "https://boattimeyachtcharters.rezdy.com/services/431872?itemKey=item-431872-480938442&useTransparentSessions=1";
+    expect(checkoutClient.createCheckoutSession).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(result.bookingResult?.rezdyHandoff).toBe(true);
+    expect(result.bookingResult?.pmsCheckoutHold).toBeUndefined();
+    expect(result.paymentRequest?.checkoutUrl).toBe(expectedUrl);
+    expect(result.assistantContent).toContain(expectedUrl);
+    expect(result.assistantContent).toContain("never see or store your card details");
+    expect(result.assistantContent).not.toContain("Cancellation policy:");
+    expect(result.assistantContent).not.toContain("conservation");
+    // The traveller carries on in Rezdy, so nothing is left waiting for a person in Kai.
+    expect(await prisma.manualInquiry.count({ where: { conversationId } })).toBe(0);
+  });
+});

@@ -1,6 +1,8 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AdminFrame, AdminGate, AdminHeader, Card, humanize, Pill } from "../../../admin-ui";
 import { setConversationControlModeAction } from "./actions";
+import { warmTenantPicker } from "@/server/admin/admin-overview";
 import { readAdminSession } from "@/server/admin/admin-session";
 import { findConversationTranscriptForTenantSlug } from "@/server/conversation/conversation-repository";
 
@@ -31,6 +33,9 @@ export default async function AdminConversationPage({ params }: AdminConversatio
     return <AdminGate tenantSlug={tenantSlug} purpose="Enter the admin token to view conversation transcripts." />;
   }
 
+  // Start the navigation frame's operator list now, so it loads alongside this page's own data.
+  warmTenantPicker();
+
   const conversation = await findConversationTranscriptForTenantSlug({ tenantSlug, conversationId });
   if (!conversation) {
     notFound();
@@ -54,9 +59,9 @@ export default async function AdminConversationPage({ params }: AdminConversatio
         context={conversation.tenant.name}
         support="The whole chat with this traveller, and whether Kai or a person is answering it."
         actions={
-          <a href={"/admin/" + tenantSlug + "/inquiries"} className="adm-btn">
+          <Link href={"/admin/" + tenantSlug + "/inquiries"} className="adm-btn">
             Back to inquiries
-          </a>
+          </Link>
         }
       />
 

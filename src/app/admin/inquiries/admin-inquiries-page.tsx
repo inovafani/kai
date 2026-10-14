@@ -1,6 +1,8 @@
+import Link from "next/link";
 import { AdminFrame, AdminGate, AdminHeader, humanize, Pill, Stat } from "../admin-ui";
 import { updateManualInquiryStatusAction } from "./actions";
 import { toManualInquiryViewModel } from "./manual-inquiry-view-model";
+import { warmTenantPicker } from "@/server/admin/admin-overview";
 import { readAdminSession } from "@/server/admin/admin-session";
 import { listBluePassInquiriesForTenantSlug } from "@/server/bluepass/bluepass-inquiry-repository";
 import { listManualInquiriesForTenantSlug } from "@/server/conversation/conversation-repository";
@@ -28,6 +30,9 @@ export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: strin
   if (!session.allowed) {
     return <AdminGate tenantSlug={tenantSlug} purpose="Enter the admin token to view manual inquiries." />;
   }
+
+  // Start the navigation frame's operator list now, so it loads alongside this page's own data.
+  warmTenantPicker();
 
   const [inquiries, bluePassInquiries] = await Promise.all([
     listManualInquiriesForTenantSlug({ tenantSlug }),
@@ -93,9 +98,9 @@ export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: strin
                 </div>
                 <div className="adm-inq__aside">
                   <span className="ds-caption">{formatCreatedAt(inquiry.createdAt)}</span>
-                  <a href={"/admin/" + tenantSlug + "/conversations/" + inquiry.conversationId} className="adm-btn adm-btn--sm">
+                  <Link href={"/admin/" + tenantSlug + "/conversations/" + inquiry.conversationId} className="adm-btn adm-btn--sm">
                     View conversation
-                  </a>
+                  </Link>
                 </div>
               </article>
             ))}
@@ -158,9 +163,9 @@ export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: strin
                   <div className="adm-inq__aside">
                     <span className="ds-caption">{formatCreatedAt(inquiry.createdAt)}</span>
                     <div className="adm-row" style={{ justifyContent: "flex-end" }}>
-                      <a href={"/admin/" + tenantSlug + "/conversations/" + inquiry.conversationId} className="adm-btn adm-btn--sm">
+                      <Link href={"/admin/" + tenantSlug + "/conversations/" + inquiry.conversationId} className="adm-btn adm-btn--sm">
                         View conversation
-                      </a>
+                      </Link>
                       {inquiry.status === "OPEN" ? (
                         <form action={updateManualInquiryStatusAction}>
                           <input type="hidden" name="tenantSlug" value={tenantSlug} />

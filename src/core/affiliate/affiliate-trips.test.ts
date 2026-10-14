@@ -6,6 +6,7 @@ import {
   isAffiliateBookingUrl,
   matchAffiliateTrips,
   parseAffiliateTrips,
+  tripLink,
   type AffiliateTrip
 } from "./affiliate-trips";
 
@@ -18,7 +19,8 @@ const reef: AffiliateTrip = {
   description: "A full day on the outer reef from Cairns. Snorkel gear included. Lunch on board.",
   priceSignal: "From AUD 249",
   bookingPlatform: "FAREHARBOR",
-  bookingUrl: "https://fareharbor.com/embeds/book/reefmagic/items/1/"
+  bookingUrl: "https://fareharbor.com/embeds/book/reefmagic/items/1/",
+  tripUrl: null
 };
 const whales: AffiliateTrip = {
   slug: "hervey-bay-whales",
@@ -29,7 +31,8 @@ const whales: AffiliateTrip = {
   description: "Half a day with humpback whales.",
   priceSignal: "From AUD 135",
   bookingPlatform: "REZDY",
-  bookingUrl: "https://tasmanventure.rezdy.com/123/whale-watch"
+  bookingUrl: "https://tasmanventure.rezdy.com/123/whale-watch",
+  tripUrl: null
 };
 const sail: AffiliateTrip = {
   slug: "whitsundays-sail",
@@ -40,7 +43,8 @@ const sail: AffiliateTrip = {
   description: "Sail to Whitehaven Beach.",
   priceSignal: null,
   bookingPlatform: "FAREHARBOR",
-  bookingUrl: "https://fareharbor.com/embeds/book/oceanrafting/"
+  bookingUrl: "https://fareharbor.com/embeds/book/oceanrafting/",
+  tripUrl: null
 };
 const trips = [reef, whales, sail];
 
@@ -132,5 +136,59 @@ describe("replies", () => {
     const reply = buildAffiliateTripListReply([whales, sail]);
     expect(reply).toContain(`1. Hervey Bay Whale Watch with Tasman Venture (Hervey Bay, From AUD 135)\n   Book: ${whales.bookingUrl}`);
     expect(reply).toContain(`2. Whitehaven Sail with Ocean Rafting (Whitsundays)\n   Book: ${sail.bookingUrl}`);
+  });
+});
+
+describe("trips with a BluePass trip page", () => {
+  const ownTrip: AffiliateTrip = {
+    slug: "sunset-catamaran",
+    title: "Sunset Catamaran",
+    operatorName: "Blue Water Tours",
+    region: "Barbados",
+    category: "Sail & Yacht",
+    description: "Two hours on the west coast. Snorkel stop included.",
+    priceSignal: "From USD 95",
+    bookingPlatform: null,
+    bookingUrl: null,
+    tripUrl: "https://bluepass.co/book/sunset-catamaran"
+  };
+
+  it("keeps a trip that only has a BluePass page, and one that has both links", () => {
+    const parsed = parseAffiliateTrips([
+      { ...ownTrip },
+      { ...reef, tripUrl: "https://bluepass.co/?trip=outer-reef-day" },
+      { ...ownTrip, slug: "x", tripUrl: "http://bluepass.co/insecure" },
+      { ...ownTrip, slug: "y", tripUrl: "not a link" }
+    ]);
+    expect(parsed.map((trip) => trip.slug)).toEqual(["sunset-catamaran", "outer-reef-day"]);
+    expect(parsed[1].bookingUrl).toBe(reef.bookingUrl);
+    expect(parsed[1].tripUrl).toBe("https://bluepass.co/?trip=outer-reef-day");
+  });
+
+  it("sends the BluePass page, and says nothing about seats", () => {
+    const reply = buildAffiliateTripReply(ownTrip);
+    expect(reply).toContain("https://bluepass.co/book/sunset-catamaran");
+    expect(reply).toContain("Pick a date on that page to see live times and seats");
+    expect(reply).not.toMatch(/\b(available|availability|seats left|spots left)\b/i);
+    expect(reply).not.toContain("FareHarbor");
+  });
+
+  it("prefers the BluePass page over the platform's link", () => {
+    const both = { ...reef, tripUrl: "https://bluepass.co/?trip=outer-reef-day" };
+    expect(tripLink(both)).toBe("https://bluepass.co/?trip=outer-reef-day");
+    expect(buildAffiliateTripReply(both)).not.toContain("fareharbor.com");
+    expect(tripLink(reef)).toBe(reef.bookingUrl);
+  });
+
+  it("lists each trip with its BluePass link", () => {
+    const reply = buildAffiliateTripListReply([ownTrip, { ...whales, tripUrl: "https://bluepass.co/?trip=hervey-bay-whales" }]);
+    expect(reply).toContain("Book: https://bluepass.co/book/sunset-catamaran");
+    expect(reply).toContain("Book: https://bluepass.co/?trip=hervey-bay-whales");
+    expect(reply).toContain("opens the trip on BluePass");
+  });
+
+  it("still lets a traveller name or pick such a trip", () => {
+    const turn = decideAffiliateTurn({ message: "I want to book the Sunset Catamaran", trips: [ownTrip] });
+    expect(turn).toMatchObject({ kind: "TRIP", via: "NAMED" });
   });
 });

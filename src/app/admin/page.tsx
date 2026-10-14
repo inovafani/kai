@@ -1,8 +1,7 @@
-/* eslint-disable @next/next/no-html-link-for-pages -- plain links on purpose: a full page load makes the
-   browser show its own loading spinner in the tab, which client-side navigation never does. */
+import Link from "next/link";
 import { AdminFrame, AdminGate, AdminHeader, Card, Pill, Stat } from "./admin-ui";
 import { readAdminSession } from "@/server/admin/admin-session";
-import { getAdminOverview } from "@/server/admin/admin-overview";
+import { getAdminOverview, warmTenantPicker } from "@/server/admin/admin-overview";
 
 type TenantRow = Awaited<ReturnType<typeof getAdminOverview>>["tenants"][number];
 
@@ -26,10 +25,9 @@ function cronTone(status: string) {
 
 function TenantCard({ tenant }: { tenant: TenantRow }) {
   return (
-    <a href={`/admin/${tenant.slug}/settings`} className="adm-card adm-card--link">
+    <div className="adm-card adm-card--tenant">
       <div className="adm-card__top">
         <Pill tone={tenantTone(tenant.status)}>{tenant.status}</Pill>
-        <span className="adm-card__go ds-caption">Open</span>
       </div>
       <h3 className="ds-headline">{tenant.name}</h3>
       <p className="ds-body-sm">
@@ -39,7 +37,15 @@ function TenantCard({ tenant }: { tenant: TenantRow }) {
       <p className="ds-body-sm">
         {tenant._count.conversations} conversations · {tenant._count.manualInquiries} inquiries
       </p>
-    </a>
+      <div className="adm-card__actions">
+        <Link href={`/admin/${tenant.slug}/inquiries`} className="adm-btn adm-btn--primary">
+          Inquiries
+        </Link>
+        <Link href={`/admin/${tenant.slug}/settings`} className="adm-btn">
+          Settings
+        </Link>
+      </div>
+    </div>
   );
 }
 
@@ -49,7 +55,10 @@ export default async function AdminOverviewPage() {
     return <AdminGate tenantSlug="kai-demo" purpose="Enter the admin token to open the Kai console." />;
   }
 
-  const { tenants, platformTenants, testFixtureCount, stats, latestCronRuns, openInquiries } = await getAdminOverview();
+  // Start the navigation frame's operator list now, so it loads alongside this page's own data.
+  warmTenantPicker();
+
+  const { tenants, platformTenants, testFixtureCount, stats, latestCronRuns, openInquiries, waitingInquiries } = await getAdminOverview();
   const regions = [
     { label: "Australia", region: stats.au },
     { label: "Indonesia", region: stats.indonesia }
@@ -72,8 +81,43 @@ export default async function AdminOverviewPage() {
         </div>
 
         <section className="adm-stack">
+          <h2 className="ds-subhead">Waiting on a person</h2>
+          <p className="ds-body-sm">The newest inquiries nobody has handled yet, across every operator.</p>
+          <Card>
+            {waitingInquiries.length === 0 ? (
+              <p className="adm-empty">Nothing is waiting.</p>
+            ) : (
+              <div className="adm-table-wrap">
+                <table className="adm-table">
+                  <tbody>
+                    {waitingInquiries.map((inquiry) => (
+                      <tr key={inquiry.id}>
+                        <td className="adm-strong">
+                          <Link href={`/admin/${inquiry.tenant.slug}/inquiries`}>{inquiry.tenant.name}</Link>
+                        </td>
+                        <td>
+                          {inquiry.travellerName ?? "A traveller"}
+                          <span className="adm-muted">
+                            {" "}
+                            {[inquiry.productTitle, inquiry.dateText].filter(Boolean).join(" · ") || "asked a question"}
+                          </span>
+                        </td>
+                        <td className="adm-muted">{formatWhen(inquiry.createdAt)}</td>
+                        <td>
+                          <Link href={`/admin/${inquiry.tenant.slug}/conversations/${inquiry.conversationId}`}>Open</Link>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </section>
+
+        <section className="adm-stack">
           <h2 className="ds-subhead">Operators</h2>
-          <p className="ds-body-sm">Businesses that work with BluePass. Each one has its own trips, bookings and inbox.</p>
+          <p className="ds-body-sm">Businesses that work with BluePass. Open one to see its inbox and settings.</p>
           {tenants.length === 0 ? (
             <p className="adm-empty">No operators yet.</p>
           ) : (
@@ -133,9 +177,9 @@ export default async function AdminOverviewPage() {
         <section className="adm-stack">
           <div className="adm-row adm-row--between">
             <h2 className="ds-subhead">Background jobs</h2>
-            <a href="/admin/system" className="ds-caption">
+            <Link href="/admin/system" className="ds-caption">
               See all runs
-            </a>
+            </Link>
           </div>
           <Card>
             {latestCronRuns.length === 0 ? (

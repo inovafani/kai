@@ -21,3 +21,9 @@ export const AU_RECOMMENDATION_PLACEHOLDER_FEATURE = "au_recommendation_placehol
 // Rezdy agent (the Australian chat on bluepass.co): Kai recommends them and hands over each trip's booking link
 // before the tenant's own booking flow runs. Off by default, so turning it on is a data change.
 export const AFFILIATE_CATALOG_FEATURE = "affiliate_catalog";
+
+// Sends the traveller to the operator's own Rezdy booking page to pay, instead of reserving a hold and
+// charging through BluePass's Stripe. Kai still helps choose the trip, date and tickets; the payment,
+// the booking and the confirmation all happen on Rezdy, so the operator is paid by Rezdy and sees
+// a normal booking. Takes the place of bluepass_stripe_pms_checkout for a tenant that has both.
+export const REZDY_CHECKOUT_HANDOFF_FEATURE = "rezdy_checkout_handoff";

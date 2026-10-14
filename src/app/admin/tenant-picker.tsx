@@ -1,5 +1,7 @@
 "use client";
 
+import { useRouter } from "next/navigation";
+
 /**
  * Chooses which operator the Inquiries and Tenant settings links point at. Each option shows its slug
  * as well as its name, since two tenants can share a display name.
@@ -13,14 +15,19 @@ export function TenantPickerSelect({
   current: string;
   section: "inquiries" | "settings";
 }) {
+  const router = useRouter();
   return (
     <label className="shell-picker">
       <span className="shell-picker__label">Operator</span>
       <select
         className="shell-picker__select"
+        aria-label="Switch operator"
         value={current}
-        // A full page load, so the browser shows its own loading spinner in the tab.
-        onChange={(event) => window.location.assign(`/admin/${event.target.value}/${section}`)}
+        onChange={(event) => {
+          // A select is not a link, so tell the progress line a page change has started.
+          window.dispatchEvent(new Event("route:start"));
+          router.push(`/admin/${event.target.value}/${section}`);
+        }}
       >
         <optgroup label="Operators">
           {tenants

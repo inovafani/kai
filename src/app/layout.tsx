@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Inter } from "next/font/google";
 import "./globals.css";
+import RouteProgress from "./route-progress";
 
 /* Same pairing as the BluePass app: Geist carries display type, Inter carries body copy. */
 const geist = Geist({
@@ -34,6 +35,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${geist.variable} ${inter.variable}`}>
       <body>
+        <RouteProgress />
         {children}
       </body>
     </html>

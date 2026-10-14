@@ -1,10 +1,11 @@
 /**
- * Trips BluePass resells as a FareHarbor affiliate or a Rezdy agent (Australia, 2026-10). The
- * traveller books them on the platform's own booking page, which shows live times, takes the payment
- * and sends the confirmation. Kai cannot see any of that (no API, and the platforms share no
- * traveller details with affiliates), so for these trips Kai's job is honest: recommend, answer from
- * the listing, and hand over the booking link. It never states availability, never takes a payment
- * and never collects details for an operator enquiry.
+ * Trips BluePass sells through a booking page of its own or resells on FareHarbor or Rezdy
+ * (Australia, 2026-10). The traveller books on the BluePass trip page, which carries the right
+ * booking for the trip's channel: live times, payment and confirmation. Kai cannot see any of that
+ * (no API, and the platforms share no traveller details with affiliates), so for these trips Kai's
+ * job is honest: recommend, answer from the listing, and send the traveller to the trip page. It
+ * never states availability, never takes a payment and never collects details for an operator
+ * enquiry.
  */
 
 export type AffiliatePlatform = "FAREHARBOR" | "REZDY";
@@ -17,8 +18,11 @@ export type AffiliateTrip = {
   category: string;
   description: string;
   priceSignal: string | null;
-  bookingPlatform: AffiliatePlatform;
-  bookingUrl: string;
+  /** Set when the trip is resold through a FareHarbor or Rezdy link; null for BluePass's own trips. */
+  bookingPlatform: AffiliatePlatform | null;
+  bookingUrl: string | null;
+  /** The BluePass trip page, where the traveller books. Preferred over the platform's own link. */
+  tripUrl: string | null;
 };
 
 const PLATFORM_HOSTS: Record<AffiliatePlatform, RegExp> = {
@@ -43,6 +47,21 @@ export function isAffiliateBookingUrl(platform: unknown, url: unknown): platform
   }
 }
 
+/** An https link, nothing else: the BluePass app is trusted for which page, not for the scheme. */
+function isHttpsUrl(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  try {
+    return new URL(value.trim()).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** The link Kai sends: the BluePass trip page when there is one, else the platform's booking link. */
+export function tripLink(trip: AffiliateTrip): string | null {
+  return trip.tripUrl ?? trip.bookingUrl;
+}
+
 /** Keeps only well-formed trips from whatever the BluePass app sent. */
 export function parseAffiliateTrips(value: unknown): AffiliateTrip[] {
   if (!Array.isArray(value)) return [];
@@ -50,6 +69,9 @@ export function parseAffiliateTrips(value: unknown): AffiliateTrip[] {
     if (!item || typeof item !== "object") return [];
     const record = item as Record<string, unknown>;
     const text = (key: string) => (typeof record[key] === "string" ? (record[key] as string).trim() : "");
+    const platform = record.bookingPlatform;
+    const affiliate = isAffiliateBookingUrl(platform, record.bookingUrl);
+    const tripUrl = isHttpsUrl(record.tripUrl) ? (record.tripUrl as string).trim() : null;
     const trip: AffiliateTrip = {
       slug: text("slug"),
       title: text("title"),
@@ -58,10 +80,12 @@ export function parseAffiliateTrips(value: unknown): AffiliateTrip[] {
       category: text("category"),
       description: text("description"),
       priceSignal: text("priceSignal") || null,
-      bookingPlatform: record.bookingPlatform as AffiliatePlatform,
-      bookingUrl: text("bookingUrl")
+      bookingPlatform: affiliate ? (platform as AffiliatePlatform) : null,
+      bookingUrl: affiliate ? text("bookingUrl") : null,
+      tripUrl
     };
-    if (!trip.slug || !trip.title || !isAffiliateBookingUrl(trip.bookingPlatform, trip.bookingUrl)) return [];
+    // A trip with nowhere to send the traveller is no use to Kai.
+    if (!trip.slug || !trip.title || (!trip.tripUrl && !trip.bookingUrl)) return [];
     return [{ ...trip, operatorName: trip.operatorName || trip.title }];
   });
 }
@@ -125,12 +149,21 @@ export function wantsTripIdeas(message: string) {
 
 /** One trip, ready to book: what it is, who runs it, and the link. Nothing about availability. */
 export function buildAffiliateTripReply(trip: AffiliateTrip) {
-  const platform = PLATFORM_NAMES[trip.bookingPlatform];
   const price = trip.priceSignal ? ` ${trip.priceSignal} per guest.` : "";
   const about = trip.description ? `\n\n${firstSentences(trip.description, 2)}` : "";
+  const intro = `${trip.title} is run by ${trip.operatorName} (${trip.region}).${price}${about}\n\n`;
+
+  if (trip.tripUrl) {
+    return (
+      `${intro}See it and book it here: ${trip.tripUrl}\n\n` +
+      `Pick a date on that page to see live times and seats, then book securely there. ` +
+      `Your confirmation and booking reference arrive by email.`
+    );
+  }
+
+  const platform = trip.bookingPlatform ? PLATFORM_NAMES[trip.bookingPlatform] : "the operator's booking system";
   return (
-    `${trip.title} is run by ${trip.operatorName} (${trip.region}).${price}${about}\n\n` +
-    `Book it here: ${trip.bookingUrl}\n\n` +
+    `${intro}Book it here: ${trip.bookingUrl}\n\n` +
     `That's ${trip.operatorName}'s own booking page on ${platform}: pick a date to see live times and seats, then pay securely there. ` +
     `Your confirmation and booking reference come from ${trip.operatorName} by email.`
   );
@@ -141,12 +174,15 @@ export function buildAffiliateTripListReply(trips: AffiliateTrip[]) {
   const rows = trips
     .map((trip, index) => {
       const price = trip.priceSignal ? `, ${trip.priceSignal}` : "";
-      return `${index + 1}. ${trip.title} with ${trip.operatorName} (${trip.region}${price})\n   Book: ${trip.bookingUrl}`;
+      return `${index + 1}. ${trip.title} with ${trip.operatorName} (${trip.region}${price})\n   Book: ${tripLink(trip)}`;
     })
     .join("\n");
+  const onBluePass = trips.some((trip) => trip.tripUrl);
   return (
     `Here's what I'd look at:\n${rows}\n\n` +
-    `Each link opens the operator's own booking page, with live times and secure checkout. ` +
+    (onBluePass
+      ? `Each link opens the trip on BluePass, where you can pick a date and see live times and seats. `
+      : `Each link opens the operator's own booking page, with live times and secure checkout. `) +
     `Ask me about any of them and I'll tell you more.`
   );
 }

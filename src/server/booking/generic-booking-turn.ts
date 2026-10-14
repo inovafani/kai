@@ -14,7 +14,8 @@ import { buildBookingFailureManualInquiry } from "@/server/conversation/manual-i
 import { createManualInquiry, upsertConversationBookingState } from "@/server/conversation/conversation-repository";
 import { getPmsAdapter } from "@/server/pms/pms-adapter-registry";
 import { resolveTenantPmsEnv } from "@/server/pms/tenant-pms-credentials";
-import { BLUEPASS_STRIPE_PMS_CHECKOUT_FEATURE } from "@/core/tenant/feature-flags";
+import { BLUEPASS_STRIPE_PMS_CHECKOUT_FEATURE, REZDY_CHECKOUT_HANDOFF_FEATURE } from "@/core/tenant/feature-flags";
+import { buildRezdyCheckoutUrl } from "@/server/payments/rezdy-checkout-link";
 import { createBluePassPmsCheckoutClient, type BluePassPmsCheckoutClient } from "@/server/payments/bluepass-pms-checkout-client";
 import { resolveOperatorPayoutAccount } from "@/server/payments/operator-payout-account-client";
 
@@ -88,9 +89,12 @@ export async function runGenericBookingTurn(
   let contactRequest: RunGenericBookingTurnResult["contactRequest"] = null;
   let assistantContentOverride: string | null = null;
 
-  const bluePassStripeCheckoutEnabled = (input.tenant.config?.enabledFeatures ?? []).includes(
-    BLUEPASS_STRIPE_PMS_CHECKOUT_FEATURE
-  );
+  const enabledFeatures = input.tenant.config?.enabledFeatures ?? [];
+  // A tenant that sends travellers to the operator's own Rezdy page never charges through BluePass,
+  // even if it still carries the Stripe flag.
+  const rezdyCheckoutHandoffEnabled = enabledFeatures.includes(REZDY_CHECKOUT_HANDOFF_FEATURE);
+  const bluePassStripeCheckoutEnabled =
+    enabledFeatures.includes(BLUEPASS_STRIPE_PMS_CHECKOUT_FEATURE) && !rezdyCheckoutHandoffEnabled;
 
   try {
     const tenantPmsEnv = await resolveTenantPmsEnv(input.tenant.id, provider, process.env);
@@ -122,6 +126,9 @@ export async function runGenericBookingTurn(
       bookingWriteEnabled: input.tenant.config?.bookingWriteEnabled ?? false,
       allowUnpaidExternalBooking: false,
       bluePassStripeCheckoutEnabled,
+      rezdyCheckoutHandoff: rezdyCheckoutHandoffEnabled
+        ? { buildUrl: (args) => buildRezdyCheckoutUrl({ tenantSlug: input.tenant.slug, ...args }) }
+        : null,
       llmClient: input.llmClient ?? null,
       routerClient: input.routerClient ?? null,
       knowledgePack,
@@ -233,7 +240,9 @@ export async function runGenericBookingTurn(
     // formatCancellationPolicySummary when they haven't set one) rather than the disconnected
     // free-text knowledge-pack answer, so what Kai says here always matches what a real cancellation
     // would actually refund.
-    if (bookingResult.action === "BOOKING_PAYMENT_REQUIRED" && paymentRequest?.checkoutUrl) {
+    // Not for a hand-off to the operator's own Rezdy page: BluePass's refund tiers do not apply to a
+    // booking that Rezdy takes and the operator confirms, so quoting them would promise the wrong thing.
+    if (bookingResult.action === "BOOKING_PAYMENT_REQUIRED" && paymentRequest?.checkoutUrl && !bookingResult.rezdyHandoff) {
       const payoutAccount = await resolveOperatorPayoutAccount(input.tenant.slug, { fetcher: input.fetcher });
       const cancellationSummary = formatCancellationPolicySummary(payoutAccount?.cancellationPolicyTiers ?? null);
       assistantContent = `${assistantContent}\n\nCancellation policy: ${cancellationSummary}.`;

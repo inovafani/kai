@@ -1,5 +1,4 @@
-/* eslint-disable @next/next/no-html-link-for-pages -- plain links on purpose: a full page load makes the
-   browser show its own loading spinner in the tab, which client-side navigation never does. */
+import Link from "next/link";
 import { listRealTenantsForPicker } from "@/server/admin/admin-overview";
 import { submitAdminTokenAction } from "./inquiries/actions";
 import { AdminIcon, type IconName } from "./admin-icons";
@@ -9,38 +8,38 @@ export type AdminSection = "overview" | "settings" | "inquiries" | "llm-usage" |
 
 type NavItem = { id: AdminSection; label: string; href: string; icon: IconName };
 
-function navGroups(tenantSlug: string): { label: string; items: NavItem[] }[] {
-  return [
-    {
-      label: "Menu",
-      items: [
-        { id: "overview", label: "Overview", href: "/admin", icon: "overview" },
-        { id: "inquiries", label: "Inquiries", href: `/admin/${tenantSlug}/inquiries`, icon: "inquiries" },
-        { id: "settings", label: "Operator settings", href: `/admin/${tenantSlug}/settings`, icon: "settings" }
-      ]
-    },
-    {
-      label: "Platform",
-      items: [
-        { id: "llm-usage", label: "AI usage", href: "/admin/llm-usage", icon: "usage" },
-        { id: "system", label: "Background jobs", href: "/admin/system", icon: "system" }
-      ]
-    }
+function navGroups(tenant: { slug: string; name: string } | null): { label: string; items: NavItem[] }[] {
+  const groups: { label: string; items: NavItem[] }[] = [
+    { label: "Menu", items: [{ id: "overview", label: "Overview", href: "/admin", icon: "overview" }] }
   ];
+  if (tenant) {
+    groups.push({
+      label: tenant.name,
+      items: [
+        { id: "inquiries", label: "Inquiries", href: `/admin/${tenant.slug}/inquiries`, icon: "inquiries" },
+        { id: "settings", label: "Settings", href: `/admin/${tenant.slug}/settings`, icon: "settings" }
+      ]
+    });
+  }
+  groups.push({
+    label: "Platform",
+    items: [
+      { id: "llm-usage", label: "AI usage", href: "/admin/llm-usage", icon: "usage" },
+      { id: "system", label: "Background jobs", href: "/admin/system", icon: "system" }
+    ]
+  });
+  return groups;
 }
 
-/** The operator picker in the top bar; renders nothing if there are no operators. */
-async function TenantPicker({ current, active }: { current?: string; active: AdminSection }) {
-  const tenants = await listRealTenantsForPicker();
-  if (tenants.length === 0) return null;
-  const selected = current && tenants.some((tenant) => tenant.slug === current) ? current : tenants[0].slug;
-  return <TenantPickerSelect tenants={tenants} current={selected} section={active === "settings" ? "settings" : "inquiries"} />;
-}
+type FrameTenant = { slug: string; name: string; kind: "OPERATOR" | "PLATFORM" };
 
 /**
- * The console shell: a top bar (brand, operator, who is signed in), a side menu card, and the page.
- * Links are plain links (full page loads) on purpose: the browser then shows its own loading
- * spinner in the tab.
+ * The console shell: a top bar (brand, who is signed in), a side menu card, and the page.
+ *
+ * The side menu has two kinds of entry. Overview, AI usage and Background jobs are about the whole
+ * platform and are always there. Inquiries and Settings are about ONE operator, so they only appear,
+ * under that operator's name, on the pages of that operator. Nothing about an operator sits in the top
+ * bar any more: on a platform page it would have changed nothing.
  */
 export async function AdminFrame({
   active,
@@ -51,20 +50,22 @@ export async function AdminFrame({
   tenantSlug?: string;
   children: React.ReactNode;
 }) {
-  // Without a tenant in the URL, the Inquiries and Operator settings links point at the operator with
-  // the busiest inbox, which is the one an admin usually wants.
-  const slug = tenantSlug ?? (await listRealTenantsForPicker())[0]?.slug ?? "kai-demo";
+  const tenants: FrameTenant[] = tenantSlug ? await listRealTenantsForPicker() : [];
+  // A suspended tenant is not in the picker list but can still be opened, so it is added back here.
+  const known = tenants.find((tenant) => tenant.slug === tenantSlug);
+  const current: FrameTenant | null = tenantSlug ? (known ?? { slug: tenantSlug, name: tenantSlug, kind: "OPERATOR" }) : null;
+  const options = current && !known ? [current, ...tenants] : tenants;
+
   return (
     <div className="shell">
       <header className="shell-top">
-        <a href="/admin" className="shell-brand">
+        <Link href="/admin" className="shell-brand">
           <span className="shell-brand__mark" aria-hidden="true">
             K
           </span>
           <span className="shell-brand__name">Kai</span>
-        </a>
+        </Link>
         <span className="shell-top__spacer" />
-        <TenantPicker current={slug} active={active} />
         <span className="shell-user">
           <span className="shell-user__avatar" aria-hidden="true">
             B
@@ -78,11 +79,11 @@ export async function AdminFrame({
 
       <div className="shell-body">
         <nav className="shell-side" aria-label="Kai admin">
-          {navGroups(slug).map((group) => (
+          {navGroups(current).map((group) => (
             <div className="shell-side__group" key={group.label}>
               <span className="shell-side__label">{group.label}</span>
               {group.items.map((item) => (
-                <a
+                <Link
                   key={item.id}
                   href={item.href}
                   className={item.id === active ? "shell-side__link is-active" : "shell-side__link"}
@@ -90,7 +91,7 @@ export async function AdminFrame({
                 >
                   <AdminIcon name={item.icon} />
                   <span>{item.label}</span>
-                </a>
+                </Link>
               ))}
             </div>
           ))}
@@ -101,7 +102,20 @@ export async function AdminFrame({
             </a>
           </div>
         </nav>
-        <main className="shell-main">{children}</main>
+        <main className="shell-main">
+          {current ? (
+            <div className="adm-crumb">
+              <Link href="/admin" className="adm-crumb__link">
+                All operators
+              </Link>
+              <span className="adm-crumb__sep" aria-hidden="true">
+                /
+              </span>
+              <TenantPickerSelect tenants={options} current={current.slug} section={active === "settings" ? "settings" : "inquiries"} />
+            </div>
+          ) : null}
+          {children}
+        </main>
       </div>
     </div>
   );

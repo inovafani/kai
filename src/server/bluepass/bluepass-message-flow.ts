@@ -322,7 +322,8 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
         description: affiliateTrip.about ?? "",
         priceSignal: affiliateTrip.priceSignal && affiliateTrip.priceSignal !== "Quote on request" ? affiliateTrip.priceSignal : null,
         bookingPlatform: affiliateTrip.bookingPlatform,
-        bookingUrl: affiliateTrip.bookingUrl
+        bookingUrl: affiliateTrip.bookingUrl,
+        tripUrl: null
       }),
       bluepassMatches: [],
       bluepassInquiry: null,

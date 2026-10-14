@@ -3704,3 +3704,103 @@ describe("resolveFinalGenericBookingIntent", () => {
 
 
 
+
+describe("handing the payment to the operator's own Rezdy page", () => {
+  const memory = {
+    productExternalId: "PGG8QT",
+    productTitle: "Gold Coast Whale Escape",
+    dateText: "2026-06-26 13:30:00",
+    guests: 2,
+    ticketQuantities: [{ optionLabel: "Adult", quantity: 2 }],
+    ticketOptions: [{ label: "Adult", unitPriceCents: 5000 }],
+    extraQuantities: [],
+    timeOptions: [{ label: "1:30 PM", startTimeLocal: "2026-06-26 13:30:00", remaining: 8, checkoutItemKey: "item-431872-480938442" }]
+  };
+
+  function pms(overrides: { productUrl?: string | null } = {}) {
+    return {
+      provider: "REZDY" as const,
+      listProducts: async () => [
+        {
+          externalProductId: "PGG8QT",
+          title: "Gold Coast Whale Escape",
+          description: "Whale watching cruise",
+          bookingMode: "AUTO_BOOKING" as const,
+          productUrl: overrides.productUrl === undefined ? "https://boattimeyachtcharters.rezdy.com/services/431872" : overrides.productUrl
+        }
+      ],
+      getAvailability: async () => {
+        throw new Error("Availability should not be rechecked.");
+      },
+      createBooking: async () => {
+        throw new Error("Nothing may be reserved or charged through BluePass when the payment is handed to Rezdy.");
+      },
+      cancelBooking: async () => ({ cancelled: false }),
+      getBooking: async () => null
+    };
+  }
+
+  const ask = (extra: Partial<Parameters<typeof handleTravellerBookingMessage>[0]>) =>
+    handleTravellerBookingMessage({
+      message: "My name is Test, email test@gmail.com, phone 086775428176",
+      priorTravellerMessages: ["option 2 please", "no extras thanks"],
+      bookingMemory: memory,
+      bookingWriteEnabled: true,
+      bluePassStripeCheckoutEnabled: true, // still carried by the tenant: the hand-off must win
+      tenantContext: { tenantName: "Boattime Yacht Charters", brandVoice: null, pmsProvider: "REZDY", responseGuardrails: [], productTitles: [], knowledgeSummary: "" },
+      pmsAdapter: pms(),
+      ...extra
+    } as Parameters<typeof handleTravellerBookingMessage>[0]);
+
+  it("sends the traveller to the Rezdy page for the chosen time, with no hold and no BluePass checkout", async () => {
+    const result = await ask({
+      rezdyCheckoutHandoff: { buildUrl: () => "https://boattimeyachtcharters.rezdy.com/services/431872?itemKey=item-431872-480938442&useTransparentSessions=1" }
+    });
+
+    expect(result.action).toBe("BOOKING_PAYMENT_REQUIRED");
+    expect(result.rezdyHandoff).toBe(true);
+    expect(result.paymentHandoffUrl).toContain("itemKey=item-431872-480938442");
+    expect(result.pmsCheckoutHold).toBeUndefined();
+    expect(result.inquiryDraft).toBeUndefined();
+    expect(result.reply).toContain(result.paymentHandoffUrl as string);
+    expect(result.reply).toContain("Boattime Yacht Charters");
+    expect(result.reply).not.toMatch(/stripe|bluepass payment|payment link below/i);
+  });
+
+  it("passes the chosen time and product to the link builder", async () => {
+    const calls: unknown[] = [];
+    await ask({
+      rezdyCheckoutHandoff: {
+        buildUrl: (args) => {
+          calls.push(args);
+          return "https://boattimeyachtcharters.rezdy.com/services/431872";
+        }
+      }
+    });
+    expect(calls).toEqual([
+      {
+        productExternalId: "PGG8QT",
+        productUrl: "https://boattimeyachtcharters.rezdy.com/services/431872",
+        dateText: "2026-06-26 13:30:00",
+        timeOptions: memory.timeOptions
+      }
+    ]);
+  });
+
+  it("falls back to the product page when no time-specific link can be built", async () => {
+    const result = await ask({ rezdyCheckoutHandoff: { buildUrl: () => null } });
+    expect(result.paymentHandoffUrl).toBe("https://boattimeyachtcharters.rezdy.com/services/431872");
+    expect(result.rezdyHandoff).toBe(true);
+  });
+
+  it("tells the traveller the operator will be in touch when there is no page to send them to", async () => {
+    const result = await ask({
+      bluePassStripeCheckoutEnabled: false,
+      pmsAdapter: pms({ productUrl: null }),
+      rezdyCheckoutHandoff: { buildUrl: () => null }
+    });
+    expect(result.rezdyHandoff).toBeUndefined();
+    expect(result.paymentHandoffUrl).toBeUndefined();
+    expect(result.reply).toContain("they'll be in touch to sort out payment");
+  });
+});
