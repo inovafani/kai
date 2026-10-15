@@ -668,6 +668,30 @@ code {
   gap: var(--space-sm);
   text-align: right;
 }
+/* The buttons of one inquiry: one column of equal width, so they never wrap into uneven rows. */
+.adm-inq__actions {
+  display: grid;
+  gap: var(--space-xs);
+  width: 100%;
+}
+.adm-inq__actions form {
+  display: contents;
+}
+.adm-inq__actions .adm-btn {
+  width: 100%;
+  justify-content: center;
+  text-align: center;
+}
+/* What the traveller wrote, labelled, so it does not read as a stray line under the review box. */
+.adm-inq__msg {
+  margin-top: var(--space-md);
+  display: grid;
+  gap: 4px;
+}
+.adm-inq__msg p {
+  padding-left: var(--space-sm);
+  border-left: 2px solid var(--color-hairline);
+}
 .adm-inq__box {
   margin-top: var(--space-sm);
   padding: var(--space-sm) var(--space-md);
@@ -895,4 +919,12 @@ html:has(.embed-root) ::selection {
   flex-wrap: wrap;
   gap: var(--space-xs);
   margin-top: var(--space-xs);
+}
+
+.adm-btn--danger {
+  color: #ff8f8c;
+  border-color: rgba(255, 107, 107, 0.4);
+}
+.adm-btn--danger:hover {
+  background: rgba(255, 107, 107, 0.12);
 }

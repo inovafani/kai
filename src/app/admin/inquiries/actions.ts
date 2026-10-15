@@ -4,7 +4,7 @@ import type { ManualInquiryStatus } from "@prisma/client";
 import { cookies } from "next/headers";
 import { revalidatePath } from "next/cache";
 import { assertAdminAction } from "@/server/admin/admin-session";
-import { updateManualInquiryStatusForTenantSlug } from "@/server/conversation/conversation-repository";
+import { deleteManualInquiryForTenantSlug, updateManualInquiryStatusForTenantSlug } from "@/server/conversation/conversation-repository";
 
 const allowedStatuses = new Set<ManualInquiryStatus>(["OPERATOR_NOTIFIED", "CLOSED"]);
 
@@ -27,6 +27,23 @@ export async function updateManualInquiryStatusAction(formData: FormData) {
   });
 
   revalidatePath(`/admin/${tenantSlug}/inquiries`);
+}
+
+export async function deleteManualInquiryAction(formData: FormData) {
+  // Server actions can be called directly, so this checks the admin session itself.
+  await assertAdminAction();
+
+  const tenantSlug = String(formData.get("tenantSlug") ?? "");
+  const inquiryId = String(formData.get("inquiryId") ?? "");
+
+  if (!tenantSlug || !inquiryId) {
+    throw new Error("Invalid manual inquiry delete.");
+  }
+
+  await deleteManualInquiryForTenantSlug({ tenantSlug, inquiryId });
+
+  revalidatePath(`/admin/${tenantSlug}/inquiries`);
+  revalidatePath("/admin");
 }
 
 export async function submitAdminTokenAction(formData: FormData) {

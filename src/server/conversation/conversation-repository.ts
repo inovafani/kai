@@ -608,6 +608,20 @@ export async function updateManualInquiryStatusForTenantSlug(input: {
   });
 }
 
+/**
+ * Removes one manual inquiry, and only if it belongs to the tenant in the URL. The conversation it
+ * came from, with its messages, stays: only the inquiry record (the item in the inbox) is deleted.
+ */
+export async function deleteManualInquiryForTenantSlug(input: { tenantSlug: string; inquiryId: string }) {
+  return prisma.manualInquiry.deleteMany({
+    where: {
+      id: input.inquiryId,
+      tenant: {
+        slug: input.tenantSlug
+      }
+    }
+  });
+}
 
 export async function findConversationTranscriptForTenantSlug(input: {
   tenantSlug: string;

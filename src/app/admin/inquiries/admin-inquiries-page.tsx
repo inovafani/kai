@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { AdminFrame, AdminGate, AdminHeader, humanize, Pill, Stat } from "../admin-ui";
-import { updateManualInquiryStatusAction } from "./actions";
+import { deleteManualInquiryAction, updateManualInquiryStatusAction } from "./actions";
+import { DeleteInquiryButton } from "./delete-inquiry-button";
 import { toManualInquiryViewModel } from "./manual-inquiry-view-model";
 import { warmTenantPicker } from "@/server/admin/admin-overview";
 import { readAdminSession } from "@/server/admin/admin-session";
@@ -92,9 +93,10 @@ export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: strin
                       ))}
                     </div>
                   ) : null}
-                  <p className="ds-body" style={{ marginTop: 12 }}>
-                    {inquiry.travellerMessage}
-                  </p>
+                  <div className="adm-inq__msg">
+                    <span className="ds-caption">What the traveller sent when this was saved</span>
+                    <p className="ds-body">{inquiry.travellerMessage}</p>
+                  </div>
                 </div>
                 <div className="adm-inq__aside">
                   <span className="ds-caption">{formatCreatedAt(inquiry.createdAt)}</span>
@@ -156,13 +158,14 @@ export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: strin
                         {inquiry.operatorNextStep}
                       </p>
                     </div>
-                    <p className="ds-body" style={{ marginTop: 12 }}>
-                      {inquiry.travellerMessage}
-                    </p>
+                    <div className="adm-inq__msg">
+                      <span className="ds-caption">What the traveller sent when this was saved</span>
+                      <p className="ds-body">{inquiry.travellerMessage}</p>
+                    </div>
                   </div>
                   <div className="adm-inq__aside">
                     <span className="ds-caption">{formatCreatedAt(inquiry.createdAt)}</span>
-                    <div className="adm-row" style={{ justifyContent: "flex-end" }}>
+                    <div className="adm-inq__actions">
                       <Link href={"/admin/" + tenantSlug + "/conversations/" + inquiry.conversationId} className="adm-btn adm-btn--sm">
                         View conversation
                       </Link>
@@ -186,6 +189,7 @@ export async function AdminInquiriesPageView({ tenantSlug }: { tenantSlug: strin
                           </button>
                         </form>
                       ) : null}
+                      <DeleteInquiryButton action={deleteManualInquiryAction} tenantSlug={tenantSlug} inquiryId={inquiry.id} />
                     </div>
                   </div>
                 </article>

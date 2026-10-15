@@ -93,31 +93,37 @@ export async function listCronRuns(limit = 50) {
   return prisma.cronRunLog.findMany({ orderBy: { finishedAt: "desc" }, take: limit });
 }
 
-type PickerTenant = { slug: string; name: string; kind: "OPERATOR" | "PLATFORM" };
+type PickerTenant = { slug: string; name: string; kind: "OPERATOR" | "PLATFORM"; status: "ACTIVE" | "SUSPENDED" | "DISABLED" };
 // The promise is kept, not just the answer, so a page can start the lookup before its own data
 // arrives and the navigation frame then waits on the same one instead of asking again afterwards.
 let pickerCache: { at: number; tenants: Promise<PickerTenant[]> } | null = null;
 const PICKER_CACHE_MS = 60_000;
 
 /**
- * Active tenants for the picker: operators first (busiest inbox first), then BluePass's own chat.
- * Test fixtures and suspended tenants are left out. Every admin page asks for this, and it only
- * changes when someone adds or suspends a tenant, so it is remembered for a minute.
+ * Tenants for the picker: operators first (active before suspended, busiest inbox first), then
+ * BluePass's own chat. Test fixtures are left out; suspended and disabled tenants stay in, marked as
+ * such, so the picker lists the same tenants as the overview. Every admin page asks for this, and it
+ * only changes when someone adds or suspends a tenant, so it is remembered for a minute.
  */
 export function listRealTenantsForPicker(now = Date.now()): Promise<PickerTenant[]> {
   if (pickerCache && now - pickerCache.at < PICKER_CACHE_MS) return pickerCache.tenants;
 
   const tenants = prisma
     .$queryRaw<(PickerTenant & { manualInquiries: number })[]>`
-    SELECT t."slug", t."name", t."kind"::text AS "kind",
+    SELECT t."slug", t."name", t."kind"::text AS "kind", t."status"::text AS "status",
            (SELECT count(*)::int FROM "ManualInquiry" m WHERE m."tenantId" = t."id") AS "manualInquiries"
     FROM "Tenant" t
-    WHERE t."status" = 'ACTIVE' AND t."slug" !~ ${TEST_FIXTURE_SQL_REGEX}
+    WHERE t."slug" !~ ${TEST_FIXTURE_SQL_REGEX}
     ORDER BY t."createdAt" ASC`
     .then((rows) =>
       rows
-        .sort((x, y) => Number(x.kind === "PLATFORM") - Number(y.kind === "PLATFORM") || y.manualInquiries - x.manualInquiries)
-        .map((tenant) => ({ slug: tenant.slug, name: tenant.name, kind: tenant.kind }))
+        .sort(
+          (x, y) =>
+            Number(x.kind === "PLATFORM") - Number(y.kind === "PLATFORM") ||
+            Number(x.status !== "ACTIVE") - Number(y.status !== "ACTIVE") ||
+            y.manualInquiries - x.manualInquiries
+        )
+        .map((tenant) => ({ slug: tenant.slug, name: tenant.name, kind: tenant.kind, status: tenant.status }))
     );
   pickerCache = { at: now, tenants };
   // A failed lookup must not be remembered for a minute.

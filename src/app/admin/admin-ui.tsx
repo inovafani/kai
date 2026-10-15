@@ -31,7 +31,7 @@ function navGroups(tenant: { slug: string; name: string } | null): { label: stri
   return groups;
 }
 
-type FrameTenant = { slug: string; name: string; kind: "OPERATOR" | "PLATFORM" };
+type FrameTenant = { slug: string; name: string; kind: "OPERATOR" | "PLATFORM"; status: string };
 
 /**
  * The console shell: a top bar (brand, who is signed in), a side menu card, and the page.
@@ -53,7 +53,7 @@ export async function AdminFrame({
   const tenants: FrameTenant[] = tenantSlug ? await listRealTenantsForPicker() : [];
   // A suspended tenant is not in the picker list but can still be opened, so it is added back here.
   const known = tenants.find((tenant) => tenant.slug === tenantSlug);
-  const current: FrameTenant | null = tenantSlug ? (known ?? { slug: tenantSlug, name: tenantSlug, kind: "OPERATOR" }) : null;
+  const current: FrameTenant | null = tenantSlug ? (known ?? { slug: tenantSlug, name: tenantSlug, kind: "OPERATOR", status: "ACTIVE" }) : null;
   const options = current && !known ? [current, ...tenants] : tenants;
 
   return (

@@ -11,7 +11,7 @@ export function TenantPickerSelect({
   current,
   section
 }: {
-  tenants: { slug: string; name: string; kind: string }[];
+  tenants: { slug: string; name: string; kind: string; status?: string }[];
   current: string;
   section: "inquiries" | "settings";
 }) {
@@ -34,7 +34,7 @@ export function TenantPickerSelect({
             .filter((tenant) => tenant.kind !== "PLATFORM")
             .map((tenant) => (
               <option key={tenant.slug} value={tenant.slug}>
-                {tenant.name} ({tenant.slug})
+                {tenant.name} ({tenant.slug}){tenant.status && tenant.status !== "ACTIVE" ? ` · ${tenant.status.toLowerCase()}` : ""}
               </option>
             ))}
         </optgroup>
@@ -44,7 +44,7 @@ export function TenantPickerSelect({
               .filter((tenant) => tenant.kind === "PLATFORM")
               .map((tenant) => (
                 <option key={tenant.slug} value={tenant.slug}>
-                  {tenant.name} ({tenant.slug})
+                  {tenant.name} ({tenant.slug}){tenant.status && tenant.status !== "ACTIVE" ? ` · ${tenant.status.toLowerCase()}` : ""}
                 </option>
               ))}
           </optgroup>

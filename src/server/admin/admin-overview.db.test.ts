@@ -30,15 +30,20 @@ describe("admin overview tenant loading", () => {
     expect(overview.tenants.every((tenant) => tenant.kind === "OPERATOR")).toBe(true);
   }, 120_000);
 
-  it("lists only active real tenants in the picker, operators before BluePass's own chat, and remembers the answer", async () => {
+  it("lists every real tenant in the picker, active ones first, operators before BluePass's own chat, and remembers the answer", async () => {
     clearTenantPickerCache();
     const first = await listRealTenantsForPicker(1_000);
     expect(first.length).toBeGreaterThan(0);
     expect(first.some((tenant) => isTestFixtureTenantSlug(tenant.slug))).toBe(false);
 
-    const active = await prisma.tenant.findMany({ where: { status: "ACTIVE" }, select: { slug: true } });
-    const activeSlugs = new Set(active.map((tenant) => tenant.slug));
-    expect(first.every((tenant) => activeSlugs.has(tenant.slug))).toBe(true);
+    // The same tenants the overview shows, suspended ones included and marked.
+    const overview = await getAdminOverview();
+    expect(first.map((tenant) => tenant.slug).sort()).toEqual([...overview.tenants, ...overview.platformTenants].map((tenant) => tenant.slug).sort());
+    const suspended = first.filter((tenant) => tenant.status !== "ACTIVE");
+    for (const tenant of suspended) {
+      const siblings = first.filter((other) => other.kind === tenant.kind);
+      expect(siblings.indexOf(tenant)).toBeGreaterThanOrEqual(siblings.filter((other) => other.status === "ACTIVE").length);
+    }
 
     const firstPlatform = first.findIndex((tenant) => tenant.kind === "PLATFORM");
     if (firstPlatform >= 0) expect(first.slice(firstPlatform).every((tenant) => tenant.kind === "PLATFORM")).toBe(true);
