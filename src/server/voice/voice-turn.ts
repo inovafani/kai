@@ -75,7 +75,10 @@ export async function runKaiVoiceTurn(input: {
   // Kai's own last message, so it has to be told what that was. The chat routes pass it; the voice
   // turn didn't, so a caller who gave their number was answered with the boat list again (seen in
   // the first ElevenLabs test call, 2026-10-05).
-  const lastAssistantMessage = [...history].reverse().find((message) => message.role === "assistant")?.content ?? null;
+  const priorAssistantMessages = history
+    .filter((message) => message.role === "assistant")
+    .map((message) => message.content);
+  const lastAssistantMessage = priorAssistantMessages.at(-1) ?? null;
 
   const result = await handleBluePassMarketplaceMessage({
     tenantId: tenant.id,
@@ -83,6 +86,7 @@ export async function runKaiVoiceTurn(input: {
     content: latestMessage,
     priorTravellerMessages,
     lastAssistantMessage,
+    priorAssistantMessages,
     travellerPhone: callerPhone,
     routerClient: createBluePassRouterClient(process.env)
   });
