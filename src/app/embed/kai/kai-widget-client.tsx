@@ -1,6 +1,9 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { CSSProperties, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import "./kai-widget.css";
+import type { BluePassQuestionInput } from "@/core/bluepass/question-input";
+import QuestionControl from "./question-control";
 
 type WidgetConfig = {
   tenant: {
@@ -130,6 +133,7 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
   const [config, setConfig] = useState<WidgetConfig | null>(null);
   const [conversationId, setConversationId] = useState("");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [questionInput, setQuestionInput] = useState<BluePassQuestionInput | null>(null);
   const [paymentRequest, setPaymentRequest] = useState<PaymentRequest | null>(null);
   const [paymentIntent, setPaymentIntent] = useState<PaymentIntent | null>(null);
   const [contactRequest, setContactRequest] = useState<ContactRequest | null>(null);
@@ -258,6 +262,16 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
 
   const accentColor = config?.branding.primaryColor ?? "#0f766e";
   const canSend = status !== "loading" && status !== "sending" && status !== "error" && message.trim().length > 0;
+
+  /* Inside the customer's page the loader draws the frame, so the close button asks it to close; opened
+     on its own (no parent page) there is nothing to close, so no button. */
+  const [embedded, setEmbedded] = useState(false);
+  useEffect(() => {
+    setEmbedded(window.parent !== window);
+  }, []);
+  function closeFromParent() {
+    window.parent.postMessage({ source: "kai-widget", type: "close" }, "*");
+  }
   const isSending = status === "sending";
   const subtitle = useMemo(() => {
     if (!config) {
@@ -286,12 +300,14 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
       setContactFormError("");
       setMessage("");
       setMessages((currentMessages) => [...currentMessages, localTravellerMessage]);
+      setQuestionInput(null);
 
       const response = await readJson<{
         message: ChatMessage;
         assistantMessage: ChatMessage;
         paymentRequest?: PaymentRequest | null;
         contactRequest?: ContactRequest | null;
+        questionInput?: BluePassQuestionInput | null;
       }>(
         await fetch("/api/widget/messages", {
           method: "POST",
@@ -312,6 +328,8 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
       ]);
       setPaymentRequest(response.paymentRequest ?? null);
       setContactRequest(response.contactRequest ?? null);
+      // Only while Kai is waiting on that answer: a contact form or a payment takes the place of it.
+      setQuestionInput(response.contactRequest || response.paymentRequest ? null : (response.questionInput ?? null));
       if (!response.contactRequest) {
         setContactForm({ name: "", email: "", phone: "" });
       }
@@ -434,280 +452,142 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
   }
 
   return (
-    <main
-      style={{
-        minHeight: "100dvh",
-        display: "grid",
-        placeItems: "center",
-        background: "#f7faf9",
-        color: "#12201d",
-        padding: 16
-      }}
-    >
-      <section
-        aria-label="Kai booking assistant"
-        style={{
-          width: "min(100%, 420px)",
-          minHeight: 620,
-          display: "grid",
-          gridTemplateRows: "auto 1fr auto",
-          overflow: "hidden",
-          border: "1px solid #dbe7e2",
-          borderRadius: 8,
-          background: "#ffffff",
-          boxShadow: "0 24px 70px rgba(15, 23, 42, 0.14)"
-        }}
-      >
-        <header
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-            padding: 18,
-            borderBottom: "1px solid #e7efec",
-            background: "#fbfdfc"
-          }}
-        >
-          <div
-            aria-hidden="true"
-            style={{
-              width: 40,
-              height: 40,
-              display: "grid",
-              placeItems: "center",
-              borderRadius: 8,
-              background: accentColor,
-              color: "#ffffff",
-              fontWeight: 800
-            }}
-          >
-            K
+    <main className="kw" style={{ "--kw-accent": accentColor } as CSSProperties}>
+      <section className="kpanel__shell" aria-label="Kai booking assistant">
+        <header className="kpanel__head">
+          <div className="kpanel__id">
+            <span className="kpanel__avatar" aria-hidden="true">
+              K
+              <span className="kpanel__dot" />
+            </span>
+            <div className="kpanel__id-text">
+              <h1 className="kpanel__name ds-body-sm">{config?.branding.widgetTitle ?? "Kai"}</h1>
+              <p className="kpanel__status ds-micro">{subtitle}</p>
+            </div>
           </div>
-          <div style={{ minWidth: 0 }}>
-            <h1 style={{ margin: 0, fontSize: 22, lineHeight: 1.2 }}>
-              {config?.branding.widgetTitle ?? "Kai"}
-            </h1>
-            <p style={{ margin: "4px 0 0", color: "#5c6f68", fontSize: 13 }}>
-              {subtitle}
-            </p>
-          </div>
+          {embedded ? (
+            <button type="button" className="kpanel__icon" aria-label="Close Kai" onClick={closeFromParent}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          ) : null}
         </header>
 
-        <div
-          aria-live="polite"
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 12,
-            padding: 18,
-            overflowY: "auto",
-            background: "#f9fbfa"
-          }}
-        >
+        <div className="kpanel__log" aria-live="polite">
           {status === "loading" ? (
-            <p style={{ margin: 0, color: "#5c6f68" }}>Loading Kai...</p>
+            <div className="kmsg kmsg--assistant">
+              <span className="kmsg__mark" aria-hidden="true">K</span>
+              <span className="kmsg__bubble kmsg__bubble--typing" role="status" aria-label="Loading Kai">
+                <i />
+                <i />
+                <i />
+              </span>
+            </div>
           ) : null}
 
           {messages.map((chatMessage) => {
             const isTraveller = chatMessage.role === "TRAVELLER";
 
             return (
-              <p
-                key={chatMessage.id}
-                style={{
-                  alignSelf: isTraveller ? "flex-end" : "flex-start",
-                  maxWidth: "82%",
-                  margin: 0,
-                  padding: "10px 12px",
-                  borderRadius: 8,
-                  background: isTraveller ? accentColor : "#ffffff",
-                  border: isTraveller ? "1px solid transparent" : "1px solid #dfe9e5",
-                  color: isTraveller ? "#ffffff" : "#17231f",
-                  lineHeight: 1.45,
-                  fontSize: 14,
-                  whiteSpace: "pre-wrap"
-                }}
-              >
-                {chatMessage.content}
-              </p>
+              <div key={chatMessage.id} className={`kmsg ${isTraveller ? "kmsg--user" : "kmsg--assistant"}`}>
+                {isTraveller ? null : (
+                  <span className="kmsg__mark" aria-hidden="true">K</span>
+                )}
+                <p className="kmsg__bubble ds-body-sm">{chatMessage.content}</p>
+              </div>
             );
           })}
 
           {isSending ? (
-            <div
-              aria-label="Kai is typing"
-              style={{
-                alignSelf: "flex-start",
-                display: "flex",
-                alignItems: "center",
-                gap: 8,
-                maxWidth: "82%",
-                margin: 0,
-                padding: "10px 12px",
-                border: "1px solid #dfe9e5",
-                borderRadius: 8,
-                background: "#ffffff",
-                color: "#5c6f68",
-                fontSize: 14
-              }}
-            >
-              <span>Kai is typing</span>
-              <span aria-hidden="true" style={{ display: "inline-flex", gap: 3 }}>
-                <span style={{ width: 5, height: 5, borderRadius: 999, background: accentColor, animation: "kaiTyping 1s infinite ease-in-out" }} />
-                <span style={{ width: 5, height: 5, borderRadius: 999, background: accentColor, animation: "kaiTyping 1s infinite ease-in-out 0.15s" }} />
-                <span style={{ width: 5, height: 5, borderRadius: 999, background: accentColor, animation: "kaiTyping 1s infinite ease-in-out 0.3s" }} />
+            <div className="kmsg kmsg--assistant">
+              <span className="kmsg__mark" aria-hidden="true">K</span>
+              <span className="kmsg__bubble kmsg__bubble--typing" role="status" aria-label="Kai is typing">
+                <i />
+                <i />
+                <i />
               </span>
             </div>
           ) : null}
 
           {error ? (
-            <p
-              role="alert"
-              style={{
-                margin: 0,
-                padding: "10px 12px",
-                border: "1px solid #fecaca",
-                borderRadius: 8,
-                background: "#fef2f2",
-                color: "#991b1b",
-                fontSize: 14
-              }}
-            >
-              {error}
-            </p>
+            <div className="kmsg kmsg--system" role="alert">
+              <p className="kmsg__bubble ds-body-sm">{error}</p>
+            </div>
+          ) : null}
+
+          {questionInput && !isSending ? (
+            <QuestionControl
+              key={`${messages.length}-${questionInput.kind}`}
+              input={questionInput}
+              disabled={status !== "ready"}
+              onAnswer={(text) => void submitContent(text)}
+            />
           ) : null}
 
           {contactRequest ? (
-            <form
-              aria-label="Contact details"
-              onSubmit={submitContactDetails}
-              style={{
-                alignSelf: "stretch",
-                display: "grid",
-                gap: 10,
-                padding: 14,
-                border: "1px solid #cfded9",
-                borderRadius: 8,
-                background: "#ffffff",
-                boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)"
-              }}
-            >
-              <h2 style={{ margin: 0, fontSize: 16, lineHeight: 1.25 }}>Your details</h2>
-              <p style={{ margin: 0, color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
+            <form className="kform" aria-label="Contact details" onSubmit={submitContactDetails}>
+              <h2 className="kform__title ds-body-sm">Your details</h2>
+              <p className="kform__lede ds-micro">
                 This keeps names, email, and phone number in the right format for the booking.
               </p>
-              <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 800 }}>
-                Full name
+              <label className="kform__field">
+                <span className="kform__label ds-micro">Full name</span>
                 <input
+                  className="kform__input ds-body-sm"
                   aria-label="Full name"
                   value={contactForm.name}
                   onChange={(event) => setContactForm((current) => ({ ...current, name: event.target.value }))}
                   disabled={isSending}
                   autoComplete="name"
-                  style={{
-                    height: 42,
-                    border: "1px solid #cfded9",
-                    borderRadius: 8,
-                    padding: "0 12px",
-                    font: "inherit",
-                    outlineColor: accentColor
-                  }}
                 />
               </label>
-              <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 800 }}>
-                Email
+              <label className="kform__field">
+                <span className="kform__label ds-micro">Email</span>
                 <input
+                  className="kform__input ds-body-sm"
                   aria-label="Email"
                   value={contactForm.email}
                   onChange={(event) => setContactForm((current) => ({ ...current, email: event.target.value }))}
                   disabled={isSending}
                   autoComplete="email"
                   inputMode="email"
-                  style={{
-                    height: 42,
-                    border: "1px solid #cfded9",
-                    borderRadius: 8,
-                    padding: "0 12px",
-                    font: "inherit",
-                    outlineColor: accentColor
-                  }}
                 />
               </label>
-              <label style={{ display: "grid", gap: 5, fontSize: 13, fontWeight: 800 }}>
-                Phone
+              <label className="kform__field">
+                <span className="kform__label ds-micro">Phone</span>
                 <input
+                  className="kform__input ds-body-sm"
                   aria-label="Phone"
                   value={contactForm.phone}
                   onChange={(event) => setContactForm((current) => ({ ...current, phone: event.target.value }))}
                   disabled={isSending}
                   autoComplete="tel"
                   inputMode="tel"
-                  style={{
-                    height: 42,
-                    border: "1px solid #cfded9",
-                    borderRadius: 8,
-                    padding: "0 12px",
-                    font: "inherit",
-                    outlineColor: accentColor
-                  }}
                 />
               </label>
               {contactFormError ? (
-                <p
-                  role="alert"
-                  style={{
-                    margin: 0,
-                    padding: "8px 10px",
-                    border: "1px solid #fecaca",
-                    borderRadius: 8,
-                    background: "#fef2f2",
-                    color: "#991b1b",
-                    fontSize: 13,
-                    lineHeight: 1.4
-                  }}
-                >
+                <p className="kform__err ds-micro" role="alert">
                   {contactFormError}
                 </p>
               ) : null}
-              <button
-                type="submit"
-                disabled={isSending}
-                style={{
-                  height: 42,
-                  border: "none",
-                  borderRadius: 8,
-                  background: isSending ? "#b8c7c2" : accentColor,
-                  color: "#ffffff",
-                  fontWeight: 800,
-                  cursor: isSending ? "not-allowed" : "pointer"
-                }}
-              >
+              <button type="submit" className="kform__go ds-body-sm" disabled={isSending}>
                 Send details
               </button>
             </form>
           ) : null}
 
           {paymentRequest && hostedCheckoutRedirectEnabled ? (
-            <section
-              aria-label="Secure payment"
-              style={{
-                alignSelf: "stretch",
-                padding: 14,
-                border: "1px solid #cfded9",
-                borderRadius: 8,
-                background: "#ffffff",
-                boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)"
-              }}
-            >
-              <h2 style={{ margin: 0, fontSize: 16, lineHeight: 1.25 }}>
+            <section className="kpay" aria-label="Secure payment">
+              <h2 className="kpay__title ds-body-sm">
                 {rezdyHandoffEnabled ? "Finish your booking" : "Redirecting you to secure payment"}
               </h2>
-              <p style={{ margin: "8px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
+              <p className="kpay__meta ds-micro">
                 {paymentRequest.productTitle ?? "Selected booking"}
                 {paymentRequest.dateText ? ` - ${paymentRequest.dateText}` : ""}
                 {paymentRequest.guests ? ` - ${paymentRequest.guests} guest${paymentRequest.guests === 1 ? "" : "s"}` : ""}
               </p>
-              <p style={{ margin: "10px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
+              <p className="kpay__note ds-micro">
                 {rezdyHandoffEnabled
                   ? "The booking page opens in a new tab, where you pay the operator securely. Kai never sees or stores your card details."
                   : "You'll be taken to a secure BluePass payment page; Kai never sees or stores your card details."}
@@ -715,6 +595,7 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
               {paymentRequest.checkoutUrl ? (
                 <button
                   type="button"
+                  className="kpay__go ds-body-sm"
                   onClick={() => {
                     if (rezdyHandoffEnabled) {
                       window.open(paymentRequest.checkoutUrl as string, "_blank", "noopener,noreferrer");
@@ -723,22 +604,11 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
                     const target = window.top ?? window;
                     target.location.href = paymentRequest.checkoutUrl as string;
                   }}
-                  style={{
-                    width: "100%",
-                    height: 42,
-                    marginTop: 12,
-                    border: "none",
-                    borderRadius: 8,
-                    background: accentColor,
-                    color: "#ffffff",
-                    fontWeight: 800,
-                    cursor: "pointer"
-                  }}
                 >
                   {rezdyHandoffEnabled ? "Open the booking page" : "Continue to secure payment"}
                 </button>
               ) : (
-                <p style={{ margin: "10px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
+                <p className="kpay__note ds-micro">
                   I could not prepare the secure payment link just now - the operator will follow up to complete payment.
                 </p>
               )}
@@ -746,112 +616,40 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
           ) : null}
 
           {paymentRequest && !hostedCheckoutRedirectEnabled ? (
-            <section
-              aria-label="Secure payment"
-              style={{
-                alignSelf: "stretch",
-                padding: 14,
-                border: "1px solid #cfded9",
-                borderRadius: 8,
-                background: "#ffffff",
-                boxShadow: "0 8px 24px rgba(15, 23, 42, 0.08)"
-              }}
-            >
-              <h2 style={{ margin: 0, fontSize: 16, lineHeight: 1.25 }}>Secure RezdyPay payment</h2>
-              <p style={{ margin: "8px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
+            <section className="kpay" aria-label="Secure payment">
+              <h2 className="kpay__title ds-body-sm">Secure RezdyPay payment</h2>
+              <p className="kpay__meta ds-micro">
                 {paymentRequest.productTitle ?? "Selected booking"}
                 {paymentRequest.dateText ? ` - ${paymentRequest.dateText}` : ""}
                 {paymentRequest.guests ? ` - ${paymentRequest.guests} guest${paymentRequest.guests === 1 ? "" : "s"}` : ""}
               </p>
-              <p style={{ margin: "10px 0 0", color: "#4f625b", fontSize: 13, lineHeight: 1.45 }}>
+              <p className="kpay__note ds-micro">
                 Card details are handled by RezdyPay&apos;s secure Stripe form; Kai will not store card numbers.
               </p>
               {paymentError ? (
-                <p
-                  role="alert"
-                  style={{
-                    margin: "10px 0 0",
-                    padding: "8px 10px",
-                    border: "1px solid #fecaca",
-                    borderRadius: 8,
-                    background: "#fef2f2",
-                    color: "#991b1b",
-                    fontSize: 13,
-                    lineHeight: 1.4
-                  }}
-                >
+                <p className="kform__err ds-micro" role="alert">
                   {paymentError}
                 </p>
               ) : null}
               {!paymentIntent ? (
-                <button
-                  type="button"
-                  onClick={startPayment}
-                  disabled={paymentStatus === "starting"}
-                  style={{
-                    width: "100%",
-                    height: 42,
-                    marginTop: 12,
-                    border: "none",
-                    borderRadius: 8,
-                    background: accentColor,
-                    color: "#ffffff",
-                    fontWeight: 800,
-                    cursor: paymentStatus === "starting" ? "not-allowed" : "pointer"
-                  }}
-                >
+                <button type="button" className="kpay__go ds-body-sm" onClick={startPayment} disabled={paymentStatus === "starting"}>
                   {paymentStatus === "starting" ? "Preparing..." : "Continue to secure payment"}
                 </button>
               ) : (
                 <>
-                  <label style={{ display: "grid", gap: 5, marginTop: 12, fontSize: 13, fontWeight: 800 }}>
-                    Name on card
+                  <label className="kform__field">
+                    <span className="kform__label ds-micro">Name on card</span>
                     <input
+                      className="kform__input ds-body-sm"
                       aria-label="Name on card"
                       value={cardholderName}
                       onChange={(event) => setCardholderName(event.target.value)}
                       disabled={paymentStatus === "confirming"}
                       autoComplete="cc-name"
-                      style={{
-                        height: 42,
-                        border: "1px solid #cfded9",
-                        borderRadius: 8,
-                        padding: "0 12px",
-                        font: "inherit",
-                        outlineColor: accentColor
-                      }}
                     />
                   </label>
-                  <div
-                    aria-label="Card details"
-                    id="kai-payment-card-element"
-                    style={{
-                      minHeight: 46,
-                      marginTop: 10,
-                      display: "block",
-                      border: "1px solid #cfded9",
-                      borderRadius: 8,
-                      padding: "13px 12px",
-                      background: "#ffffff",
-                      cursor: paymentStatus === "confirming" ? "not-allowed" : "text"
-                    }}
-                  />
-                  <button
-                    type="button"
-                    onClick={confirmPayment}
-                    disabled={paymentStatus === "confirming"}
-                    style={{
-                      width: "100%",
-                      height: 42,
-                      marginTop: 12,
-                      border: "none",
-                      borderRadius: 8,
-                      background: accentColor,
-                      color: "#ffffff",
-                      fontWeight: 800,
-                      cursor: paymentStatus === "confirming" ? "not-allowed" : "pointer"
-                    }}
-                  >
+                  <div aria-label="Card details" id="kai-payment-card-element" className="kpay__card" />
+                  <button type="button" className="kpay__go ds-body-sm" onClick={confirmPayment} disabled={paymentStatus === "confirming"}>
                     {paymentStatus === "confirming" ? "Confirming..." : "Pay securely"}
                   </button>
                 </>
@@ -860,67 +658,25 @@ export default function KaiWidgetClient({ widgetKey }: KaiWidgetClientProps) {
           ) : null}
         </div>
 
-        <form
-          onSubmit={sendMessage}
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr auto",
-            gap: 10,
-            padding: 14,
-            borderTop: "1px solid #e7efec",
-            background: "#ffffff"
-          }}
-        >
-          <label htmlFor="kai-message" style={{ position: "absolute", left: -9999 }}>
+        <form className="kpanel__compose" onSubmit={sendMessage}>
+          <label htmlFor="kai-message" className="kw-sr">
             Message
           </label>
           <input
             id="kai-message"
+            className="kpanel__input ds-body-sm"
             value={message}
             onChange={(event) => setMessage(event.target.value)}
             placeholder="Ask me anything"
             disabled={status === "loading" || status === "error"}
-            style={{
-              minWidth: 0,
-              border: "1px solid #cfded9",
-              borderRadius: 8,
-              padding: "0 12px",
-              font: "inherit",
-              outlineColor: accentColor
-            }}
           />
-          <button
-            type="submit"
-            disabled={!canSend}
-            style={{
-              minWidth: 76,
-              height: 42,
-              border: "none",
-              borderRadius: 8,
-              background: canSend ? accentColor : "#b8c7c2",
-              color: "#ffffff",
-              fontWeight: 700,
-              cursor: canSend ? "pointer" : "not-allowed"
-            }}
-          >
-            Send
+          <button type="submit" className="kpanel__send" aria-label="Send" disabled={!canSend}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M5 12h14M13 6l6 6-6 6" />
+            </svg>
           </button>
         </form>
       </section>
-      <style jsx global>{`
-        @keyframes kaiTyping {
-          0%,
-          80%,
-          100% {
-            opacity: 0.35;
-            transform: translateY(0);
-          }
-          40% {
-            opacity: 1;
-            transform: translateY(-2px);
-          }
-        }
-      `}</style>
     </main>
   );
 }

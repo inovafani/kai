@@ -1,0 +1,540 @@
+/* The Kai chat that sits inside a customer's site (the iframe at /embed/kai).
+ *
+ * It wears the BluePass design system, the same one the Kai panel on bluepass.co uses: the near-black
+ * glass surface, hairline borders, Geist and Inter, white pills, and the same easing. The class names
+ * (kpanel, kmsg, kform, kpay) match that panel on purpose, so the two read as one product.
+ *
+ * Tenant branding survives as one accent, `--kw-accent`, on the avatar. Everything else is BluePass.
+ * The outer rounding, border, shadow and open/close motion belong to the loader that creates the
+ * iframe (src/app/embed/kai-loader.js/route.ts); this file draws what is inside it.
+ */
+
+html:has(.embed-root),
+html:has(.embed-root) body {
+  background: #0e0e0d;
+  color: var(--color-ink);
+  overflow: hidden;
+}
+
+.kw {
+  --kw-ease: cubic-bezier(0.16, 1, 0.3, 1);
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: #0e0e0d;
+  color: var(--color-ink);
+  font-family: var(--font-body);
+}
+.kpanel__shell {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  animation: kw-rise 0.6s var(--kw-ease) both;
+}
+
+/* Header ---------------------------------------------------------------- */
+.kpanel__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 15px 15px 14px 18px;
+  border-bottom: 1px solid var(--color-hairline-soft);
+  flex: none;
+}
+.kpanel__id {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 0;
+}
+.kpanel__avatar {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  background: var(--kw-accent, var(--color-inverse-canvas));
+  color: #ffffff;
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 500;
+}
+.kpanel__dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--color-semantic-success);
+  border: 2px solid #0e0e0d;
+  animation: kw-pulse 2.4s ease-out 1.2s infinite;
+}
+.kpanel__id-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.kpanel__name {
+  margin: 0;
+  color: var(--color-ink);
+  font-weight: 600;
+}
+.kpanel__status {
+  margin: 0;
+  color: var(--color-ink-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.kpanel__icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border: 1px solid transparent;
+  background: none;
+  color: var(--color-ink-muted);
+  cursor: pointer;
+  transition:
+    color 0.3s ease,
+    background 0.3s ease,
+    border-color 0.3s ease,
+    transform 0.4s var(--kw-ease);
+}
+.kpanel__icon:hover {
+  color: var(--color-ink);
+  background: rgba(255, 255, 255, 0.07);
+  border-color: var(--color-hairline-soft);
+  transform: rotate(90deg);
+}
+
+/* The thread ------------------------------------------------------------- */
+.kpanel__log {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-hairline) transparent;
+}
+/* A short thread sits against the compose bar, like a real chat, without clipping a long one. */
+.kpanel__log::before {
+  content: "";
+  margin-top: auto;
+}
+.kpanel__log::-webkit-scrollbar {
+  width: 7px;
+}
+.kpanel__log::-webkit-scrollbar-thumb {
+  background: var(--color-hairline);
+  border-radius: 100px;
+}
+
+.kmsg {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: 100%;
+  animation: kw-msg 0.5s var(--kw-ease) both;
+}
+.kmsg--user {
+  justify-content: flex-end;
+}
+.kmsg__mark {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-hairline-soft);
+  color: rgba(255, 255, 255, 0.7);
+  font-family: var(--font-display);
+  font-size: 11px;
+}
+.kmsg__bubble {
+  margin: 0;
+  padding: 11px 14px;
+  border-radius: var(--radius-lg);
+  max-width: 82%;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.kmsg--assistant .kmsg__bubble {
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-hairline-soft);
+  color: rgba(255, 255, 255, 0.88);
+  border-bottom-left-radius: var(--radius-xs);
+}
+.kmsg--user .kmsg__bubble {
+  background: var(--color-inverse-canvas);
+  color: var(--color-on-primary);
+  font-weight: 500;
+  border-bottom-right-radius: var(--radius-xs);
+}
+/* The widget talking about itself (an error), never styled as Kai. */
+.kmsg--system .kmsg__bubble {
+  background: rgba(255, 107, 107, 0.09);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  color: rgba(255, 255, 255, 0.8);
+  max-width: 100%;
+  border-radius: var(--radius-md);
+}
+.kmsg__bubble--typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 14px;
+}
+.kmsg__bubble--typing i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  animation: kw-typing 1.25s infinite ease-in-out;
+}
+.kmsg__bubble--typing i:nth-child(2) {
+  animation-delay: 0.16s;
+}
+.kmsg__bubble--typing i:nth-child(3) {
+  animation-delay: 0.32s;
+}
+
+/* Contact capture and payment: steps Kai asks for mid-conversation, drawn in the thread ---- */
+.kform,
+.kpay {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  margin-left: 32px;
+  border-radius: var(--radius-xl);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--color-hairline-soft);
+  animation: kw-msg 0.5s var(--kw-ease) both;
+}
+.kform__title,
+.kpay__title {
+  margin: 0;
+  color: var(--color-ink);
+  font-weight: 600;
+}
+.kform__lede,
+.kpay__meta,
+.kpay__note {
+  margin: 0;
+  color: var(--color-ink-muted);
+  line-height: 1.4;
+}
+.kform__field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.kform__label {
+  color: var(--color-ink-muted);
+}
+.kform__input {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--color-hairline);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  outline: none;
+  transition:
+    border-color 0.3s ease,
+    box-shadow 0.3s ease;
+}
+.kform__input::placeholder {
+  color: rgba(255, 255, 255, 0.35);
+}
+.kform__input:focus {
+  border-color: rgba(255, 255, 255, 0.4);
+  box-shadow: var(--shadow-3);
+}
+.kform__input:disabled {
+  opacity: 0.5;
+}
+/* Stripe mounts its own iframe here, so this only supplies the frame. */
+.kpay__card {
+  min-height: 46px;
+  padding: 13px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--color-hairline);
+}
+.kform__go,
+.kpay__go {
+  padding: 11px 16px;
+  border: none;
+  border-radius: var(--radius-pill);
+  background: var(--color-ink);
+  color: var(--color-on-primary);
+  font-family: var(--font-body);
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    transform 0.3s var(--kw-ease),
+    opacity 0.3s ease;
+}
+.kform__go:hover:not(:disabled),
+.kpay__go:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+.kform__go:disabled,
+.kpay__go:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.kform__err {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: rgba(255, 107, 107, 0.09);
+  border: 1px solid rgba(255, 107, 107, 0.3);
+  color: #ff9d92;
+  line-height: 1.4;
+}
+
+/* The control that answers Kai's question: a stepper for how many, months for when, choices for the rest ---- */
+.kq {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: 32px;
+  animation: kw-msg 0.5s var(--kw-ease) both;
+}
+.kq--chips {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.kq--months {
+  max-height: 188px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-hairline) transparent;
+}
+.kq__stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-hairline);
+}
+.kq__step {
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-ink);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 0.3s ease,
+    transform 0.4s var(--kw-ease),
+    opacity 0.3s ease;
+}
+.kq__step:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  transform: scale(1.08);
+}
+.kq__step:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.kq__count {
+  min-width: 34px;
+  text-align: center;
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 500;
+  color: var(--color-ink);
+}
+.kchip {
+  padding: 8px 13px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-hairline);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  font-family: var(--font-body);
+  font-size: var(--type-micro-size);
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    color 0.3s ease,
+    background 0.3s ease,
+    border-color 0.3s ease,
+    transform 0.4s var(--kw-ease);
+}
+.kchip:hover:not(:disabled) {
+  color: var(--color-on-primary);
+  background: var(--color-inverse-canvas);
+  border-color: var(--color-inverse-canvas);
+  transform: translateY(-1px);
+}
+.kchip:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.kchip--quiet {
+  border-style: dashed;
+  color: var(--color-ink-muted);
+}
+
+/* Compose bar ------------------------------------------------------------ */
+.kpanel__compose {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 12px;
+  border-top: 1px solid var(--color-hairline-soft);
+}
+.kpanel__input {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 13px;
+  background: var(--color-surface-1);
+  border: 1px solid var(--color-hairline);
+  border-radius: var(--radius-md);
+  color: var(--color-ink);
+  font-family: var(--font-body);
+  outline: none;
+  transition:
+    border-color 0.3s ease,
+    box-shadow 0.3s ease;
+}
+.kpanel__input::placeholder {
+  color: rgba(255, 255, 255, 0.32);
+}
+.kpanel__input:focus {
+  border-color: rgba(255, 255, 255, 0.32);
+  box-shadow: var(--shadow-3);
+}
+.kpanel__input:disabled {
+  opacity: 0.5;
+}
+.kpanel__send {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: var(--color-inverse-canvas);
+  color: var(--color-on-primary);
+  cursor: pointer;
+  transition:
+    transform 0.4s var(--kw-ease),
+    opacity 0.3s ease;
+}
+.kpanel__send:hover:not(:disabled) {
+  transform: scale(1.08);
+}
+.kpanel__send:active:not(:disabled) {
+  transform: scale(0.94);
+}
+.kpanel__send:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.kw :focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.7);
+  outline-offset: 2px;
+}
+.kw-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (max-width: 620px) {
+  .kform,
+  .kpay,
+  .kq {
+    margin-left: 0;
+  }
+}
+
+@keyframes kw-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes kw-msg {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes kw-typing {
+  0%,
+  70%,
+  100% {
+    opacity: 0.25;
+    transform: translateY(0);
+  }
+  35% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+@keyframes kw-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.55);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 7px rgba(34, 197, 94, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kpanel__shell,
+  .kmsg,
+  .kform,
+  .kpay,
+  .kq,
+  .kpanel__dot,
+  .kmsg__bubble--typing i {
+    animation: none;
+  }
+}

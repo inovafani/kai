@@ -23,6 +23,7 @@ import { handleBluePassMarketplaceMessage,
 import { composeBluePassMarketplaceAssistantReply } from "@/server/bluepass/bluepass-marketplace-reply-composer";
 import { shouldPolishBluePassMarketplaceReply } from "@/server/bluepass/bluepass-marketplace-reply-gate";
 import type { BluePassCatalogSnapshotItem } from "@/core/bluepass/catalog";
+import { bluePassQuestionInput } from "@/core/bluepass/question-input";
 import { AFFILIATE_CATALOG_FEATURE } from "@/core/tenant/feature-flags";
 import { startsOperatorRecommendation } from "@/core/tenant/tenant-kind";
 import { buildAffiliateTurnReply, decideAffiliateTurn } from "@/core/affiliate/affiliate-trips";
@@ -239,6 +240,8 @@ export async function POST(request: NextRequest) {
         truthPolicy: businessPack.truthPolicy
       },
       bluepassMatches: bluepassResult.bluepassMatches,
+      // The control that answers the question Kai just asked, drawn by the chat under the reply.
+      questionInput: bluePassQuestionInput(bluepassResult.assistantContent),
       bluepassInquiry: bluepassResult.bluepassInquiry
         ? {
             id: bluepassResult.bluepassInquiry.id,

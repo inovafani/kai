@@ -835,25 +835,15 @@ code {
   }
 }
 
-/* Embedded chat widget: undo the BluePass dark theme so customer sites see the same widget as before. */
-html:has(.embed-root),
-html:has(.embed-root) body {
-  background: #f7f8fb;
-  color: #111827;
-  color-scheme: light;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-feature-settings: normal;
-  font-variant-numeric: normal;
-}
+/* Embedded chat widget. It now wears the BluePass design system like the rest of Kai, so nothing here is
+   undone; the widget's own look (and the page background behind it) lives in
+   src/app/embed/kai/kai-widget.css. Links keep the surrounding text colour inside it. */
 html:has(.embed-root) a {
   color: inherit;
 }
 html:has(.embed-root) a:hover {
   color: inherit;
   text-decoration: none;
-}
-html:has(.embed-root) ::selection {
-  background: Highlight;
 }
 
 /* Page-change progress line ------------------------------------------------- */

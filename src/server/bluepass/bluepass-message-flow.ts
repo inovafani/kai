@@ -32,6 +32,7 @@ import { classifyBluePassMarket, type BluePassMarket } from "@/core/bluepass/mar
 import { findTravellerFaqAnswer } from "@/core/bluepass/traveller-faq";
 import { findDestinationNote, findMentionedDestinations } from "@/core/bluepass/destination-notes";
 import { extractBluePassPersonaLead } from "@/core/bluepass/persona-lead";
+import { intentFromAnswer, intentFromAnswers, pairTravellerWithKai, questionKaiAsked } from "@/core/bluepass/answer-intent";
 import type { BluePassRouterAction, BluePassRouterLlmClient } from "@/core/llm/bluepass-router";
 import {
   buildBluePassBookingSystemsReply,
@@ -287,8 +288,23 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
 
   const catalog = resolveBluePassCatalog(input.catalog);
   const knownRegions = Array.from(new Set(catalog.map((item) => item.region)));
-  const historyIntent = extractBluePassInquiryIntent(input.priorTravellerMessages, knownRegions);
-  const messageIntent = extractBluePassInquiryIntent([input.content], knownRegions);
+  // Everything Kai has said so far, oldest first, ending with the message the traveller is replying to.
+  const assistantSoFar = (() => {
+    const list = [...(input.priorAssistantMessages ?? [])];
+    if (input.lastAssistantMessage && list[list.length - 1] !== input.lastAssistantMessage) list.push(input.lastAssistantMessage);
+    return list;
+  })();
+  const assistantHistory = assistantSoFar.length > 0 ? assistantSoFar.join("\n") : null;
+  // A reply is read against the question it answers: "2" after "How many of you are going?" is the party
+  // size, here and for every earlier turn of the chat.
+  const historyIntent = mergeBluePassInquiryIntent(
+    extractBluePassInquiryIntent(input.priorTravellerMessages, knownRegions),
+    intentFromAnswers(pairTravellerWithKai(input.priorTravellerMessages, assistantSoFar))
+  );
+  const messageIntent = mergeBluePassInquiryIntent(
+    extractBluePassInquiryIntent([input.content], knownRegions),
+    intentFromAnswer(questionKaiAsked(input.lastAssistantMessage), input.content)
+  );
   const latestMentionedYachts = resolveMentionedYachts(input.content, catalog);
   const historyMentionedYachts = resolveMentionedYachts(input.priorTravellerMessages.join("\n"), catalog);
   const selectedYacht =
@@ -645,7 +661,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
       const destinationInterestReply = buildBluePassDestinationInterestReply({
         destination: intent.destination,
         known: knownTrip,
-        previousReply: input.lastAssistantMessage
+        previousReply: assistantHistory
       });
 
       return buildConciergeResponse(
@@ -824,8 +840,10 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
           excludedYachtNames: excludedYachts.map((yacht) => yacht.name),
           alreadyShown: recommendationMatches.length > 0 && sameListLastTurn,
           showingSomethingNew: showingSomethingNew && recommendationMatches.length > 0,
+          refining: Boolean(assistantHistory?.includes("what I'd put in front of you")) && !isBluePassOtherOptionsRequest(input.content),
+          shownNames: recommendationMatches.map((match) => match.name).filter(kaiHasShown),
           known: knownTrip,
-          previousReply: input.lastAssistantMessage
+          previousReply: assistantHistory
         }),
         recommendationMatches,
         buildBrowsingSuggestedReplies(recommendationMatches),
@@ -878,7 +896,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
           matches: objectionMatches,
           destination: objectionDestination,
           known: knownTrip,
-          previousReply: input.lastAssistantMessage
+          previousReply: assistantHistory
         }),
         fittingMatches,
         fittingMatches.length > 0 ? buildBrowsingSuggestedReplies(fittingMatches) : showYachtsSuggestedReplies,
@@ -913,7 +931,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
         persona,
         buildBluePassYachtOverviewReply(overviewMatch, {
           known: knownTrip,
-          previousReply: input.lastAssistantMessage
+          previousReply: assistantHistory
         }),
         [overviewMatch],
         [`Book ${overviewMatch.name}`, "Something else"],
@@ -963,9 +981,11 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
           matches: browsingMatches,
           showingSomethingNew: wantsSomethingNew && unseen.length > 0,
           alreadyShown: sameAsLastTurn,
+          refining: Boolean(assistantHistory?.includes("what I'd put in front of you")) && !wantsSomethingNew,
+          shownNames: browsingMatches.map((match) => match.name).filter(kaiHasShown),
           noMoreOptions: wantsSomethingNew && unseen.length === 0 && browsingMatches.length > 0,
           known: knownTrip,
-          previousReply: input.lastAssistantMessage
+          previousReply: assistantHistory
         }),
         browsingMatches,
         buildBrowsingSuggestedReplies(browsingMatches),
@@ -987,7 +1007,7 @@ export async function handleBluePassMarketplaceMessage(input: BluePassMarketplac
           yachtAlreadyIntroduced: Boolean(
             selectedYacht && historyMentionedYachts.some((yacht) => yacht.slug === selectedYacht.slug)
           ),
-          previousReply: input.lastAssistantMessage
+          previousReply: assistantHistory
         }),
         bluepassMatches: [],
         bluepassInquiry: null,

@@ -266,6 +266,10 @@ export function buildBluePassRecommendationReply(input: {
   known?: BluePassKnownTrip;
   /** Kai's own last message, so it doesn't ask the same question twice in a row. */
   previousReply?: string | null;
+  /** The traveller has just narrowed things down after seeing a list: Kai answers that, not the list again. */
+  refining?: boolean;
+  /** Names of the boats already put in front of this traveller, so only what is new is shown again. */
+  shownNames?: string[];
 }) {
   const destination = input.destination ? ` in ${input.destination}` : "";
   const excluded = input.excludedYachtNames?.length
@@ -296,6 +300,16 @@ export function buildBluePassRecommendationReply(input: {
     return `Still the same ${countWord(matches.length)}${place}. ${nextStepQuestion(input.known, input.previousReply)}`;
   }
 
+  // They have seen a list and have now said what they care about: a person answers that, picks from what
+  // they were already shown, and only brings out a boat that is new to the conversation.
+  if (input.refining && !input.noMoreOptions && !input.showingSomethingNew && !input.alreadyShown) {
+    const fresh = matches.filter((yacht) => !input.shownNames?.includes(yacht.name));
+    const lead = refinementLead(input.known);
+    const pick = matches.length > 1 ? `${pickReason(matches, input.known)} ` : "";
+    const added = fresh.length > 0 ? `\n\n${fresh.length === 1 ? "That one is new to the list:" : "These are new to the list:"}\n${formatYachtRows(fresh)}\n\n` : " ";
+    return `${lead ? `${lead} ` : ""}${pick}${added}${nextStepQuestion(input.known, input.previousReply)}`.replace(/\s+\n\n/g, "\n\n");
+  }
+
   // Never claims to be everything BluePass has unless it is.
   const intro = input.noMoreOptions
     ? `That's everything BluePass has${place} right now:`
@@ -308,6 +322,16 @@ export function buildBluePassRecommendationReply(input: {
   const steer = matches.length > 1 ? `${pickReason(matches, input.known)} ` : "";
 
   return `${intro}\n${rows}\n\n${steer}${nextStepQuestion(input.known, input.previousReply)}`;
+}
+
+/**
+ * The first words of an answer to "diving, or cruising?". It does not repeat the traveller's own word back
+ * ("Diving it is, then"): the persona rewrite is told never to echo them, and it was cutting exactly that
+ * word and leaving "it is, then." behind.
+ */
+function refinementLead(known?: BluePassKnownTrip) {
+  const interests = known?.interests ?? [];
+  return interests.includes("dive") || interests.includes("cruise") ? "That narrows it down." : null;
 }
 
 // kai-conversation-flow-notes.md item 11: a traveller who objected to price ("way over budget, any
@@ -618,6 +642,8 @@ function nextStepQuestion(known?: BluePassKnownTrip, previousReply?: string | nu
 }
 
 function describeDates(known?: BluePassKnownTrip) {
+  // "flexible" is how Kai remembers "not sure yet": an answer, but not a date to read back to them.
+  if (known?.dateWindow === "flexible") return "your dates";
   return known?.dateWindow && known.dateWindow.length <= 30 ? known.dateWindow : "your dates";
 }
 

@@ -615,6 +615,63 @@ describe("handleBluePassMarketplaceMessage", () => {
     expect(result.bluepassMatches).toEqual([]);
   });
 
+  // "2" in answer to "How many of you are going?" was not heard: the reader worked on one message at a
+  // time, so Kai asked a third question and said its opening line over again.
+  it("hears a bare number as the party size when Kai had just asked how many were going", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "2",
+      priorTravellerMessages: ["I'm planning a trip to Komodo", "probably August"],
+      lastAssistantMessage: "How many of you are going?",
+      priorAssistantMessages: [
+        "Hi, I'm Kai. Where do you want to go?",
+        "Komodo is a good call. Komodo's main liveaboard season is April to November, when it's dry and the seas are calmer. When are you thinking of going?",
+        "How many of you are going?"
+      ]
+    });
+
+    expect(result.bluepassMatches.length).toBeGreaterThan(0);
+    expect(result.assistantContent).toContain("two of you");
+    expect(result.assistantContent).not.toContain("is a good call");
+  });
+
+  it("never says its opening line twice in one chat, even when the last message was a different question", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "diving",
+      priorTravellerMessages: ["I'm planning a trip to Komodo", "hmm"],
+      lastAssistantMessage: "How many of you are going?",
+      priorAssistantMessages: [
+        "Hi, I'm Kai. Where do you want to go?",
+        "Komodo is a good call. Komodo's main liveaboard season is April to November, when it's dry and the seas are calmer. When are you thinking of going?",
+        "How many of you are going?"
+      ]
+    });
+
+    expect(result.assistantContent).not.toContain("is a good call");
+    expect(result.assistantContent).not.toContain("main liveaboard season");
+  });
+
+  it("takes 'not sure yet' as an answer about dates and moves on", async () => {
+    const result = await handleBluePassMarketplaceMessage({
+      tenantId: `tenant_${randomUUID()}`,
+      conversationId: `conversation_${randomUUID()}`,
+      content: "not sure yet",
+      priorTravellerMessages: ["I'm planning a trip to Komodo"],
+      lastAssistantMessage:
+        "Komodo is a good call. Komodo's main liveaboard season is April to November, when it's dry and the seas are calmer. When are you thinking of going?",
+      priorAssistantMessages: [
+        "Hi, I'm Kai. Where do you want to go?",
+        "Komodo is a good call. Komodo's main liveaboard season is April to November, when it's dry and the seas are calmer. When are you thinking of going?"
+      ]
+    });
+
+    expect(result.assistantContent).toContain("How many of you are going?");
+    expect(result.assistantContent).not.toContain("When are you thinking of going?");
+  });
+
   // Kai had one turn of memory, so three turns later "anything else?" cheerfully showed the same
   // boats again. It now skips every boat it has put in front of this traveller.
   it("remembers every boat it has shown, not just the last message", async () => {
