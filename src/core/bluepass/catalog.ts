@@ -85,7 +85,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_alila_purnama",
     operatorName: "Alila Purnama",
     operatorPhone: "+6281234567001",
-    productUrl: "https://bluepass.co/yachts/alila-purnama",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/alila-purnama/hero.jpg",
     interests: ["dive", "luxury", "phinisi", "private"]
   },
@@ -101,7 +101,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_alexa",
     operatorName: "Alexa Charters",
     operatorPhone: "+6281234567890",
-    productUrl: "https://bluepass.co/yachts/alexa",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/alexa/hero.jpg",
     interests: ["private", "couples", "luxury"]
   },
@@ -117,7 +117,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_calico_jack",
     operatorName: "Calico Jack",
     operatorPhone: "+6281234567004",
-    productUrl: "https://bluepass.co/yachts/calico-jack",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/calico-jack/hero.jpg",
     interests: ["dive", "phinisi", "private", "cabin"]
   },
@@ -133,7 +133,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_anne_bonny",
     operatorName: "Anne Bonny",
     operatorPhone: "+6281234567005",
-    productUrl: "https://bluepass.co/yachts/anne-bonny",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/anne-bonny/hero.jpg",
     interests: ["dive", "phinisi", "private", "explorer"],
     about:
@@ -151,7 +151,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_celestia",
     operatorName: "Celestia",
     operatorPhone: "+6281234567006",
-    productUrl: "https://bluepass.co/yachts/celestia",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/celestia/hero.jpg",
     interests: ["dive", "phinisi", "luxury", "cabin"]
   },
@@ -167,7 +167,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_dunia_baru",
     operatorName: "Dunia Baru",
     operatorPhone: "+6281234567007",
-    productUrl: "https://bluepass.co/yachts/dunia-baru",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/dunia-baru/hero.jpg",
     interests: ["dive", "luxury", "phinisi", "private"]
   },
@@ -183,7 +183,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_jakare",
     operatorName: "Jakare",
     operatorPhone: "+6281234567008",
-    productUrl: "https://bluepass.co/yachts/jakare",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/jakare/hero.jpg",
     interests: ["dive", "phinisi", "explorer", "cabin"]
   },
@@ -199,7 +199,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_katharina",
     operatorName: "Katharina",
     operatorPhone: "+6281234567009",
-    productUrl: "https://bluepass.co/yachts/katharina",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/katharina/hero.jpg",
     interests: ["dive", "phinisi", "cabin"]
   },
@@ -215,7 +215,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_mischief",
     operatorName: "Mischief",
     operatorPhone: "+6281234567010",
-    productUrl: "https://bluepass.co/yachts/mischief",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/mischief/hero.jpg",
     interests: ["private", "luxury", "phinisi"]
   },
@@ -231,7 +231,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_mutiara_laut",
     operatorName: "Mutiara Laut",
     operatorPhone: "+6281234567011",
-    productUrl: "https://bluepass.co/yachts/mutiara-laut",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/mutiara-laut/hero.jpg",
     interests: ["dive", "phinisi", "private"]
   },
@@ -247,7 +247,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_aliikai",
     operatorName: "Aliikai Expeditions",
     operatorPhone: "+6281234567002",
-    productUrl: "https://bluepass.co/yachts/aliikai",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/aliikai/hero.jpg",
     interests: ["dive", "phinisi", "cabin"]
   },
@@ -263,7 +263,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_carpe_diem",
     operatorName: "Carpe Diem",
     operatorPhone: "+6281234567012",
-    productUrl: "https://bluepass.co/yachts/carpe-diem",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/carpe-diem/hero.jpg",
     interests: ["dive", "phinisi", "explorer", "cabin"]
   },
@@ -279,7 +279,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_fenides",
     operatorName: "Fenides",
     operatorPhone: "+6281234567013",
-    productUrl: "https://bluepass.co/yachts/fenides",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/fenides/hero.jpg",
     interests: ["dive", "phinisi", "cabin"]
   },
@@ -295,7 +295,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_majik",
     operatorName: "Majik",
     operatorPhone: "+6281234567014",
-    productUrl: "https://bluepass.co/yachts/majik",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/majik/hero.jpg",
     interests: ["dive", "private", "explorer"]
   },
@@ -311,7 +311,7 @@ export const bluePassPreviewCatalog: BluePassYachtCatalogItem[] = [
     operatorId: "operator_amandira",
     operatorName: "Amandira",
     operatorPhone: "+6281234567003",
-    productUrl: "https://bluepass.co/yachts/amandira",
+    productUrl: null,
     imageUrl: "https://bluepass.co/yachts/amandira/hero.jpg",
     interests: ["dive", "luxury", "private"]
   }

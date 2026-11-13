@@ -137,6 +137,16 @@ describe("recommendation lists that keep the conversation going", () => {
     expect(reply).not.toContain("I can compare");
   });
 
+  it("shows only what is in the named place, and a day charter without cabins", () => {
+    const charter = { ...yacht, name: "Yolo", region: "Gold Coast", tier: "Charter", cabins: 0, maxGuests: 36 } as any;
+    const reply = buildBluePassRecommendationReply({ destination: "Gold Coast", matches: [charter, yacht] as any });
+
+    expect(reply).toContain("Yolo - Charter in Gold Coast, up to 36 guests");
+    expect(reply).not.toContain("Sea Dragon");
+    expect(reply).not.toContain("0 cabins");
+    expect(reply).not.toContain("first liveaboard");
+  });
+
   it("steers to the boat that fits the party, not the biggest one in the list", () => {
     const forTwo = buildBluePassRecommendationReply({
       destination: "Komodo",

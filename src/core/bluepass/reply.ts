@@ -275,7 +275,11 @@ export function buildBluePassRecommendationReply(input: {
   const excluded = input.excludedYachtNames?.length
     ? ` besides ${formatNaturalList(input.excludedYachtNames)}`
     : "";
-  const matches = input.matches.slice(0, 3);
+  // Padding from other regions is not shown under "in <place>" once something really is there.
+  const inPlace = input.destination
+    ? input.matches.filter((yacht) => yacht.region.toLowerCase().includes(input.destination!.toLowerCase()))
+    : [];
+  const matches = (inPlace.length > 0 ? inPlace : input.matches).slice(0, 3);
 
   if (matches.length === 0) {
     // Asked for something other than what they've seen, and there is nothing else: say so.
@@ -631,7 +635,7 @@ function pickReason(matches: BluePassYachtSummary[], known?: BluePassKnownTrip) 
     return `If it's just the two of you, I'd take ${smallest.name}; for a group, ${largest.name}.`;
   }
 
-  return `For a first liveaboard I'd start with ${largest.name}.`;
+  return largest.cabins > 0 ? `For a first liveaboard I'd start with ${largest.name}.` : `${largest.name} has the most room, up to ${largest.maxGuests} guests.`;
 }
 
 function nextStepQuestion(known?: BluePassKnownTrip, previousReply?: string | null) {
@@ -654,7 +658,8 @@ function countWord(count: number) {
 function formatYachtRows(matches: BluePassYachtSummary[]) {
   return matches
     .map((yacht, index) => {
-      const capacity = `${countLabel(yacht.cabins, "cabin")}, up to ${yacht.maxGuests} guests`;
+      // A day charter has no cabins: "0 cabins" reads as a mistake.
+      const capacity = `${yacht.cabins > 0 ? `${countLabel(yacht.cabins, "cabin")}, ` : ""}up to ${yacht.maxGuests} guests`;
       const link = yacht.productUrl ? ` Details: ${yacht.productUrl}` : "";
 
       const price = yacht.displayPrice ? ` ${capitalizeFirst(yacht.displayPrice)}.` : "";
