@@ -320,7 +320,7 @@ export function buildBluePassRecommendationReply(input: {
     : input.showingSomethingNew
       ? `Here's what else BluePass has${place}:`
       : elsewhere
-        ? `I don't have anything in ${input.destination} yet. The closest BluePass has is${place}${excluded}:`
+        ? `I don't have anything in ${input.destination} yet. Other BluePass destinations include ${regions}${excluded}:`
       : input.destination
         ? `Here's what I'd put in front of you${destination}${excluded}:`
         : `Here's what BluePass has in ${regions}${excluded}:`;

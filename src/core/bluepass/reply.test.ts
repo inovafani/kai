@@ -151,7 +151,7 @@ describe("recommendation lists that keep the conversation going", () => {
     const reply = buildBluePassRecommendationReply({ destination: "Great Barrier Reef", matches: [yacht, rajaYacht] as any });
 
     expect(reply).toContain("I don't have anything in Great Barrier Reef yet");
-    expect(reply).toContain("closest BluePass has is in Komodo and Raja Ampat");
+    expect(reply).toContain("Other BluePass destinations include Komodo and Raja Ampat");
     expect(reply).not.toContain("put in front of you in Great Barrier Reef");
   });
 
