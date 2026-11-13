@@ -147,6 +147,14 @@ describe("recommendation lists that keep the conversation going", () => {
     expect(reply).not.toContain("first liveaboard");
   });
 
+  it("says so when nothing is in the named place, instead of labelling other boats as that place", () => {
+    const reply = buildBluePassRecommendationReply({ destination: "Great Barrier Reef", matches: [yacht, rajaYacht] as any });
+
+    expect(reply).toContain("I don't have anything in Great Barrier Reef yet");
+    expect(reply).toContain("closest BluePass has is in Komodo and Raja Ampat");
+    expect(reply).not.toContain("put in front of you in Great Barrier Reef");
+  });
+
   it("steers to the boat that fits the party, not the biggest one in the list", () => {
     const forTwo = buildBluePassRecommendationReply({
       destination: "Komodo",

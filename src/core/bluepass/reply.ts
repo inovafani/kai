@@ -276,10 +276,10 @@ export function buildBluePassRecommendationReply(input: {
     ? ` besides ${formatNaturalList(input.excludedYachtNames)}`
     : "";
   // Padding from other regions is not shown under "in <place>" once something really is there.
-  const inPlace = input.destination
-    ? input.matches.filter((yacht) => yacht.region.toLowerCase().includes(input.destination!.toLowerCase()))
-    : [];
+  const inPlace = input.destination ? input.matches.filter((yacht) => isInPlace(yacht.region, input.destination!)) : [];
   const matches = (inPlace.length > 0 ? inPlace : input.matches).slice(0, 3);
+  // Nothing is in the named place: what follows is the nearest alternative, and says so.
+  const elsewhere = Boolean(input.destination) && inPlace.length === 0 && matches.length > 0;
 
   if (matches.length === 0) {
     // Asked for something other than what they've seen, and there is nothing else: say so.
@@ -296,7 +296,7 @@ export function buildBluePassRecommendationReply(input: {
 
   const rows = formatYachtRows(matches);
   const regions = formatNaturalList(Array.from(new Set(matches.map((yacht) => yacht.region))));
-  const place = destination || ` in ${regions}`;
+  const place = destination && !elsewhere ? destination : ` in ${regions}`;
 
   // The same boats are not sent again as a fresh list: the cards are already in the chat, so Kai
   // says they're the same ones and moves the trip on.
@@ -319,6 +319,8 @@ export function buildBluePassRecommendationReply(input: {
     ? `That's everything BluePass has${place} right now:`
     : input.showingSomethingNew
       ? `Here's what else BluePass has${place}:`
+      : elsewhere
+        ? `I don't have anything in ${input.destination} yet. The closest BluePass has is${place}${excluded}:`
       : input.destination
         ? `Here's what I'd put in front of you${destination}${excluded}:`
         : `Here's what BluePass has in ${regions}${excluded}:`;
@@ -653,6 +655,11 @@ function describeDates(known?: BluePassKnownTrip) {
 
 function countWord(count: number) {
   return ["none", "one", "two", "three"][count] ?? `${count}`;
+}
+
+/** A boat is in the named place when its region contains the name, or the place's own pattern ("Cairns" is the Reef). */
+function isInPlace(region: string, destination: string) {
+  return region.toLowerCase().includes(destination.toLowerCase()) || Boolean(findDestinationNote(destination)?.pattern.test(region));
 }
 
 function formatYachtRows(matches: BluePassYachtSummary[]) {

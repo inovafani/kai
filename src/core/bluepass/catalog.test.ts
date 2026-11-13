@@ -1,6 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { findBluePassAlternativeYachts, searchBluePassYachts } from "./catalog";
 
+describe("catalog snapshot links", () => {
+  const item = { slug: "x", name: "X", region: "Komodo", operatorId: "o" } as any;
+
+  it("drops the dead /yachts/ route but keeps any other link", () => {
+    const [dead, absolute, ok] = [
+      "https://bluepass.co/yachts/alexa",
+      "/yachts/alexa",
+      "https://example.com/trip"
+    ].map((productUrl) => searchBluePassYachts({ destination: "Komodo" }, [{ ...item, productUrl }])[0].productUrl);
+
+    expect(dead).toBeNull();
+    expect(absolute).toBeNull();
+    expect(ok).toBe("https://example.com/trip");
+  });
+});
+
 describe("searchBluePassYachts", () => {
   it("returns ranked preview catalog matches with truth labels", () => {
     const results = searchBluePassYachts({

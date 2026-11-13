@@ -442,7 +442,7 @@ function normalizeBluePassCatalogSnapshot(catalogInput?: BluePassCatalogSnapshot
         operatorId: item.operatorId?.trim() || `operator_${slug.replace(/-/g, "_")}`,
         operatorName: item.operatorName?.trim() || name,
         operatorPhone: item.operatorPhone?.trim() || "",
-        productUrl: item.productUrl?.trim() || null,
+        productUrl: usableProductUrl(item.productUrl),
         imageUrl: item.imageUrl?.trim() || null,
         interests: Array.isArray(item.interests) ? item.interests.filter(Boolean) : [],
         cabinBookable: item.cabinBookable,
@@ -460,6 +460,14 @@ function normalizeBluePassCatalogSnapshot(catalogInput?: BluePassCatalogSnapshot
 // Misool, Sorong all still canonicalize), but passes through anything else instead of returning
 // null - a null here used to silently drop the entire catalog item (see the !region check above),
 // which is exactly what discarded any non-Indonesia region (e.g. "Great Barrier Reef") before.
+// bluepass.co has no /yachts/[slug] page, so an older website snapshot (or any feed) still sending those
+// links must not reach a traveller as "Details". shortcut: this only drops that known-dead route; other
+// URLs are passed through unchecked, so move to a real reachability check if more dead routes appear.
+function usableProductUrl(value?: string | null) {
+  const url = value?.trim();
+  return url && !/\/yachts\//i.test(url) ? url : null;
+}
+
 function normalizeRegion(value?: string) {
   const trimmed = value?.trim();
   if (!trimmed) return null;
