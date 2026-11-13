@@ -23,6 +23,7 @@ import { handleBluePassMarketplaceMessage,
 import { composeBluePassMarketplaceAssistantReply } from "@/server/bluepass/bluepass-marketplace-reply-composer";
 import { shouldPolishBluePassMarketplaceReply } from "@/server/bluepass/bluepass-marketplace-reply-gate";
 import type { BluePassCatalogSnapshotItem } from "@/core/bluepass/catalog";
+import { buildAuLocalCatalogLead } from "@/core/bluepass/au-local-catalog";
 import { bluePassQuestionInput } from "@/core/bluepass/question-input";
 import { AFFILIATE_CATALOG_FEATURE } from "@/core/tenant/feature-flags";
 import { startsOperatorRecommendation } from "@/core/tenant/tenant-kind";
@@ -498,6 +499,18 @@ export async function POST(request: NextRequest) {
               productCards: [] as BookingProductCard[],
               handoff: undefined
             };
+        // A traveller who names a place gets the catalogue boats there (information only), or an honest
+        // line about where the live lineup runs from, before the lineup itself.
+        const localLead =
+          candidates.length === 1
+            ? buildAuLocalCatalogLead({
+                message: content,
+                catalog: body.bluepassCatalog,
+                operatorName: candidates[0].name,
+                operatorSlug: candidates[0].slug
+              })
+            : null;
+        const finalReply = localLead ? `${localLead}\n\n${singleReply}` : singleReply;
         // When BluePass's own chat hands the traveller to an operator, the reply belongs to that
         // operator's conversation (the same as picking a number from the list), so the next turn
         // books against the operator's own catalogue rather than this chat's.
@@ -505,12 +518,12 @@ export async function POST(request: NextRequest) {
           ? await createAssistantMessage({
               tenantId: singleHandoff.tenantId,
               conversationId: singleHandoff.conversationId,
-              content: singleReply
+              content: finalReply
             })
           : await createAssistantMessage({
               tenantId: resolved.tenant.id,
               conversationId: conversation.id,
-              content: singleReply
+              content: finalReply
             });
 
         return NextResponse.json({

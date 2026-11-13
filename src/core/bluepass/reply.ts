@@ -657,8 +657,13 @@ function countWord(count: number) {
   return ["none", "one", "two", "three"][count] ?? `${count}`;
 }
 
+/** Catalogue boats in a place Kai has no live operator for: information only, never offered as bookable. */
+export function buildBluePassLocalBoatsReply(destination: string, matches: BluePassYachtSummary[]) {
+  return `Here's what BluePass lists in ${destination}, for information only:\n${formatYachtRows(matches.slice(0, 3))}\n\nI can't check availability or book these from here.`;
+}
+
 /** A boat is in the named place when its region contains the name, or the place's own pattern ("Cairns" is the Reef). */
-function isInPlace(region: string, destination: string) {
+export function isInPlace(region: string, destination: string) {
   return region.toLowerCase().includes(destination.toLowerCase()) || Boolean(findDestinationNote(destination)?.pattern.test(region));
 }
 
